@@ -11,12 +11,7 @@ namespace SetNet.Utils
         private readonly CancellationTokenSource _cts = new CancellationTokenSource();
         private Task _loopTask;
 
-        public GameLoopScheduler(CancellationToken externalToken)
-        {
-            ExternalToken = externalToken;
-        }
-
-        public CancellationToken ExternalToken { get; }
+        public CancellationToken ExternalToken { get; } = new CancellationToken();
         public CancellationToken CombinedToken => CancellationTokenSource.CreateLinkedTokenSource(_cts.Token, ExternalToken).Token;
 
         public GameLoopScheduler Every(int milliseconds, Func<Task> action)

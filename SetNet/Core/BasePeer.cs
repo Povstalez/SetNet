@@ -70,7 +70,7 @@ namespace SetNet.Core
             await SendAsync(packet);
         }
 
-        private async Task SendAsync(byte[] data)
+        protected async Task SendAsync(byte[] data)
         {
             await Stream.WriteAsync(data, 0, data.Length);
         }
