@@ -4,7 +4,7 @@ using SetNet.Config;
 using SetNet.Tests;
 
 var config = new Configuration();
-config.Port = 7777;
+config.Port = 5682;
 config.Host = "127.0.0.1";
 
 MainServer server = new MainServer(config);
@@ -18,5 +18,5 @@ await client.ConnectAsync();
 Console.ReadLine();
 
 client.DisconnectFromServer();
-server.StopAsync();
+// server.StopAsync();
 

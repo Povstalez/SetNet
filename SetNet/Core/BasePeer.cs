@@ -52,6 +52,10 @@ namespace SetNet.Core
             {
                 Console.WriteLine($"Client {CurrentPeerInfo.Id} disconnected due to socket error.");
             }
+            catch (ObjectDisposedException)
+            {
+                Console.WriteLine($"Client {CurrentPeerInfo.Id} connection was closed.");
+            }
             catch (Exception ex)
             {
                 Console.WriteLine($"Client {CurrentPeerInfo.Id} error: {ex.Message}");

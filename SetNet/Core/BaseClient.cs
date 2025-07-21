@@ -36,6 +36,9 @@ namespace SetNet.Core
 
         public void Disconnect()
         {
+            if(_cancellationTokenSource.Token.IsCancellationRequested)
+                return;
+            
             _cancellationTokenSource.Cancel();
             _client?.Close();
             OnDisconnected();
@@ -59,21 +62,22 @@ namespace SetNet.Core
                     while (packetBuilder.TryGetCompletePacket(out var packet))
                     {
                         var (type, data) = PacketBuilder.ParsePacket(packet);
+                        LogNewMessage(type);
                         HandleMessage(type, data);
                     }
                 }
             }
             catch (IOException)
             {
-                Console.WriteLine("Connection lost due to IO error.");
+                OnError("Connection lost due to IO error.");
             }
             catch (SocketException)
             {
-                Console.WriteLine("Connection lost due to socket error.");
+                OnError("Connection lost due to socket error.");
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"Error: {ex.Message}");
+                OnError($"Error: {ex.Message}");
             }
             finally
             {
@@ -96,6 +100,11 @@ namespace SetNet.Core
 
         protected abstract void RegisterDataHandlers();
         protected abstract void OnDisconnected();
+        protected abstract void OnError(string error);
+        protected virtual void LogNewMessage(ushort type)
+        {
+            
+        }
 
     }
 }

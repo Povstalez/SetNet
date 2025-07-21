@@ -43,4 +43,9 @@ public class MainClient(Configuration config) : BaseClient(config)
     {
         Console.WriteLine("Disconnected from server");
     }
+
+    protected override void OnError(string error)
+    {
+        Console.WriteLine($"Error: {error}");
+    }
 }
