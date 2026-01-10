@@ -4,6 +4,8 @@ using System.Net;
 using System.Net.Sockets;
 using System.Threading.Tasks;
 using SetNet.Config;
+using SetNet.Core.Commands;
+using SetNet.Data;
 
 namespace SetNet.Core
 {
@@ -12,11 +14,13 @@ namespace SetNet.Core
         private readonly TcpListener _listener;
         private readonly Dictionary<Guid, BasePeer> _clients = new Dictionary<Guid, BasePeer>();
         private readonly Configuration _config;
+        private readonly CommandExecutor<IServerMessageHandler> _commandExecutor;
         private bool _running;
 
         protected BaseServer(Configuration config)
         {
             _config = config;
+            _commandExecutor = new CommandExecutor<IServerMessageHandler>();
             _listener = new TcpListener(IPAddress.Parse(config.Host), config.Port);
         }
 
@@ -30,7 +34,7 @@ namespace SetNet.Core
             while (_running)
             {
                 var client = await _listener.AcceptTcpClientAsync();
-                var peerInfo = new PeerInfo(client, _config, this);
+                var peerInfo = new PeerInfo(client, _config, this, _commandExecutor);
                 var peer = OnNewClient(peerInfo);
 
                 lock (_clients)

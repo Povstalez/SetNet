@@ -14,15 +14,16 @@ public class PlayerPeer : BasePeer
 
     public void TestSend()
     {
-        SendAsync((ushort) MessageTypes.UpdateClientId, new UpdateClientIdMessage()
+        SendAsync( 0, new TestMessage()
         {
-            ClientId = CurrentPeerInfo.Id
+            Message = "Hello from server!"
         });
     }
 
     protected override void RegisterDataHandlers()
     {
-        RegisterDataHandler((ushort)MessageTypes.PositionChanged, OnPositionChanged);
+        base.RegisterDataHandlers();
+        // RegisterDataHandler((ushort)MessageTypes.PositionChanged, OnPositionChanged);
     }
 
     protected override void OnDisconnected()
@@ -33,6 +34,6 @@ public class PlayerPeer : BasePeer
     private async Task OnPositionChanged(byte[] obj)
     {
         var message = MessagePackSerializer.Deserialize<TestMessage>(obj);
-        Console.WriteLine($"Received message on server. X: {message.X}, Y: {message.Y}");
+        Console.WriteLine($"Received message on server. Message: {message.Message}");
     }
 }

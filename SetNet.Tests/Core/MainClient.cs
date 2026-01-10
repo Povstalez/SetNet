@@ -15,10 +15,6 @@ public class MainClient(Configuration config) : BaseClient(config)
     private void OnPositionChanged(byte[] data)
     {
         var message = MessagePackSerializer.Deserialize<TestMessage>(data);
-        Console.WriteLine($"Received message on client. X: {message.X}, Y: {message.Y}");
-
-        message.X = 4444.55f;
-        message.Y = 5555.44f;
         SendAsync((ushort)MessageTypes.PositionChanged, message);
     }
     
@@ -28,15 +24,19 @@ public class MainClient(Configuration config) : BaseClient(config)
         Console.WriteLine($"Update ClientId. {message.ClientId}");
 
         var testMsg = new TestMessage();
-        testMsg.X = 4444.55f;
-        testMsg.Y = 5555.44f;
+        testMsg.Message = "Test from client";
         SendAsync((ushort)MessageTypes.PositionChanged, testMsg);
     }
 
-    protected override void RegisterDataHandlers()
+    protected override void OnConnected()
     {
-        RegisterDataHandler((ushort)MessageTypes.PositionChanged, OnPositionChanged);
-        RegisterDataHandler((ushort)MessageTypes.UpdateClientId, OnUpdateClientId);
+        Console.WriteLine("Connected to server");
+
+        SendAsync(0, new TestMessage()
+        {
+            Message = "Hello from client!"
+        });
+
     }
 
     protected override void OnDisconnected()

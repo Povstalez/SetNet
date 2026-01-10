@@ -84,9 +84,21 @@ namespace SetNet.Core
             CurrentPeerInfo.Disconnect();
             OnDisconnected();
         }
-
-        protected abstract void RegisterDataHandlers();
+        
+        protected virtual void RegisterDataHandlers()
+        {
+            foreach (var messageType in CurrentPeerInfo.CommandExecutor.Keys)
+            {
+                RegisterDataHandler(messageType, CreateHandlerDelegate(messageType));
+            }
+        }
+        
         protected abstract void OnDisconnected();
+        
+        private Func<byte[], Task> CreateHandlerDelegate(ushort messageType)
+        {
+            return async data => await CurrentPeerInfo.CommandExecutor.Handlers[messageType].HandleAsync(this, data);
+        }
 
     }
 }

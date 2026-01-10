@@ -4,6 +4,8 @@ using System.Net.Sockets;
 using System.Threading;
 using System.Threading.Tasks;
 using SetNet.Config;
+using SetNet.Core.Commands;
+using SetNet.Data;
 using SetNet.Messaging;
 
 namespace SetNet.Core
@@ -13,12 +15,15 @@ namespace SetNet.Core
     {
         private readonly Configuration _config;
         private TcpClient _client;
+        private CommandExecutor<IClientMessageHandler> _commandExecutor;
 
         private CancellationTokenSource _cancellationTokenSource;
 
         protected BaseClient(Configuration config) : base()
         {
             _config = config;
+
+            _commandExecutor = new CommandExecutor<IClientMessageHandler>();
         }
 
         public async Task ConnectAsync()
@@ -32,6 +37,7 @@ namespace SetNet.Core
             Stream = _client.GetStream();
 
             _ = ReceiveAsync(_client);
+            OnConnected();
         }
 
         public void Disconnect()
@@ -98,7 +104,20 @@ namespace SetNet.Core
             await Stream.WriteAsync(data, 0, data.Length);
         }
 
-        protected abstract void RegisterDataHandlers();
+        protected virtual void RegisterDataHandlers()
+        {
+            foreach (var messageType in _commandExecutor.Keys)
+            {
+                RegisterDataHandler(messageType, CreateHandlerDelegate(messageType));
+            }
+        }
+        
+        private Func<byte[], Task> CreateHandlerDelegate(ushort messageType)
+        {
+            return async data => await _commandExecutor.Handlers[messageType].HandleAsync(data);
+        }
+
+        protected abstract void OnConnected();
         protected abstract void OnDisconnected();
         protected abstract void OnError(string error);
         protected virtual void LogNewMessage(ushort type)
