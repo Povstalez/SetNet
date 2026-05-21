@@ -199,11 +199,63 @@ var client = new GameClient(config);
 await client.ConnectAsync();
 ```
 
-When an unexpected disconnect occurs with `AutoReconnect = true`:
-1. `OnUnexpectedDisconnect()` fires immediately
-2. `OnReconnecting()` is called N times (with configurable delay)
-3. If reconnect succeeds, `OnReconnected()` fires and the receive loop resumes
-4. If all attempts fail, `OnReconnectFailed()` then `OnDisconnected()` fire
+When an error occurs (and AutoReconnect is enabled):
+1. `OnError()` fires immediately with error details
+2. `OnUnexpectedDisconnect()` fires (only if actual error, not graceful server close)
+3. `OnReconnecting()` is called N times (with configurable delay)
+4. If reconnect succeeds, `OnReconnected()` fires and the receive loop resumes
+5. If all attempts fail, `OnReconnectFailed()` then `OnDisconnected()` fire
+
+When server closes gracefully (bytesRead==0):
+- Only `OnDisconnected()` fires (no reconnect, not considered unexpected)
+
+**Disconnect flow on client:**
+
+| Event | OnError | OnUnexpectedDisconnect | OnDisconnected | Auto-Reconnect |
+|---|---|---|---|---|
+| Client calls `Disconnect()` (intentional) | ❌ | ❌ | ✅ | ❌ |
+| Network error / Server crash | ✅ | ✅ | ✅ (if reconnect fails) | ✅ (if enabled) |
+| Server graceful close (bytesRead==0) | ❌ | ❌ | ✅ | ❌ |
+
+### Server-side: Handling Client Disconnects in BasePeer
+
+**BasePeer** (server-side) also distinguishes between intentional and unexpected client disconnects:
+
+- **Intentional disconnect**: When you call `Close()` on a peer (server-initiated kick), only `OnDisconnected()` is called.
+- **Unexpected disconnect**: When a client crashes or network fails, `OnError()` and `OnUnexpectedDisconnect()` are called.
+
+Override methods in your BasePeer subclass:
+
+```csharp
+public class GameServerPeer : BasePeer
+{
+    protected override void OnDisconnected()
+    {
+        // Called when connection closes (intentional kick, error, or graceful close)
+    }
+
+    protected override void OnError(string error)
+    {
+        // Called only when there's an unexpected error (IO error, socket error, crash)
+        Console.WriteLine(error);
+    }
+
+    protected override void OnUnexpectedDisconnect()
+    {
+        // Called when client crashes or network fails (not on graceful close)
+        Console.WriteLine("Client unexpectedly disconnected!");
+    }
+}
+```
+
+**Disconnect flow on server:**
+
+| Event | OnError | OnUnexpectedDisconnect | OnDisconnected |
+|---|---|---|---|
+| Server calls `Close()` (intentional kick) | ❌ | ❌ | ✅ |
+| Client crash / IO error / Socket error | ✅ | ✅ | ✅ |
+| Client graceful close (bytesRead==0) | ❌ | ❌ | ✅ |
+```
 
 ## Project Structure
 

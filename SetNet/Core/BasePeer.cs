@@ -11,6 +11,7 @@ namespace SetNet.Core
     public abstract class BasePeer : BaseSocket
     {
         protected readonly PeerInfo CurrentPeerInfo;
+        private volatile bool _isIntentionalClose;
 
         protected BasePeer(PeerInfo currentPeerInfo) : base()
         {
@@ -27,6 +28,7 @@ namespace SetNet.Core
         private async Task HandlePeerAsync()
         {
             var buffer = new byte[CurrentPeerInfo.Config.BufferSize];
+            var hadError = false;
 
             try
             {
@@ -46,23 +48,43 @@ namespace SetNet.Core
             }
             catch (IOException)
             {
-                Console.WriteLine($"Client {CurrentPeerInfo.Id} disconnected due to IO error.");
+                hadError = true;
+                if (!_isIntentionalClose)
+                    OnError($"Client {CurrentPeerInfo.Id} disconnected due to IO error.");
             }
             catch (SocketException)
             {
-                Console.WriteLine($"Client {CurrentPeerInfo.Id} disconnected due to socket error.");
+                hadError = true;
+                if (!_isIntentionalClose)
+                    OnError($"Client {CurrentPeerInfo.Id} disconnected due to socket error.");
             }
             catch (ObjectDisposedException)
             {
-                Console.WriteLine($"Client {CurrentPeerInfo.Id} connection was closed.");
+                hadError = true;
+                if (!_isIntentionalClose)
+                    OnError($"Client {CurrentPeerInfo.Id} connection was closed.");
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"Client {CurrentPeerInfo.Id} error: {ex.Message}");
+                hadError = true;
+                if (!_isIntentionalClose)
+                    OnError($"Client {CurrentPeerInfo.Id} error: {ex.Message}");
             }
             finally
             {
-                Close();
+                if (_isIntentionalClose)
+                {
+                    _isIntentionalClose = false;
+                }
+                else if (hadError)
+                {
+                    OnUnexpectedDisconnect();
+                    Close();
+                }
+                else
+                {
+                    Close();
+                }
             }
         }
 
@@ -81,6 +103,7 @@ namespace SetNet.Core
 
         public virtual void Close()
         {
+            _isIntentionalClose = true;
             CurrentPeerInfo.Disconnect();
             OnDisconnected();
         }
@@ -94,7 +117,10 @@ namespace SetNet.Core
         }
         
         protected abstract void OnDisconnected();
-        
+
+        protected virtual void OnError(string error) { }
+        protected virtual void OnUnexpectedDisconnect() { }
+
         private Func<byte[], Task> CreateHandlerDelegate(ushort messageType)
         {
             return async data => await CurrentPeerInfo.CommandExecutor.Handlers[messageType].HandleAsync(this, data);

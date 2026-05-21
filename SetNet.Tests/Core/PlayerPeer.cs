@@ -28,7 +28,17 @@ public class PlayerPeer : BasePeer
 
     protected override void OnDisconnected()
     {
-        Console.WriteLine($"Client {CurrentPeerInfo.Id} disconnected.");
+        Console.WriteLine($"[Server] Client {CurrentPeerInfo.Id} disconnected.");
+    }
+
+    protected override void OnError(string error)
+    {
+        Console.WriteLine($"[Server] {error}");
+    }
+
+    protected override void OnUnexpectedDisconnect()
+    {
+        Console.WriteLine($"[Server] Client {CurrentPeerInfo.Id} unexpectedly disconnected!");
     }
 
     private async Task OnPositionChanged(byte[] obj)

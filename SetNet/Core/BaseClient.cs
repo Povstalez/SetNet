@@ -58,6 +58,7 @@ namespace SetNet.Core
             var stream = client.GetStream();
             var buffer = new byte[_config.BufferSize];
             var packetBuilder = new PacketBuilder();
+            var hadError = false;
 
             try
             {
@@ -78,16 +79,19 @@ namespace SetNet.Core
             }
             catch (IOException)
             {
+                hadError = true;
                 if (!_isIntentionalDisconnect)
                     OnError("Connection lost due to IO error.");
             }
             catch (SocketException)
             {
+                hadError = true;
                 if (!_isIntentionalDisconnect)
                     OnError("Connection lost due to socket error.");
             }
             catch (Exception ex)
             {
+                hadError = true;
                 if (!_isIntentionalDisconnect)
                     OnError($"Error: {ex.Message}");
             }
@@ -97,7 +101,7 @@ namespace SetNet.Core
                 {
                     _isIntentionalDisconnect = false;
                 }
-                else
+                else if (hadError)
                 {
                     _client?.Close();
                     OnUnexpectedDisconnect();
@@ -106,6 +110,11 @@ namespace SetNet.Core
                         _ = ReconnectAsync();
                     else
                         OnDisconnected();
+                }
+                else
+                {
+                    _client?.Close();
+                    OnDisconnected();
                 }
             }
         }
