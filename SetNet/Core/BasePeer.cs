@@ -7,11 +7,12 @@ using SetNet.Messaging;
 
 namespace SetNet.Core
 {
-
     public abstract class BasePeer : BaseSocket
     {
         protected readonly PeerInfo CurrentPeerInfo;
         private volatile bool _isIntentionalClose;
+        private volatile bool _isHeartbeatTimeoutClose;
+        private DateTime _lastPingReceived;
 
         protected BasePeer(PeerInfo currentPeerInfo) : base()
         {
@@ -22,6 +23,14 @@ namespace SetNet.Core
         public void StartReceive()
         {
             RegisterDataHandlers();
+
+            if (CurrentPeerInfo.Config.HeartbeatEnabled)
+            {
+                _lastPingReceived = DateTime.UtcNow;
+                RegisterDataHandler(SystemMessageTypes.Ping, OnPingReceived);
+                _ = HeartbeatTimeoutCheckAsync();
+            }
+
             _ = HandlePeerAsync();
         }
 
@@ -49,50 +58,77 @@ namespace SetNet.Core
             catch (IOException)
             {
                 hadError = true;
-                if (!_isIntentionalClose)
+                if (!_isIntentionalClose && !_isHeartbeatTimeoutClose)
                     OnError($"Client {CurrentPeerInfo.Id} disconnected due to IO error.");
             }
             catch (SocketException)
             {
                 hadError = true;
-                if (!_isIntentionalClose)
+                if (!_isIntentionalClose && !_isHeartbeatTimeoutClose)
                     OnError($"Client {CurrentPeerInfo.Id} disconnected due to socket error.");
             }
             catch (ObjectDisposedException)
             {
                 hadError = true;
-                if (!_isIntentionalClose)
+                if (!_isIntentionalClose && !_isHeartbeatTimeoutClose)
                     OnError($"Client {CurrentPeerInfo.Id} connection was closed.");
             }
             catch (Exception ex)
             {
                 hadError = true;
-                if (!_isIntentionalClose)
+                if (!_isIntentionalClose && !_isHeartbeatTimeoutClose)
                     OnError($"Client {CurrentPeerInfo.Id} error: {ex.Message}");
             }
             finally
             {
+                var wasHeartbeat = _isHeartbeatTimeoutClose;
+                _isHeartbeatTimeoutClose = false;
+
                 if (_isIntentionalClose)
-                {
                     _isIntentionalClose = false;
-                }
-                else if (hadError)
+                else if (hadError || wasHeartbeat)
                 {
                     OnUnexpectedDisconnect();
                     Close();
                 }
                 else
-                {
                     Close();
+            }
+        }
+
+        private void OnPingReceived(byte[] data)
+        {
+            _lastPingReceived = DateTime.UtcNow;
+            var packet = PacketBuilder.BuildPacket(SystemMessageTypes.Pong, Array.Empty<byte>());
+            _ = SendAsync(packet);
+        }
+
+        private async Task HeartbeatTimeoutCheckAsync()
+        {
+            try
+            {
+                await Task.Delay(CurrentPeerInfo.Config.HeartbeatTimeoutMs);
+
+                while (CurrentPeerInfo.Client.Connected)
+                {
+                    if ((DateTime.UtcNow - _lastPingReceived).TotalMilliseconds > CurrentPeerInfo.Config.HeartbeatTimeoutMs)
+                    {
+                        _isHeartbeatTimeoutClose = true;
+                        OnError($"Client {CurrentPeerInfo.Id} heartbeat timeout.");
+                        CurrentPeerInfo.Client.Close();
+                        return;
+                    }
+
+                    await Task.Delay(CurrentPeerInfo.Config.HeartbeatIntervalMs);
                 }
             }
+            catch { }
         }
 
         protected async Task SendAsync<T>(ushort type, T message)
         {
             var data = MessagePackSerializer.Serialize(message);
             var packet = PacketBuilder.BuildPacket(type, data);
-
             await SendAsync(packet);
         }
 
@@ -107,17 +143,14 @@ namespace SetNet.Core
             CurrentPeerInfo.Disconnect();
             OnDisconnected();
         }
-        
+
         protected virtual void RegisterDataHandlers()
         {
             foreach (var messageType in CurrentPeerInfo.CommandExecutor.Keys)
-            {
                 RegisterDataHandler(messageType, CreateHandlerDelegate(messageType));
-            }
         }
-        
-        protected abstract void OnDisconnected();
 
+        protected abstract void OnDisconnected();
         protected virtual void OnError(string error) { }
         protected virtual void OnUnexpectedDisconnect() { }
 
@@ -125,6 +158,5 @@ namespace SetNet.Core
         {
             return async data => await CurrentPeerInfo.CommandExecutor.Handlers[messageType].HandleAsync(this, data);
         }
-
     }
 }

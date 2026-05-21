@@ -48,4 +48,24 @@ public class MainClient(Configuration config) : BaseClient(config)
     {
         Console.WriteLine($"Error: {error}");
     }
+
+    protected override void OnStateChanged(ConnectionState from, ConnectionState to)
+    {
+        Console.WriteLine($"[State] {from} → {to}");
+    }
+
+    protected override void OnReconnecting(int attempt, int maxAttempts)
+    {
+        Console.WriteLine($"[Reconnect] Attempt {attempt}/{maxAttempts}...");
+    }
+
+    protected override void OnReconnected()
+    {
+        Console.WriteLine("[Reconnect] Successfully reconnected!");
+    }
+
+    protected override void OnReconnectFailed()
+    {
+        Console.WriteLine("[Reconnect] All attempts failed.");
+    }
 }
