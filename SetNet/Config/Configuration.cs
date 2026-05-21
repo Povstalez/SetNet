@@ -1,3 +1,5 @@
+using SetNet.Logging;
+
 namespace SetNet.Config
 {
     public class Configuration
@@ -17,5 +19,7 @@ namespace SetNet.Config
         public bool HeartbeatEnabled { get; set; } = false;
         public int HeartbeatIntervalMs { get; set; } = 5000;
         public int HeartbeatTimeoutMs { get; set; } = 15000;
+
+        public ILogger Logger { get; set; } = new ConsoleLogger();
     }
 }

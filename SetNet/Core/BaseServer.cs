@@ -35,7 +35,7 @@ namespace SetNet.Core
             _listener.Start();
             _cts.Token.Register(() => _listener.Stop());
 
-            Console.WriteLine($"Server started on {_config.Host}:{_config.Port}");
+            _config.Logger.Log($"Server started on {_config.Host}:{_config.Port}", global::SetNet.Logging.LogLevel.Info);
 
             while (!_cts.IsCancellationRequested)
             {
@@ -55,7 +55,7 @@ namespace SetNet.Core
                     _clients[peerInfo.Id] = peer;
                 }
 
-                Console.WriteLine($"Client connected: {peerInfo.Id}");
+                _config.Logger.Log($"Client connected: {peerInfo.Id}", global::SetNet.Logging.LogLevel.Info);
             }
         }
 
@@ -70,7 +70,7 @@ namespace SetNet.Core
                 _clients.Clear();
             }
 
-            Console.WriteLine("Server stopped");
+            _config.Logger.Log("Server stopped", global::SetNet.Logging.LogLevel.Info);
             return Task.CompletedTask;
         }
 
