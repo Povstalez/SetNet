@@ -17,9 +17,10 @@ namespace SetNet.Core
         private CommandExecutor<IClientMessageHandler> _commandExecutor;
 
         private CancellationTokenSource _cancellationTokenSource;
+        private readonly SemaphoreSlim _writeLock = new SemaphoreSlim(1, 1);
         private volatile bool _isIntentionalDisconnect;
         private volatile bool _isHeartbeatTimeout;
-        private DateTime _lastPongReceived;
+        private long _lastPongReceivedTicks;
 
         public ConnectionState State { get; private set; } = ConnectionState.Disconnected;
 
@@ -43,8 +44,8 @@ namespace SetNet.Core
 
             if (_config.HeartbeatEnabled)
             {
-                _lastPongReceived = DateTime.UtcNow;
-                RegisterDataHandler(SystemMessageTypes.Pong, _ => _lastPongReceived = DateTime.UtcNow);
+                Interlocked.Exchange(ref _lastPongReceivedTicks, DateTime.UtcNow.Ticks);
+                RegisterDataHandler(SystemMessageTypes.Pong, OnPongReceived);
                 _ = HeartbeatLoopAsync(_cancellationTokenSource.Token);
             }
 
@@ -164,7 +165,10 @@ namespace SetNet.Core
                 {
                     await Task.Delay(_config.HeartbeatIntervalMs, token);
 
-                    if ((DateTime.UtcNow - _lastPongReceived).TotalMilliseconds > _config.HeartbeatTimeoutMs)
+                    var elapsed = (DateTime.UtcNow.Ticks - Interlocked.Read(ref _lastPongReceivedTicks))
+                                  / TimeSpan.TicksPerMillisecond;
+
+                    if (elapsed > _config.HeartbeatTimeoutMs)
                     {
                         _isHeartbeatTimeout = true;
                         OnError("Heartbeat timeout - no response from server.");
@@ -173,7 +177,7 @@ namespace SetNet.Core
                     }
 
                     var packet = PacketBuilder.BuildPacket(SystemMessageTypes.Ping, Array.Empty<byte>());
-                    await Stream.WriteAsync(packet, 0, packet.Length);
+                    await SendAsync(packet, token);
                 }
             }
             catch (OperationCanceledException) { }
@@ -192,15 +196,20 @@ namespace SetNet.Core
                 try
                 {
                     _isIntentionalDisconnect = false;
-                    _cancellationTokenSource = new CancellationTokenSource();
-                    _client = new TcpClient();
 
+                    // Cancel old CTS to stop any stale HeartbeatLoopAsync before reconnecting
+                    var oldCts = _cancellationTokenSource;
+                    _cancellationTokenSource = new CancellationTokenSource();
+                    oldCts.Cancel();
+                    oldCts.Dispose();
+
+                    _client = new TcpClient();
                     await ConnectWithTimeoutAsync();
                     Stream = _client.GetStream();
 
                     if (_config.HeartbeatEnabled)
                     {
-                        _lastPongReceived = DateTime.UtcNow;
+                        Interlocked.Exchange(ref _lastPongReceivedTicks, DateTime.UtcNow.Ticks);
                         _ = HeartbeatLoopAsync(_cancellationTokenSource.Token);
                     }
 
@@ -217,11 +226,29 @@ namespace SetNet.Core
             OnDisconnected();
         }
 
+        private void OnPongReceived(byte[] data)
+        {
+            Interlocked.Exchange(ref _lastPongReceivedTicks, DateTime.UtcNow.Ticks);
+        }
+
         protected async Task SendAsync<T>(ushort type, T message)
         {
             var data = MessagePackSerializer.Serialize(message);
             var packet = PacketBuilder.BuildPacket(type, data);
-            await Stream.WriteAsync(packet, 0, packet.Length);
+            await SendAsync(packet);
+        }
+
+        private async Task SendAsync(byte[] data, CancellationToken cancellationToken = default)
+        {
+            await _writeLock.WaitAsync(cancellationToken);
+            try
+            {
+                await Stream.WriteAsync(data, 0, data.Length);
+            }
+            finally
+            {
+                _writeLock.Release();
+            }
         }
 
         protected virtual void RegisterDataHandlers()

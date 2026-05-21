@@ -1,6 +1,7 @@
 using System;
 using System.IO;
 using System.Net.Sockets;
+using System.Threading;
 using System.Threading.Tasks;
 using SetNet.Config;
 using SetNet.Messaging;
@@ -10,9 +11,10 @@ namespace SetNet.Core
     public abstract class BasePeer : BaseSocket
     {
         protected readonly PeerInfo CurrentPeerInfo;
+        private readonly SemaphoreSlim _writeLock = new SemaphoreSlim(1, 1);
         private volatile bool _isIntentionalClose;
         private volatile bool _isHeartbeatTimeoutClose;
-        private DateTime _lastPingReceived;
+        private long _lastPingReceivedTicks;
 
         protected BasePeer(PeerInfo currentPeerInfo) : base()
         {
@@ -26,7 +28,7 @@ namespace SetNet.Core
 
             if (CurrentPeerInfo.Config.HeartbeatEnabled)
             {
-                _lastPingReceived = DateTime.UtcNow;
+                Interlocked.Exchange(ref _lastPingReceivedTicks, DateTime.UtcNow.Ticks);
                 RegisterDataHandler(SystemMessageTypes.Ping, OnPingReceived);
                 _ = HeartbeatTimeoutCheckAsync();
             }
@@ -98,7 +100,7 @@ namespace SetNet.Core
 
         private void OnPingReceived(byte[] data)
         {
-            _lastPingReceived = DateTime.UtcNow;
+            Interlocked.Exchange(ref _lastPingReceivedTicks, DateTime.UtcNow.Ticks);
             var packet = PacketBuilder.BuildPacket(SystemMessageTypes.Pong, Array.Empty<byte>());
             _ = SendAsync(packet);
         }
@@ -111,7 +113,10 @@ namespace SetNet.Core
 
                 while (CurrentPeerInfo.Client.Connected)
                 {
-                    if ((DateTime.UtcNow - _lastPingReceived).TotalMilliseconds > CurrentPeerInfo.Config.HeartbeatTimeoutMs)
+                    var elapsed = (DateTime.UtcNow.Ticks - Interlocked.Read(ref _lastPingReceivedTicks))
+                                  / TimeSpan.TicksPerMillisecond;
+
+                    if (elapsed > CurrentPeerInfo.Config.HeartbeatTimeoutMs)
                     {
                         _isHeartbeatTimeoutClose = true;
                         OnError($"Client {CurrentPeerInfo.Id} heartbeat timeout.");
@@ -134,7 +139,15 @@ namespace SetNet.Core
 
         protected async Task SendAsync(byte[] data)
         {
-            await Stream.WriteAsync(data, 0, data.Length);
+            await _writeLock.WaitAsync();
+            try
+            {
+                await Stream.WriteAsync(data, 0, data.Length);
+            }
+            finally
+            {
+                _writeLock.Release();
+            }
         }
 
         public virtual void Close()
