@@ -18,6 +18,7 @@ namespace SetNet.Core
         private CommandExecutor<IClientMessageHandler> _commandExecutor;
 
         private CancellationTokenSource _cancellationTokenSource;
+        private volatile bool _isIntentionalDisconnect;
 
         protected BaseClient(Configuration config) : base()
         {
@@ -28,6 +29,7 @@ namespace SetNet.Core
 
         public async Task ConnectAsync()
         {
+            _isIntentionalDisconnect = false;
             RegisterDataHandlers();
 
             _cancellationTokenSource = new CancellationTokenSource();
@@ -44,7 +46,8 @@ namespace SetNet.Core
         {
             if(_cancellationTokenSource.Token.IsCancellationRequested)
                 return;
-            
+
+            _isIntentionalDisconnect = true;
             _cancellationTokenSource.Cancel();
             _client?.Close();
             OnDisconnected();
@@ -75,19 +78,35 @@ namespace SetNet.Core
             }
             catch (IOException)
             {
-                OnError("Connection lost due to IO error.");
+                if (!_isIntentionalDisconnect)
+                    OnError("Connection lost due to IO error.");
             }
             catch (SocketException)
             {
-                OnError("Connection lost due to socket error.");
+                if (!_isIntentionalDisconnect)
+                    OnError("Connection lost due to socket error.");
             }
             catch (Exception ex)
             {
-                OnError($"Error: {ex.Message}");
+                if (!_isIntentionalDisconnect)
+                    OnError($"Error: {ex.Message}");
             }
             finally
             {
-                Disconnect();
+                if (_isIntentionalDisconnect)
+                {
+                    _isIntentionalDisconnect = false;
+                }
+                else
+                {
+                    _client?.Close();
+                    OnUnexpectedDisconnect();
+
+                    if (_config.AutoReconnect)
+                        _ = ReconnectAsync();
+                    else
+                        OnDisconnected();
+                }
             }
         }
 
@@ -102,6 +121,32 @@ namespace SetNet.Core
         private async Task SendAsync(byte[] data)
         {
             await Stream.WriteAsync(data, 0, data.Length);
+        }
+
+        private async Task ReconnectAsync()
+        {
+            for (int attempt = 1; attempt <= _config.MaxReconnectAttempts; attempt++)
+            {
+                OnReconnecting(attempt, _config.MaxReconnectAttempts);
+                await Task.Delay(_config.ReconnectDelayMs);
+
+                try
+                {
+                    _isIntentionalDisconnect = false;
+                    _cancellationTokenSource = new CancellationTokenSource();
+                    _client = new TcpClient();
+                    await _client.ConnectAsync(_config.Host, _config.Port);
+                    Stream = _client.GetStream();
+
+                    _ = ReceiveAsync(_client);
+                    OnReconnected();
+                    return;
+                }
+                catch { }
+            }
+
+            OnReconnectFailed();
+            OnDisconnected();
         }
 
         protected virtual void RegisterDataHandlers()
@@ -122,8 +167,13 @@ namespace SetNet.Core
         protected abstract void OnError(string error);
         protected virtual void LogNewMessage(ushort type)
         {
-            
+
         }
+
+        protected virtual void OnUnexpectedDisconnect() { }
+        protected virtual void OnReconnecting(int attempt, int maxAttempts) { }
+        protected virtual void OnReconnected() { }
+        protected virtual void OnReconnectFailed() { }
 
     }
 }
