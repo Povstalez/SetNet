@@ -14,6 +14,7 @@ namespace SetNet.Core
         private readonly SemaphoreSlim _writeLock = new SemaphoreSlim(1, 1);
         private volatile bool _isIntentionalClose;
         private volatile bool _isHeartbeatTimeoutClose;
+        private volatile bool _receiving;
         private long _lastPingReceivedTicks;
 
         protected BasePeer(PeerInfo currentPeerInfo) : base()
@@ -24,6 +25,10 @@ namespace SetNet.Core
 
         public void StartReceive()
         {
+            if (_receiving)
+                throw new InvalidOperationException($"Receive already started for peer {CurrentPeerInfo.Id}.");
+
+            _receiving = true;
             RegisterDataHandlers();
 
             if (CurrentPeerInfo.Config.HeartbeatEnabled)
@@ -132,6 +137,9 @@ namespace SetNet.Core
 
         protected async Task SendAsync<T>(ushort type, T message)
         {
+            if (_isIntentionalClose || !CurrentPeerInfo.Client.Connected)
+                throw new InvalidOperationException($"Cannot send: peer {CurrentPeerInfo.Id} is not connected.");
+
             var data = MessagePackSerializer.Serialize(message);
             var packet = PacketBuilder.BuildPacket(type, data);
             await SendAsync(packet);

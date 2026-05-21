@@ -10,7 +10,7 @@ using SetNet.Messaging;
 
 namespace SetNet.Core
 {
-    public abstract class BaseClient : BaseSocket
+    public abstract class BaseClient : BaseSocket, IDisposable
     {
         private readonly Configuration _config;
         private TcpClient _client;
@@ -21,6 +21,7 @@ namespace SetNet.Core
         private volatile bool _isIntentionalDisconnect;
         private volatile bool _isHeartbeatTimeout;
         private long _lastPongReceivedTicks;
+        private bool _disposed;
 
         public ConnectionState State { get; private set; } = ConnectionState.Disconnected;
 
@@ -32,6 +33,10 @@ namespace SetNet.Core
 
         public async Task ConnectAsync()
         {
+            if (_disposed) throw new ObjectDisposedException(nameof(BaseClient));
+            if (State != ConnectionState.Disconnected)
+                throw new InvalidOperationException($"Cannot connect: state is '{State}'.");
+
             SetState(ConnectionState.Connecting);
             _isIntentionalDisconnect = false;
             RegisterDataHandlers();
@@ -56,7 +61,7 @@ namespace SetNet.Core
 
         public void Disconnect()
         {
-            if (_cancellationTokenSource.Token.IsCancellationRequested)
+            if (_cancellationTokenSource == null || _cancellationTokenSource.Token.IsCancellationRequested)
                 return;
 
             SetState(ConnectionState.Disconnecting);
@@ -233,6 +238,10 @@ namespace SetNet.Core
 
         protected async Task SendAsync<T>(ushort type, T message)
         {
+            if (_disposed) throw new ObjectDisposedException(nameof(BaseClient));
+            if (State != ConnectionState.Connected)
+                throw new InvalidOperationException($"Cannot send: state is '{State}'.");
+
             var data = MessagePackSerializer.Serialize(message);
             var packet = PacketBuilder.BuildPacket(type, data);
             await SendAsync(packet);
@@ -268,6 +277,23 @@ namespace SetNet.Core
             if (old == newState) return;
             State = newState;
             OnStateChanged(old, newState);
+        }
+
+        public void Dispose()
+        {
+            Dispose(true);
+            GC.SuppressFinalize(this);
+        }
+
+        protected virtual void Dispose(bool disposing)
+        {
+            if (_disposed) return;
+            _disposed = true;
+            if (!disposing) return;
+
+            Disconnect();
+            _writeLock.Dispose();
+            _cancellationTokenSource?.Dispose();
         }
 
         protected abstract void OnConnected();
