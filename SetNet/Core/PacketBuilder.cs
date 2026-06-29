@@ -113,7 +113,11 @@ namespace SetNet.Core
         /// </returns>
         public static (ushort, byte[]) ParsePacket(byte[] packet)
         {
-            // packet = [2-byte type][payload] (length prefix already stripped by the reassembler)
+            // packet = [2-byte type][payload] (length prefix already stripped by the reassembler).
+            // A well-formed packet always carries at least the 2-byte type; anything shorter is a
+            // corrupt/malicious frame — return an empty message rather than indexing past the end.
+            if (packet.Length < 2)
+                return (0, Array.Empty<byte>());
             var type = (ushort)(packet[0] | (packet[1] << 8));
             var data = new byte[packet.Length - 2];
             Buffer.BlockCopy(packet, 2, data, 0, data.Length);
@@ -171,8 +175,10 @@ namespace SetNet.Core
 
             var length = BitConverter.ToInt32(_buffer, _start);
 
-            // Guard against a corrupt/malicious length prefix.
-            if (length < 0)
+            // Guard against a corrupt/malicious length prefix. A valid frame's length counts the
+            // 2-byte type plus payload, so it must be >= 2; anything smaller (negative, 0, 1) is
+            // corrupt — reset and resync rather than buffering a bogus body.
+            if (length < 2)
             {
                 _start = _end = 0;
                 return false;
@@ -219,7 +225,10 @@ namespace SetNet.Core
                 return false;
 
             var length = BitConverter.ToInt32(_buffer, _start);
-            if (length < 0)
+            // length counts the 2-byte type + payload, so a valid frame is always >= 2.
+            // Negative/0/1 is a corrupt or malicious prefix: reset and resync rather than
+            // computing a negative payload length (which would throw on allocation).
+            if (length < 2)
             {
                 _start = _end = 0;
                 return false;

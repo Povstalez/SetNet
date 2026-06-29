@@ -56,6 +56,9 @@ namespace SetNet.Core.Transport.Tcp
         /// <summary>Registration id of the auto-flush tick on the shared scheduler (when batching).</summary>
         private readonly long _flushId;
 
+        /// <summary>Maximum time a single socket write may take before it is abandoned and the connection torn down; 0 disables the bound.</summary>
+        private readonly int _sendTimeoutMs;
+
         /// <summary>
         /// Wraps an already-connected <see cref="TcpClient"/> as a transport connection, capturing its stream
         /// and allocating the read buffer. Used by both the client connector and the server-side acceptor.
@@ -66,13 +69,15 @@ namespace SetNet.Core.Transport.Tcp
         /// <param name="maxFrameSize">Maximum accepted frame length in bytes (0 = unlimited); larger declared lengths close the connection.</param>
         /// <param name="sendBatching">When true, coalesce outbound frames and flush them together.</param>
         /// <param name="flushMs">Auto-flush interval (ms) for the batch buffer when batching is enabled.</param>
-        public TcpConnection(TcpClient client, Stream stream, int bufferSize, int maxFrameSize, bool sendBatching = false, int flushMs = 15)
+        /// <param name="sendTimeoutMs">Maximum time a single socket write may take before the connection is torn down; 0 disables the bound.</param>
+        public TcpConnection(TcpClient client, Stream stream, int bufferSize, int maxFrameSize, bool sendBatching = false, int flushMs = 15, int sendTimeoutMs = 0)
         {
             _client = client;
             _stream = stream;
             _buffer = new byte[bufferSize];
             _packetBuilder = new PacketBuilder(maxFrameSize);
             _batching = sendBatching;
+            _sendTimeoutMs = sendTimeoutMs;
             if (_batching)
             {
                 _batchBuffer = new byte[bufferSize];
@@ -133,7 +138,11 @@ namespace SetNet.Core.Transport.Tcp
                 await _writeLock.WaitAsync(ct).ConfigureAwait(false);
                 try
                 {
-                    await _stream.WriteAsync(frame, 0, total, ct).ConfigureAwait(false);
+                    // On a send timeout, TimedWriteHeldAsync disposes the stream and awaits the abandoned write
+                    // BEFORE returning — so by the time we release the lock and return the buffer below, no live
+                    // write references the frame and a second sender will hit a disposed stream, never a
+                    // concurrent write on a live one.
+                    await TimedWriteHeldAsync(frame, total, ct).ConfigureAwait(false);
                 }
                 finally
                 {
@@ -144,6 +153,49 @@ namespace SetNet.Core.Transport.Tcp
             {
                 ArrayPool<byte>.Shared.Return(frame);
             }
+        }
+
+        /// <summary>
+        /// Writes <paramref name="count"/> bytes of <paramref name="buf"/> to the stream while the caller holds
+        /// <see cref="_writeLock"/>, bounding the write by <see cref="_sendTimeoutMs"/> when configured. On timeout
+        /// it tears the connection down (disposing the stream, which faults the parked write) and awaits that
+        /// write to completion — all while the lock is still held — so the buffer is free and no second writer can
+        /// start on a live stream, then throws <see cref="TimeoutException"/>. With no timeout configured it is a
+        /// plain awaited write.
+        /// </summary>
+        /// <param name="buf">The buffer to write from (offset 0).</param>
+        /// <param name="count">Number of bytes to write.</param>
+        /// <param name="ct">Caller cancellation token.</param>
+        /// <exception cref="TimeoutException">The write did not complete within <see cref="_sendTimeoutMs"/>.</exception>
+        private async Task TimedWriteHeldAsync(byte[] buf, int count, CancellationToken ct)
+        {
+            if (_sendTimeoutMs <= 0)
+            {
+                await _stream.WriteAsync(buf, 0, count, ct).ConfigureAwait(false);
+                return;
+            }
+
+            // Link the timeout to the caller's token so the delay timer is released promptly on the hot path
+            // (cancelled below) rather than lingering armed for the full timeout on every healthy send.
+            using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            var writeTask = _stream.WriteAsync(buf, 0, count, timeoutCts.Token);
+            var delay = Task.Delay(_sendTimeoutMs, timeoutCts.Token);
+            var finished = await Task.WhenAny(writeTask, delay).ConfigureAwait(false);
+
+            if (finished != writeTask)
+            {
+                // Stuck peer: the write is parked in the kernel. Dispose the stream NOW (still under the lock) to
+                // fault that write, then await it so the buffer is no longer referenced and the lock is released
+                // only once no live write remains. A subsequent sender then hits a disposed stream — never a
+                // concurrent write on a live one.
+                Teardown(flushBatch: false);
+                try { await writeTask.ConfigureAwait(false); } catch { /* expected: faulted by the dispose/cancel */ }
+                throw new TimeoutException($"TCP send timed out after {_sendTimeoutMs}ms.");
+            }
+
+            // Write won: cancel the timeout so its timer is released immediately, then surface any write fault.
+            timeoutCts.Cancel();
+            await writeTask.ConfigureAwait(false);
         }
 
         /// <summary>Grows the batch buffer (doubling) so it can hold <paramref name="extra"/> more bytes. Caller holds the write lock.</summary>
@@ -178,8 +230,9 @@ namespace SetNet.Core.Transport.Tcp
                     _batchLength = 0;
                     try
                     {
-                        await _stream.WriteAsync(_batchBuffer!, 0, len).ConfigureAwait(false);
+                        await TimedWriteHeldAsync(_batchBuffer!, len, CancellationToken.None).ConfigureAwait(false);
                     }
+                    catch (TimeoutException) { /* TimedWriteHeldAsync already disposed the stream under the lock */ }
                     catch { /* connection error; the receive loop will tear down. Batch already discarded. */ }
                 }
             }
@@ -229,14 +282,23 @@ namespace SetNet.Core.Transport.Tcp
         /// Setting <see cref="_closed"/> first causes any in-flight <see cref="ReceiveAsync"/> to observe the
         /// socket as closed and unwind, which is how the receive loop is signalled to stop.
         /// </remarks>
-        public void Close()
+        public void Close() => Teardown(flushBatch: true);
+
+        /// <summary>
+        /// Closes the socket and marks the connection unusable. <paramref name="flushBatch"/> controls whether a
+        /// best-effort flush of buffered frames is attempted first: true for a normal/graceful close, false when
+        /// tearing down a connection whose peer is already stuck (a send timeout), where attempting another
+        /// blocking write would just hang again.
+        /// </summary>
+        /// <param name="flushBatch">Whether to flush any buffered batch before closing.</param>
+        private void Teardown(bool flushBatch)
         {
             if (_closed) return;
             _closed = true;
             if (_batching)
             {
                 TimerScheduler.Shared.Unschedule(_flushId);
-                FlushBatchOnClose(); // best-effort delivery of buffered frames before tearing the socket down
+                if (flushBatch) FlushBatchOnClose(); // best-effort delivery of buffered frames before tearing down
             }
             try { _stream.Dispose(); } catch { /* disposes the SslStream when TLS is in use */ }
             try { _client.Close(); } catch { /* already closed */ }

@@ -91,7 +91,19 @@ namespace SetNet.Core
 
             while (!_cts.IsCancellationRequested)
             {
-                var accepted = await _listener.AcceptAsync(_cts.Token).ConfigureAwait(false);
+                AcceptedConnection? accepted;
+                try
+                {
+                    accepted = await _listener.AcceptAsync(_cts.Token).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException) { break; }
+                catch (Exception ex)
+                {
+                    // AcceptAsync already absorbs per-connection faults; an escape here means the listener itself
+                    // is unusable, so log and exit the loop rather than spinning on a permanent fault.
+                    _config.Logger.Log($"Accept loop terminated: {ex.Message}", global::SetNet.Logging.LogLevel.Error);
+                    break;
+                }
                 if (accepted == null) break;
 
                 if (accepted.RemoteEndPoint != null && !_rateLimiter.Allow(accepted.RemoteEndPoint.Address))
@@ -115,10 +127,11 @@ namespace SetNet.Core
                 try
                 {
                     peer = OnNewClient(peerInfo);
+                    peer.StartReceive(); // idempotent: ensures the receive loop runs even if OnNewClient didn't start it
                 }
                 catch (Exception ex)
                 {
-                    // A failing OnNewClient must not kill the accept loop.
+                    // A failing OnNewClient/StartReceive must not kill the accept loop.
                     _config.Logger.Log($"OnNewClient failed for {peerInfo.Id}: {ex.Message}", global::SetNet.Logging.LogLevel.Error);
                     accepted.Connection.Close();
                     continue;
@@ -176,7 +189,17 @@ namespace SetNet.Core
 
             while (!_cts.IsCancellationRequested)
             {
-                var accepted = await tcp.AcceptAsync(_cts.Token).ConfigureAwait(false);
+                AcceptedConnection? accepted;
+                try
+                {
+                    accepted = await tcp.AcceptAsync(_cts.Token).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException) { break; }
+                catch (Exception ex)
+                {
+                    _config.Logger.Log($"Accept loop terminated: {ex.Message}", global::SetNet.Logging.LogLevel.Error);
+                    break;
+                }
                 if (accepted == null) break;
 
                 if (accepted.RemoteEndPoint != null && !_rateLimiter.Allow(accepted.RemoteEndPoint.Address))
@@ -208,9 +231,13 @@ namespace SetNet.Core
                 {
                     await accepted.Connection.SendAsync(SystemMessageTypes.UdpBindToken, token.ToByteArray(), DeliveryMethod.Reliable).ConfigureAwait(false);
                     peer = OnNewClient(peerInfo);
+                    peer.StartReceive(); // idempotent: ensures the receive loop runs even if OnNewClient didn't start it
                 }
                 catch (Exception ex)
                 {
+                    // Setup failed after the token was registered: drop it so its bind callback (capturing this
+                    // peer/connection) is released immediately instead of waiting for the TTL sweep.
+                    udp.UnregisterExpectedToken(token);
                     _config.Logger.Log($"Both-mode setup failed for {peerInfo.Id}: {ex.Message}", global::SetNet.Logging.LogLevel.Error);
                     accepted.Connection.Close();
                     continue;

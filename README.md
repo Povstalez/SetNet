@@ -226,6 +226,98 @@ var config = new Configuration
 
 Тести (`dotnet test`) покривають це: ліміти з'єднань, rate-limit, навантаження багатьма клієнтами, reconnect-шторм (без витоків), back-pressure, fuzzing зламаних кадрів і TLS-round-trip.
 
+## Доставка, порядок і продуктивність
+
+Кілька прапорців у `Configuration` керують тим, як повідомлення відправляються й обробляються. Усі за замовчуванням зберігають початкову поведінку — вмикайте за потреби.
+
+### Порядок обробки (`SequentialDispatch`)
+
+> ⚠️ **Важливо:** за замовчуванням хендлери запускаються «fire-and-forget», тож **порядок їх виконання не гарантований навіть на TCP** — два повідомлення можуть оброблятися паралельно або у зворотному порядку. Якщо логіка залежить від порядку (наприклад, «create» перед «update»), увімкніть послідовний dispatch або серіалізуйте у власному коді.
+
+```csharp
+var config = new Configuration { /* ... */ SequentialDispatch = true };
+// receive-loop чекає завершення кожного хендлера перед читанням наступного кадру —
+// строгий, неперекривний порядок на одному з'єднанні (ціна — менший паралелізм).
+```
+
+### Back-pressure (`MaxInFlightMessages`)
+
+```csharp
+var config = new Configuration { /* ... */ MaxInFlightMessages = 256 };
+// Обмежує кількість одночасних хендлерів на з'єднання; коли межу досягнуто,
+// receive-loop призупиняє читання, обмежуючи пам'ять при повільних хендлерах.
+```
+
+### Батчинг надсилання (`SendBatching`) — для game-tick патерну
+
+```csharp
+var config = new Configuration { /* ... */ SendBatching = true, SendBatchFlushMs = 15 };
+// ... у вашому BaseClient/BasePeer за тік:
+await SendAsync(type1, msg1);
+await SendAsync(type2, msg2);   // акумулюються в буфер
+await FlushAsync();             // один запис у сокет замість кількох (менше syscall'ів)
+```
+
+Буфер також авто-flush-иться кожні `SendBatchFlushMs`, і коректно зливається при закритті з'єднання.
+
+### Тайм-аут надсилання (`SendTimeoutMs`)
+
+`SendTimeoutMs` (типово `30000`) обмежує час одного запису в сокет. Якщо peer перестав читати (мертвий-але-не-RST / zero-window), запис не «зависає» назавжди, тримаючи lock — з'єднання розривається. Встановіть `0`, щоб вимкнути.
+
+### Незалежні надійні UDP-канали (`UdpReliableChannels`)
+
+```csharp
+var config = new Configuration
+{
+    TransportType = TransportType.Udp,   // або Both
+    UdpReliabilityEnabled = true,
+    UdpReliableChannels = 2               // канал 0 і канал 1 — незалежні впорядковані потоки
+};
+
+// 4-арг SendAsync обирає канал:
+await SendAsync(type, movement, DeliveryMethod.Reliable, channel: 0);
+await SendAsync(type, chat,     DeliveryMethod.Reliable, channel: 1);
+// Втрата пакета на каналі 1 (chat) не затримує доставку на каналі 0 (movement).
+```
+
+## Обробка розривів і перепідключення
+
+`BaseClient` розрізняє навмисний і неочікуваний розрив. Перевизначте потрібні хуки:
+
+```csharp
+public class GameClient : BaseClient
+{
+    public GameClient(Configuration config) : base(config) { }
+
+    protected override void OnConnected()    { /* з'єднано */ }
+    protected override void OnDisconnected() { /* з'єднання закрито (рівно один раз на з'єднання) */ }
+    protected override void OnError(string error) { /* лише неочікувана помилка */ }
+
+    protected override void OnUnexpectedDisconnect() { /* сервер впав / мережа */ }
+    protected override void OnReconnecting(int attempt, int max) => Console.WriteLine($"Reconnect {attempt}/{max}");
+    protected override void OnReconnected()    { /* успішно перепідключено */ }
+    protected override void OnReconnectFailed(){ /* усі спроби вичерпано */ }
+}
+```
+
+Увімкнути авто-reconnect:
+
+```csharp
+var config = new Configuration
+{
+    Host = "127.0.0.1", Port = 5682,
+    AutoReconnect = true, MaxReconnectAttempts = 5, ReconnectDelayMs = 1000
+};
+```
+
+| Подія | OnError | OnUnexpectedDisconnect | OnDisconnected | Auto-Reconnect |
+|---|---|---|---|---|
+| `Disconnect()` (навмисно) | ❌ | ❌ | ✅ | ❌ |
+| Помилка мережі / краш сервера | ✅ | ✅ | ✅ (якщо reconnect провалився) | ✅ (якщо увімкнено) |
+| Graceful close сервером | ❌ | ❌ | ✅ | ❌ |
+
+На сервері `BasePeer` так само розрізняє навмисний `Close()` (kick) від неочікуваного розриву клієнта через `OnError`/`OnUnexpectedDisconnect`. `OnDisconnected` гарантовано спрацьовує **рівно один раз** на з'єднання.
+
 ## Робота з повідомленнями
 
 ### Створення обробника повідомлень
@@ -471,25 +563,53 @@ var config = new Configuration
 {
     Host = "192.168.1.100",      // IP адреса
     Port = 5682,                  // Порт (TCP; UDP теж використовує його, якщо UdpPort = 0)
-    BufferSize = 8192,            // Розмір буфера (байти)
-    MaxConnections = 100,         // Максимум з'єднань
-    UseSsl = false,               // SSL (у майбутньому)
+    BufferSize = 8192,            // Розмір буфера читання (байти)
 
     // Транспорт
     TransportType = TransportType.Tcp,        // Tcp | Udp | Both
-    DefaultDelivery = DeliveryMethod.Reliable,
+    DefaultDelivery = DeliveryMethod.Reliable,// для 2-арг SendAsync(type, msg)
     UdpPort = 0,                              // 0 = використати Port
 
     // Надійність UDP
     UdpReliabilityEnabled = true,
+    UdpReliableChannels = 1,                  // незалежні впорядковані канали (щоб втрата на одному не блокувала інший)
     UdpReliableAckTimeoutMs = 100,
-    UdpReliableWindowSize = 64,
-    UdpMaxDatagramPayload = 1200,
+    UdpReliableWindowSize = 64,               // 1..64 (ACK — 64-бітне бітове поле)
+    UdpMaxDatagramPayload = 1200,             // без фрагментації: більше — відхиляється
     UdpOrderedReliable = true,
 
     // Емуляція з'єднання UDP
     UdpHandshakeTimeoutMs = 5000,
-    UdpPeerExpiryMs = 15000
+    UdpPeerExpiryMs = 15000,
+
+    // Heartbeat (типово вимкнено; увімкніть для виявлення «мертвих» з'єднань)
+    HeartbeatEnabled = false,
+    HeartbeatIntervalMs = 5000,
+    HeartbeatTimeoutMs = 15000,
+
+    // Reconnect (клієнт)
+    AutoReconnect = false,
+    MaxReconnectAttempts = 3,
+    ReconnectDelayMs = 1000,
+    ConnectTimeoutMs = 10000,
+
+    // Dispatch / надсилання
+    MaxInFlightMessages = 0,    // 0 = без back-pressure (хендлери fire-and-forget); >0 = межа одночасних хендлерів
+    SequentialDispatch = false, // true = чекати завершення кожного хендлера перед наступним кадром (строгий порядок)
+    SendBatching = false,       // true = коалесувати TCP-надсилання в один запис (для game-tick патерну)
+    SendBatchFlushMs = 15,      // авто-flush буфера батчингу
+    SendTimeoutMs = 30000,      // межа на один запис у сокет; 0 = вимкнено (захист від «застряглого» peer)
+
+    // TLS поверх TCP (UDP не шифрується)
+    UseSsl = false,
+    // ServerCertificate / SslTargetHost / ServerCertificateValidationCallback
+
+    // Ліміти / захист від DoS
+    MaxConnections = 100,                  // базова стеля з'єднань
+    MaxConnectionsLimit = 0,               // якщо >0 — переважає MaxConnections
+    MaxUdpPeers = 1000,
+    MaxMessageSize = 1024 * 1024,
+    MaxConnectionsPerIpPerSecond = 0       // 0 = вимкнено
 };
 ```
 

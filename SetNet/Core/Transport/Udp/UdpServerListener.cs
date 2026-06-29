@@ -31,11 +31,24 @@ namespace SetNet.Core.Transport.Udp
         // Both mode: tokens pre-registered by the TCP side. Bound connections are attached to an
         // existing peer instead of being surfaced through AcceptAsync.
         /// <summary>
-        /// "Both" mode registry of expected handshake tokens, each mapped to a callback that binds the resulting
-        /// UDP connection to its already-existing TCP peer instead of surfacing it through <see cref="AcceptAsync"/>.
+        /// "Both" mode registry of expected handshake tokens, each mapped to a bind callback plus the time it was
+        /// registered. Entries are removed when the matching UDP handshake binds them, when the TCP side
+        /// unregisters them (setup failure), or by the pending-token sweep once they exceed their TTL — so a
+        /// client that never completes the UDP handshake (firewall/symmetric-NAT TCP-only fallback) cannot leak
+        /// an entry (and the peer object graph its callback captures) forever.
         /// </summary>
-        private readonly ConcurrentDictionary<Guid, Action<UdpServerConnection>> _expectedTokens
-            = new ConcurrentDictionary<Guid, Action<UdpServerConnection>>();
+        private readonly ConcurrentDictionary<Guid, PendingToken> _expectedTokens
+            = new ConcurrentDictionary<Guid, PendingToken>();
+
+        /// <summary>A pending Both-mode bind callback and the monotonic time it was registered, for TTL-based expiry.</summary>
+        private sealed class PendingToken
+        {
+            /// <summary>Callback that attaches the bound UDP connection to its matching TCP peer.</summary>
+            public Action<UdpServerConnection> OnBound = null!;
+
+            /// <summary>Monotonic timestamp at which the token was registered, compared against the TTL by the sweep.</summary>
+            public long RegisteredTicks;
+        }
 
         /// <summary>When true, the listener runs in "Both" mode where the TCP side owns peer lifecycle (no AcceptAsync surfacing, no idle expiry).</summary>
         private readonly bool _boundMode;
@@ -85,9 +98,12 @@ namespace SetNet.Core.Transport.Udp
             _running = true;
             _ = ReceiveLoopAsync();
             // In Both mode the TCP peer governs lifecycle and closes the bound UDP connection,
-            // so an idle (but alive) UDP channel must NOT be expired by the sweep.
+            // so an idle (but alive) UDP channel must NOT be expired by the sweep. Instead, Both mode runs a
+            // pending-token sweep so handshake tokens that never bind (TCP-only fallback) cannot leak.
             if (!_boundMode)
                 _ = ExpirySweepAsync();
+            else
+                _ = PendingTokenSweepAsync();
         }
 
         /// <summary>
@@ -119,8 +135,27 @@ namespace SetNet.Core.Transport.Udp
         /// <summary>Both mode: pre-register a token so the next handshake bearing it binds to a peer.</summary>
         /// <param name="token">The session token the TCP side negotiated and expects the client to present over UDP.</param>
         /// <param name="onBound">Callback invoked with the new connection once a handshake carrying <paramref name="token"/> arrives, used to attach it to the matching TCP peer.</param>
+        /// <remarks>Prunes expired tokens first and refuses registration past <see cref="Configuration.MaxUdpPeers"/> pending entries, so a flood of Both-mode connects that never finish the UDP handshake cannot grow this table unbounded.</remarks>
         public void RegisterExpectedToken(Guid token, Action<UdpServerConnection> onBound)
-            => _expectedTokens[token] = onBound;
+        {
+            PruneExpiredTokens();
+            if (_config.MaxUdpPeers > 0 && _expectedTokens.Count >= _config.MaxUdpPeers)
+                return; // at capacity: skip UDP binding for this client (it degrades to TCP-only)
+            _expectedTokens[token] = new PendingToken { OnBound = onBound, RegisteredTicks = MonotonicClock.Timestamp };
+        }
+
+        /// <summary>Both mode: removes a previously registered token, e.g. when the TCP-side setup for that client failed.</summary>
+        /// <param name="token">The token to drop so its bind callback (and the peer graph it captures) is released promptly.</param>
+        public void UnregisterExpectedToken(Guid token) => _expectedTokens.TryRemove(token, out _);
+
+        /// <summary>Removes pending Both-mode tokens older than the handshake TTL so unbound tokens (TCP-only fallback) do not accumulate.</summary>
+        private void PruneExpiredTokens()
+        {
+            var ttl = _config.ConnectTimeoutMs > 0 ? _config.ConnectTimeoutMs : 10000;
+            foreach (var kv in _expectedTokens)
+                if (MonotonicClock.ElapsedMs(kv.Value.RegisteredTicks) > ttl)
+                    _expectedTokens.TryRemove(kv.Key, out _);
+        }
 
         /// <summary>
         /// Sends a pre-framed datagram to a specific remote through the shared socket. Serialized by a lock because
@@ -251,11 +286,11 @@ namespace SetNet.Core.Transport.Udp
 
             if (_boundMode)
             {
-                if (!_expectedTokens.TryRemove(token, out var onBound))
-                    return; // unknown token in Both mode -> ignore
+                if (!_expectedTokens.TryRemove(token, out var pending))
+                    return; // unknown (or expired) token in Both mode -> ignore
                 var bound = new UdpServerConnection(this, remote, token, _config);
                 _byEndpoint[remote] = bound;
-                onBound(bound);
+                pending.OnBound(bound);
                 SendHandshakeAck(token, remote);
                 return;
             }
@@ -285,6 +320,28 @@ namespace SetNet.Core.Transport.Udp
                         if (kv.Value.IsExpired(_config.UdpPeerExpiryMs))
                             kv.Value.Close();
                     }
+                }
+            }
+            catch (OperationCanceledException) { }
+            catch { }
+        }
+
+        /// <summary>
+        /// Both-mode background sweep that periodically drops pending handshake tokens older than the handshake
+        /// TTL. Without it, every client that opens TCP but never completes the UDP handshake (the documented
+        /// firewall/symmetric-NAT TCP-only fallback) would leave its token — and the peer object graph the bind
+        /// callback captures — pinned in <see cref="_expectedTokens"/> for the life of the process.
+        /// </summary>
+        /// <returns>A task that loops until the listener is stopped.</returns>
+        private async Task PendingTokenSweepAsync()
+        {
+            var ttl = _config.ConnectTimeoutMs > 0 ? _config.ConnectTimeoutMs : 10000;
+            try
+            {
+                while (_running)
+                {
+                    await Task.Delay(Math.Max(1000, ttl / 2), _cts!.Token).ConfigureAwait(false);
+                    PruneExpiredTokens();
                 }
             }
             catch (OperationCanceledException) { }

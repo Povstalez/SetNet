@@ -47,6 +47,47 @@ public class ConfigurationTests
     }
 
     [Fact]
+    public void Validate_UdpReliableDefault_WithReliabilityDisabled_Throws()
+    {
+        // Regression: this misconfiguration used to pass Validate() and only throw on the first send. It must
+        // now fail fast at connect/start time.
+        var config = new Configuration
+        {
+            Host = "127.0.0.1", Port = 5000,
+            TransportType = TransportType.Udp,
+            UdpReliabilityEnabled = false,
+            DefaultDelivery = DeliveryMethod.Reliable
+        };
+        Assert.Throws<InvalidOperationException>(() => config.Validate());
+    }
+
+    [Fact]
+    public void Validate_UdpUnreliableDefault_WithReliabilityDisabled_Passes()
+    {
+        // The same transport is fine when the default delivery is Unreliable (no reliable channel needed).
+        new Configuration
+        {
+            Host = "127.0.0.1", Port = 5000,
+            TransportType = TransportType.Udp,
+            UdpReliabilityEnabled = false,
+            DefaultDelivery = DeliveryMethod.Unreliable
+        }.Validate();
+    }
+
+    [Fact]
+    public void Validate_BothReliableDefault_WithUdpReliabilityDisabled_Passes()
+    {
+        // In Both mode reliable rides the TCP channel, so disabling UDP reliability is not a conflict.
+        new Configuration
+        {
+            Host = "127.0.0.1", Port = 5000,
+            TransportType = TransportType.Both,
+            UdpReliabilityEnabled = false,
+            DefaultDelivery = DeliveryMethod.Reliable
+        }.Validate();
+    }
+
+    [Fact]
     public void EffectiveUdpPort_FallsBackToPortWhenZero()
     {
         Assert.Equal(5000, new Configuration { Port = 5000, UdpPort = 0 }.EffectiveUdpPort);

@@ -161,7 +161,10 @@ namespace SetNet.Core.Transport.Udp
                     _reliability.OnAck(dg);
                     break;
                 case PacketKind.Disconnect:
-                    Close();
+                    // Require the session token so a spoofed-source 1-byte 0x40 (or a wrong-token datagram)
+                    // cannot tear down this peer. Only a sender that knows the handshake token can disconnect it.
+                    if (UdpDatagram.TryParseToken(dg, out var byeToken) && byeToken == Token)
+                        Close();
                     break;
             }
         }

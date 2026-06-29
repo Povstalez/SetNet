@@ -25,8 +25,8 @@ namespace SetNet.Core
         /// <summary>True when the peer is being closed because the client's heartbeat timed out, so the loss is treated as unexpected without double-reporting an error.</summary>
         private volatile bool _isHeartbeatTimeoutClose;
 
-        /// <summary>Guards against starting the receive loop more than once for this peer.</summary>
-        private volatile bool _receiving;
+        /// <summary>0 until the receive loop is started, then 1. Set via <see cref="Interlocked"/> so <see cref="StartReceive"/> is idempotent and starts the loop exactly once whether called by the framework or the application.</summary>
+        private int _receiving;
 
         /// <summary>Monotonic timestamp (ticks) of the last Ping received from the client, used to detect a silent/dead client.</summary>
         private long _lastPingReceivedTicks;
@@ -36,6 +36,9 @@ namespace SetNet.Core
 
         /// <summary>True once the heartbeat tick has been scheduled, so Close only unschedules if it was started.</summary>
         private bool _heartbeatScheduled;
+
+        /// <summary>0 until the peer is closed, then 1. Set via <see cref="Interlocked"/> so <see cref="Close"/> — and thus <see cref="OnDisconnected"/> — runs exactly once no matter how many paths request it.</summary>
+        private int _closed;
 
         /// <summary>
         /// Initializes the peer from the accepted connection's <see cref="PeerInfo"/> and adopts its
@@ -47,24 +50,23 @@ namespace SetNet.Core
         {
             CurrentPeerInfo = currentPeerInfo;
             Connection = currentPeerInfo.Connection;
-            InitDispatchGate(currentPeerInfo.Config.MaxInFlightMessages);
+            InitDispatchGate(currentPeerInfo.Config.MaxInFlightMessages, currentPeerInfo.Config.SequentialDispatch);
         }
 
         /// <summary>
         /// Registers the peer's message handlers and starts the per-client receive loop (plus the heartbeat
         /// timeout watcher when enabled). Called by the server once the peer is ready to process traffic.
         /// </summary>
-        /// <exception cref="InvalidOperationException">Thrown if receive has already been started for this peer.</exception>
         /// <remarks>
-        /// The <see cref="_receiving"/> guard prevents a double start. The receive and heartbeat loops run
-        /// fire-and-forget; the loop sets up the inbound Ping handler so the peer can answer with Pong.
+        /// Idempotent: a second call is a no-op, so it is safe for both the framework (which calls it after
+        /// <see cref="BaseServer.OnNewClient"/> returns) and application code to invoke it. The receive and
+        /// heartbeat loops run fire-and-forget; the loop sets up the inbound Ping handler so the peer can answer with Pong.
         /// </remarks>
         public void StartReceive()
         {
-            if (_receiving)
-                throw new InvalidOperationException($"Receive already started for peer {CurrentPeerInfo.Id}.");
+            if (Interlocked.Exchange(ref _receiving, 1) != 0)
+                return; // already started — framework and a manual call are both safe
 
-            _receiving = true;
             RegisterDataHandlers();
 
             if (CurrentPeerInfo.Config.HeartbeatEnabled)
@@ -293,8 +295,12 @@ namespace SetNet.Core
         /// </remarks>
         public virtual void Close()
         {
+            // Exactly-once: whichever path closes first (server kick, receive-loop teardown, heartbeat timeout)
+            // wins; later calls are no-ops, so OnDisconnected and the pool removal never run twice.
+            if (Interlocked.Exchange(ref _closed, 1) != 0) return;
             _isIntentionalClose = true;
             if (_heartbeatScheduled) TimerScheduler.Shared.Unschedule(_heartbeatTickId);
+            ShutdownDispatch();
             CurrentPeerInfo.Disconnect();
             OnDisconnected();
         }

@@ -105,7 +105,16 @@ namespace SetNet.Config
         public int UdpPeerExpiryMs { get; set; } = 15000;
 
         // ── UDP reliability layer ────────────────────────────────────────────
-        /// <summary>Master toggle for the reliable UDP channel (sequence/ACK/retransmit/ordered).</summary>
+        /// <summary>
+        /// Master toggle for the reliable UDP channel (sequence/ACK/retransmit/ordered).
+        /// <para>
+        /// <b>Security note:</b> UDP datagrams (data, ACK, and disconnect) carry no per-packet authentication or
+        /// encryption. The reliability guarantees hold against benign packet loss, NOT against an adversary who
+        /// can spoof the peer's source IP:port — such an attacker could inject or drop messages on the reliable
+        /// stream. Route confidentiality/integrity-sensitive traffic over TLS-over-TCP (set <see cref="UseSsl"/>,
+        /// or use <see cref="TransportType.Both"/> with reliable delivery, which rides the encrypted TCP channel).
+        /// </para>
+        /// </summary>
         public bool UdpReliabilityEnabled { get; set; } = true;
 
         /// <summary>
@@ -166,6 +175,15 @@ namespace SetNet.Config
         /// </summary>
         public int MaxInFlightMessages { get; set; } = 0;
 
+        /// <summary>
+        /// When true, the receive loop awaits each message handler to completion before reading the next frame,
+        /// guaranteeing in-order, non-overlapping handler execution on a single connection. By default
+        /// (<c>false</c>) handlers are dispatched without waiting, so two messages can be processed concurrently
+        /// or out of order even over an ordered TCP stream — enable this when handler ordering matters and you
+        /// accept the reduced pipeline throughput. Takes precedence over <see cref="MaxInFlightMessages"/>.
+        /// </summary>
+        public bool SequentialDispatch { get; set; } = false;
+
         // ── Send batching ────────────────────────────────────────────────────
         /// <summary>
         /// When true, TCP sends are buffered and coalesced into one socket write instead of one write per message,
@@ -177,6 +195,16 @@ namespace SetNet.Config
 
         /// <summary>Auto-flush interval (ms) for the batched send buffer when <see cref="SendBatching"/> is on. Defaults to 15.</summary>
         public int SendBatchFlushMs { get; set; } = 15;
+
+        /// <summary>
+        /// Maximum time, in milliseconds, a single TCP socket write may take before it is abandoned and the
+        /// connection is torn down. Bounds the case where a dead-but-not-reset / zero-window peer stops reading:
+        /// without it a write parks in the kernel forever, holding the send lock and stalling every other send to
+        /// that peer. The default (30000) only fires on a genuinely stuck peer — a healthy write to the OS send
+        /// buffer completes in microseconds. Set to 0 to disable (restoring the original unbounded behaviour),
+        /// or raise it for very large frames over very slow links.
+        /// </summary>
+        public int SendTimeoutMs { get; set; } = 30000;
 
         /// <summary>Effective peer cap: <see cref="MaxConnectionsLimit"/> if set, otherwise <see cref="MaxConnections"/>.</summary>
         public int EffectiveMaxConnections => MaxConnectionsLimit > 0 ? MaxConnectionsLimit : MaxConnections;
@@ -209,6 +237,14 @@ namespace SetNet.Config
 
             if (TransportType != TransportType.Tcp)
             {
+                // Fail fast on the footgun where the default 2-arg SendAsync would use a reliable channel that
+                // does not exist. In pure-UDP mode reliable delivery needs the reliability layer; in Both mode
+                // reliable rides the TCP channel, so the toggle is irrelevant there.
+                if (TransportType == TransportType.Udp && !UdpReliabilityEnabled && DefaultDelivery == DeliveryMethod.Reliable)
+                    throw new InvalidOperationException(
+                        "Configuration.DefaultDelivery is Reliable but UdpReliabilityEnabled is false on a UDP transport: " +
+                        "every reliable send would throw. Enable UdpReliabilityEnabled or set DefaultDelivery = Unreliable.");
+
                 // The reliability ACK is a 64-bit bitfield, so the in-flight window must fit within 64.
                 if (UdpReliableWindowSize < 1 || UdpReliableWindowSize > 64)
                     throw new InvalidOperationException(

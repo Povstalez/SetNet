@@ -71,7 +71,7 @@ namespace SetNet.Messaging
                     if (task != null && !task.IsCompleted)
                         ObserveAsync(type, task);
                     else if (task != null && task.IsFaulted)
-                        OnHandlerError?.Invoke(type, task.Exception!);
+                        ReportError(type, task.Exception!);
                 }
                 else if (_handlersActions.TryGetValue(type, out var handlerAction))
                 {
@@ -81,7 +81,7 @@ namespace SetNet.Messaging
             catch (Exception ex)
             {
                 // Handler threw synchronously (before its first await, or a sync handler).
-                OnHandlerError?.Invoke(type, ex);
+                ReportError(type, ex);
             }
         }
 
@@ -105,7 +105,7 @@ namespace SetNet.Messaging
             }
             catch (Exception ex)
             {
-                OnHandlerError?.Invoke(type, ex);
+                ReportError(type, ex);
             }
             return Task.CompletedTask;
         }
@@ -117,7 +117,20 @@ namespace SetNet.Messaging
         private async Task ObserveCompletionAsync(ushort type, Task task)
         {
             try { await task.ConfigureAwait(false); }
-            catch (Exception ex) { OnHandlerError?.Invoke(type, ex); }
+            catch (Exception ex) { ReportError(type, ex); }
+        }
+
+        /// <summary>
+        /// Reports a handler fault through <see cref="OnHandlerError"/>, swallowing any exception the sink itself
+        /// throws. Critical for the <see cref="ObserveAsync"/> path: an exception escaping that <c>async void</c>
+        /// observer (e.g. a misconfigured logger that throws) would otherwise crash the whole process.
+        /// </summary>
+        /// <param name="type">The message-type identifier, included in the error report.</param>
+        /// <param name="ex">The handler exception to report.</param>
+        private void ReportError(ushort type, Exception ex)
+        {
+            try { OnHandlerError?.Invoke(type, ex); }
+            catch { /* a throwing error sink (e.g. faulty logger) must never escape and crash the process */ }
         }
 
         /// <summary>
@@ -131,7 +144,7 @@ namespace SetNet.Messaging
         private async void ObserveAsync(ushort type, Task task)
         {
             try { await task.ConfigureAwait(false); }
-            catch (Exception ex) { OnHandlerError?.Invoke(type, ex); }
+            catch (Exception ex) { ReportError(type, ex); }
         }
     }
 }

@@ -77,6 +77,37 @@ public class TestServer : BaseServer
     }
 }
 
+/// <summary>Test server whose <see cref="OnNewClient"/> deliberately does NOT call StartReceive, to verify the framework starts it.</summary>
+public class ForgetfulServer : BaseServer
+{
+    /// <summary>Creates the server with the given configuration.</summary>
+    /// <param name="config">Transport/endpoint settings.</param>
+    public ForgetfulServer(Configuration config) : base(config) { }
+
+    /// <inheritdoc/>
+    protected override BasePeer OnNewClient(PeerInfo peerInfo) => new TestPeer(peerInfo); // intentionally no StartReceive()
+}
+
+/// <summary>Test client that counts how many times <see cref="OnDisconnected"/> fires.</summary>
+public class CountingClient : BaseClient
+{
+    /// <summary>Number of times the terminal disconnect callback has fired.</summary>
+    public int DisconnectedCount;
+
+    /// <summary>Creates the client with the given configuration.</summary>
+    /// <param name="config">Transport/endpoint settings.</param>
+    public CountingClient(Configuration config) : base(config) { }
+
+    /// <inheritdoc/>
+    protected override void OnConnected() { }
+
+    /// <inheritdoc/>
+    protected override void OnDisconnected() => System.Threading.Interlocked.Increment(ref DisconnectedCount);
+
+    /// <inheritdoc/>
+    protected override void OnError(string error) { }
+}
+
 /// <summary>Test client exposing a public echo-send helper.</summary>
 public class TestClient : BaseClient
 {
