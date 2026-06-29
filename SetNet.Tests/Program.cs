@@ -1,22 +1,44 @@
-﻿// See https://aka.ms/new-console-template for more information
+// SetNet test harness — runs in-process transport scenarios by name.
+//   dotnet run --project SetNet.Tests -- tcp     (default)
+//   dotnet run --project SetNet.Tests -- udp
+//   dotnet run --project SetNet.Tests -- both
 
-using SetNet.Config;
+using SetNet.Core.Transport;
 using SetNet.Tests;
 
-var config = new Configuration();
-config.Port = 5682;
-config.Host = "127.0.0.1";
+var scenario = args.Length > 0 ? args[0].ToLowerInvariant() : "tcp";
 
-// MainServer server = new MainServer(config);
-// server.StartAsync();
-//
-// Console.ReadLine();
-
-MainClient client = new MainClient(config);
-await client.ConnectAsync();
-
-Console.ReadLine();
-
-client.DisconnectFromServer();
-// server.StopAsync();
-
+switch (scenario)
+{
+    case "frag":
+        Scenarios.RunFragmentationTest();
+        break;
+    case "tls":
+        await Scenarios.RunTlsEchoAsync();
+        break;
+    case "bench":
+        await Bench.RunAsync();
+        break;
+    case "tcp":
+        await Scenarios.RunTcpEchoAsync();
+        break;
+    case "udp":
+        await Scenarios.RunUdpEchoAsync(DeliveryMethod.Unreliable);
+        await Scenarios.RunUdpEchoAsync(DeliveryMethod.Reliable);
+        break;
+    case "loss":
+        await Scenarios.RunUdpLossAsync();
+        break;
+    case "both":
+        await Scenarios.RunBothAsync();
+        break;
+    case "idle":
+        await Scenarios.RunBothIdleAsync();
+        break;
+    case "deadlock":
+        await Scenarios.RunDeadlockAsync();
+        break;
+    default:
+        Console.WriteLine($"Unknown scenario '{scenario}'. Available: tcp, udp, loss, both, idle, deadlock");
+        break;
+}

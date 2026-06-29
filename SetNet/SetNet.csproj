@@ -4,10 +4,32 @@
         <TargetFramework>netstandard2.1</TargetFramework>
         <ImplicitUsings>false</ImplicitUsings>
         <Nullable>enable</Nullable>
+        <!-- Emit the XML documentation file for IntelliSense; CS1591 then flags any undocumented public member. -->
+        <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    </PropertyGroup>
+
+    <!-- NuGet package metadata -->
+    <PropertyGroup>
+        <PackageId>SetNet</PackageId>
+        <Version>0.2.0</Version>
+        <AssemblyVersion>0.2.0.0</AssemblyVersion>
+        <FileVersion>0.2.0.0</FileVersion>
+        <Authors>Artem Lemeshev</Authors>
+        <Description>A lightweight .NET client/server networking library over TCP, UDP, or both, with MessagePack serialization, an optional UDP reliability layer, optional TLS, automatic message-handler registration, and built-in metrics.</Description>
+        <PackageTags>networking;tcp;udp;sockets;messagepack;game;realtime;reliable-udp</PackageTags>
+        <PackageLicenseExpression>MIT</PackageLicenseExpression>
+        <RepositoryUrl>https://github.com/Povstalez/SetNet.git</RepositoryUrl>
+        <RepositoryType>git</RepositoryType>
+        <PackageProjectUrl>https://github.com/Povstalez/SetNet</PackageProjectUrl>
     </PropertyGroup>
 
     <ItemGroup>
-      <PackageReference Include="MessagePack" Version="3.1.3" />
+      <PackageReference Include="MessagePack" Version="3.1.7" />
+    </ItemGroup>
+
+    <ItemGroup>
+      <!-- Allow the unit-test project to exercise internal types (UdpDatagram, ReliabilityChannel, etc.). -->
+      <InternalsVisibleTo Include="SetNet.UnitTests" />
     </ItemGroup>
 
 </Project>

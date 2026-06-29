@@ -4,7 +4,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Overview
 
-SetNet is a .NET networking library for client-server communication using TCP sockets. It provides a framework for building networked applications with automatic message handler registration, serialization via MessagePack, and utilities for task scheduling.
+SetNet is a .NET networking library for client-server communication over **TCP, UDP, or both at once**. It provides a framework for building networked applications with automatic message handler registration, serialization via MessagePack, and utilities for task scheduling.
+
+The transport is pluggable behind a thin abstraction in `SetNet/Core/Transport/`: `ITransportConnection` (a framed message channel to one peer), `ITransportConnector` (client dialer), and `ITransportListener` (server acceptor). `BaseSocket`/`BaseClient`/`BasePeer`/`BaseServer` are transport-agnostic; everything above the transport (`MessageProcessor`, `CommandExecutor`, handler interfaces, MessagePack, heartbeat, lifecycle hooks) is shared by all transports. Select the transport with `Configuration.TransportType` (`Tcp` | `Udp` | `Both`, default `Tcp`).
 
 ## Build and Test Commands
 
@@ -13,9 +15,20 @@ SetNet is a .NET networking library for client-server communication using TCP so
 dotnet build
 ```
 
-**Run the test application:**
+**Run the unit + integration tests (xUnit):**
 ```bash
-dotnet run --project SetNet.Tests
+dotnet test SetNet.UnitTests/SetNet.UnitTests.csproj
+```
+
+**Run the in-process transport scenarios (manual harness):**
+```bash
+dotnet run --project SetNet.Tests -- <frag|tcp|udp|loss|both|idle|deadlock>
+```
+
+**Run the example chat (separate server + client):**
+```bash
+dotnet run --project examples/Chat.Server -- 127.0.0.1 5000
+dotnet run --project examples/Chat.Client -- 127.0.0.1 5000 alice
 ```
 
 **Build in release mode:**
@@ -34,7 +47,9 @@ The framework is organized into several key layers:
 
 ### 1. **Core Networking Layer** (`SetNet/Core/`)
 
-- **BaseSocket**: Foundation class providing low-level socket operations and message processor integration. Manages NetworkStream and PacketBuilder.
+- **BaseSocket**: Foundation class providing message-processor integration. Holds an `ITransportConnection` (the transport-agnostic channel) and routes received frames to handlers via `HandleMessage`.
+
+- **Transport abstraction** (`SetNet/Core/Transport/`): `ITransportConnection`/`ITransportConnector`/`ITransportListener` plus implementations in `Tcp/`, `Udp/`, and `Both/`. TCP wraps `NetworkStream` + length-prefix reassembly (reuses `PacketBuilder`). UDP wraps a datagram socket with an emulated-connection handshake, heartbeat, peer demux by endpoint, and an optional `ReliabilityChannel` (sequence/ACK/retransmit/ordered). `Both` is a composite that runs TCP and UDP together. `TransportFactory` builds the right pieces from `Configuration`.
   
 - **BaseClient**: Abstract client implementation that connects to a server, handles incoming messages, and manages the connection lifecycle. Subclasses implement `OnConnected()`, `OnDisconnected()`, and `OnError()` hooks.
   
@@ -66,9 +81,13 @@ Message handlers are discovered and instantiated automatically via reflection in
 
 ### 4. **Configuration** (`SetNet/Config/`)
 
-- **Configuration**: Holds connection settings (Host, Port, BufferSize, MaxConnections, UseSsl) and reconnection options (AutoReconnect, MaxReconnectAttempts, ReconnectDelayMs).
+- **Configuration**: Holds connection settings (Host, Port, BufferSize, MaxConnections), reconnection options (AutoReconnect, MaxReconnectAttempts, ReconnectDelayMs), heartbeat options, **transport options** (`TransportType` Tcp/Udp/Both, `DefaultDelivery`, `UdpPort`, UDP handshake/expiry timeouts, the UDP reliability layer settings), **TLS** (`UseSsl`, `ServerCertificate`, `SslTargetHost`, `ServerCertificateValidationCallback`), and **production-hardening limits**: `MaxConnectionsLimit`, `MaxUdpPeers`, `MaxMessageSize` (TCP frame cap), `MaxConnectionsPerIpPerSecond` (per-IP rate limit), `MaxInFlightMessages` (handler back-pressure). `Validate()` is called on connect/start. A `NetworkMetrics` instance (`Metrics`) exposes live counters.
+
+- **Production hardening** (added after a readiness audit): TLS over TCP via `SslStream` (`Core/Transport/Tcp/TcpTls.cs`); `MaxConnectionsLimit`/`MaxUdpPeers` caps and `OnNewClient` guarded so a bad accept can't kill the loop; `MaxMessageSize` frame cap (slow-loris/OOM protection); per-IP `RateLimiter` (`Core/RateLimiter.cs`) on TCP accept + UDP handshake; back-pressure dispatch gate (`MaxInFlightMessages`); `BaseServer.ActiveConnections`; reconnect/heartbeat errors are logged. **Authentication is intentionally left to the application** (validate inside the server's `OnNewClient`/handlers); MessagePack is bumped to a non-vulnerable version.
+
+- **NetworkMetrics** (`SetNet/Diagnostics/`): thread-safe counters (messages sent/received, connections accepted/rejected, reliable retransmits/acks, handshakes dropped) plus `Snapshot()` for export.
   
-- **PeerInfo**: Wraps a connected TCP client along with its metadata (ID, config, server reference, command executor).
+- **PeerInfo**: Wraps a peer's `ITransportConnection` (and an optional secondary `UdpConnection` in Both mode) along with its metadata (ID, config, server reference, command executor).
 
 ### 5. **Utilities** (`SetNet/Utils/`)
 
@@ -136,6 +155,44 @@ From a server peer:
 ```csharp
 await SendAsync<MyResponse>((ushort)MessageTypes.MyResponse, new MyResponse { /* ... */ });
 ```
+
+### Transport Selection (TCP / UDP / Both)
+
+Choose the transport via `Configuration.TransportType`. Existing TCP code is unchanged (default is `Tcp`).
+
+```csharp
+var config = new Configuration
+{
+    Host = "127.0.0.1",
+    Port = 5682,
+    TransportType = TransportType.Both,  // Tcp | Udp | Both
+    UdpReliabilityEnabled = true,        // enables the reliable UDP channel
+    DefaultDelivery = DeliveryMethod.Reliable
+};
+```
+
+`SendAsync` takes an optional `DeliveryMethod` (the 2-arg overload uses `Configuration.DefaultDelivery`):
+
+```csharp
+await SendAsync(type, msg);                              // uses DefaultDelivery
+await SendAsync(type, msg, DeliveryMethod.Unreliable);  // explicit channel
+```
+
+Routing by `(TransportType, DeliveryMethod)`:
+
+| TransportType | DeliveryMethod | Carried over |
+|---|---|---|
+| Tcp  | any | TCP |
+| Udp  | Reliable | UDP reliability layer (requires `UdpReliabilityEnabled`, else throws) |
+| Udp  | Unreliable | UDP raw datagram |
+| Both | Reliable | TCP |
+| Both | Unreliable | UDP (falls back to TCP until/if the UDP channel attaches) |
+
+Notes:
+- **UDP is an emulated connection**: a handshake assigns peer identity and heartbeat detects liveness, so `OnConnected`/`OnDisconnected`/`BasePeer` work the same as TCP.
+- **Both mode** connects TCP first, the server hands the client a UDP bind token over TCP (`SystemMessageTypes.UdpBindToken`), and the client's UDP handshake binds to the same server-side peer. If UDP is unavailable, the client degrades gracefully to TCP-only.
+- **MTU**: oversize datagrams (> `UdpMaxDatagramPayload`, default 1200B) are rejected; there is no UDP fragmentation.
+- **Heartbeat** in Both mode runs over the TCP lifeline; in UDP-only mode pings/pongs are unreliable datagrams.
 
 ### Handling Disconnections and Reconnection
 
@@ -260,17 +317,29 @@ public class GameServerPeer : BasePeer
 ## Project Structure
 
 - **SetNet/**: Core library
-  - `Core/`: BaseSocket, BaseClient, BaseServer, BasePeer, Commands (CommandExecutor)
+  - `Core/`: BaseSocket, BaseClient, BaseServer, BasePeer, PacketBuilder, SystemMessageTypes, Commands (CommandExecutor)
+  - `Core/Transport/`: transport abstraction + enums (`TransportType`, `DeliveryMethod`); `Tcp/`, `Udp/` (handshake, demux, `ReliabilityChannel`), `Both/` implementations; `TransportFactory`
   - `Config/`: Configuration, PeerInfo
   - `Data/`: Handler interfaces, MessageHandlerAttribute
-  - `Messaging/`: PacketBuilder, MessageProcessor, MessagePackSerializer, IMessagePackFactory
+  - `Messaging/`: MessageProcessor, MessagePackSerializer, IMessagePackFactory
   - `Events/`: EventManager
+  - `Logging/`: ILogger, ConsoleLogger, NoOpLogger
   - `Utils/`: GameLoopScheduler, UpdateScheduler
 
-- **SetNet.Tests/**: Test application demonstrating the framework
-  - `Core/`: MainServer, MainClient, PlayerPeer implementations
-  - `Data/`: MessageTypes, TestMessage, UpdateClientIdMessage
+- **SetNet.Tests/**: Manual in-process scenario harness demonstrating the framework
+  - `Core/`: MainServer, MainClient, PlayerPeer, `Scenarios` (in-process transport tests), LossStats
+  - `Data/`: MessageTypes, TestMessage, UpdateClientIdMessage, LossCountMessage
   - `Messages/`: Handler implementations for test messages
+  - `Program.cs`: scenario dispatcher — `dotnet run --project SetNet.Tests -- <frag|tcp|udp|loss|both|idle|deadlock>`
+
+- **SetNet.UnitTests/**: xUnit unit + integration test project (`dotnet test`)
+  - Unit: PacketBuilder (incl. fragmentation), UdpDatagram, AsyncQueue, MonotonicClock, Configuration.Validate, MessageProcessor, CommandExecutor, ReliabilityChannel (ordered/dedup)
+  - `Integration/`: end-to-end TCP/UDP/loss/Both round-trips via a small echo harness. The library exposes internals to this project via `[InternalsVisibleTo]`.
+
+- **examples/**: A runnable chat example using the library, split into separate processes
+  - `Chat.Shared/`: message-type enum + MessagePack DTOs shared by both ends
+  - `Chat.Server/`: `ChatServer`/`ChatPeer` + server handlers (broadcast, join) + entry point
+  - `Chat.Client/`: `ChatClient` + client handlers (render broadcast/system notices) + console UI
 
 ## Debugging Tips
 

@@ -11,6 +11,12 @@ public class MainClient(Configuration config) : BaseClient(config)
     {
         Disconnect();
     }
+
+    public Task SendLossPingAsync(int seq, SetNet.Core.Transport.DeliveryMethod delivery)
+        => SendAsync(
+            (ushort)MessageTypes.LossPing,
+            new LossCountMessage { Seq = seq, ViaReliable = delivery == SetNet.Core.Transport.DeliveryMethod.Reliable },
+            delivery);
     
     private void OnPositionChanged(byte[] data)
     {
