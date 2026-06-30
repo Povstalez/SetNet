@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Concurrent;
+using System.Collections.Generic;
 using System.Net;
 using System.Net.Sockets;
 using System.Threading;
@@ -192,8 +193,14 @@ namespace SetNet.Core.Transport.Udp
         /// connection itself during <see cref="UdpServerConnection.Close"/>.
         /// </summary>
         /// <param name="conn">The connection to unregister, keyed by its <see cref="UdpServerConnection.Remote"/> endpoint.</param>
+        /// <remarks>
+        /// Value-conditional: only removes the slot if it still holds <paramref name="conn"/>. On a fast
+        /// same-endpoint reconnect a newer connection may already occupy the key; a lagging Close() of the old
+        /// connection must not evict that newer one (which would silently kill its UDP channel).
+        /// </remarks>
         public void RemoveConnection(UdpServerConnection conn)
-            => _byEndpoint.TryRemove(conn.Remote, out _);
+            => ((ICollection<KeyValuePair<IPEndPoint, UdpServerConnection>>)_byEndpoint)
+                .Remove(new KeyValuePair<IPEndPoint, UdpServerConnection>(conn.Remote, conn));
 
         /// <summary>
         /// The single receive loop draining the shared socket. Applies optional simulated/test packet loss, then

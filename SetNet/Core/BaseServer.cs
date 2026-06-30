@@ -341,13 +341,18 @@ namespace SetNet.Core
             _cts?.Cancel();
             _listener?.Stop();
             _udpListener?.Stop();
+            // Snapshot then clear under the lock, and Close() the peers OUTSIDE the lock: each Close() re-enters
+            // RemoveClient (which locks _clients and removes the peer), so closing over a copy of an
+            // already-cleared dictionary avoids mutating the collection while it is being enumerated.
+            BasePeer[] snapshot;
             lock (_clients)
             {
-                foreach (var client in _clients.Values)
-                    client.Close();
-
+                snapshot = new BasePeer[_clients.Count];
+                _clients.Values.CopyTo(snapshot, 0);
                 _clients.Clear();
             }
+            foreach (var client in snapshot)
+                client.Close();
 
             _config.Logger.Log("Server stopped", global::SetNet.Logging.LogLevel.Info);
             return Task.CompletedTask;
@@ -401,12 +406,15 @@ namespace SetNet.Core
             _cts?.Cancel();
             _listener?.Stop();
             _udpListener?.Stop();
+            BasePeer[] snapshot;
             lock (_clients)
             {
-                foreach (var client in _clients.Values)
-                    client.Close();
+                snapshot = new BasePeer[_clients.Count];
+                _clients.Values.CopyTo(snapshot, 0);
                 _clients.Clear();
             }
+            foreach (var client in snapshot) // close outside the lock over a copy (see StopAsync)
+                client.Close();
             _cts?.Dispose();
         }
     }
