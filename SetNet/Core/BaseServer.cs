@@ -41,6 +41,9 @@ namespace SetNet.Core
         /// <summary>Guards against double-dispose.</summary>
         private bool _disposed;
 
+        /// <summary>Set once <see cref="StopAsync"/>/<see cref="Dispose(bool)"/> has cleared the pool, so a peer accepted concurrently is not registered (and leaked) after shutdown. Guarded by the <c>_clients</c> lock.</summary>
+        private bool _stopped;
+
         /// <summary>Per-IP connection rate limiter for the TCP accept path (no-op when disabled in config).</summary>
         private readonly RateLimiter _rateLimiter;
 
@@ -298,7 +301,9 @@ namespace SetNet.Core
         {
             lock (_clients)
             {
-                if (peer.IsClosed || peerInfo.IsDisconnected || !peerInfo.Connection.IsConnected)
+                // Refuse if the server has stopped (else this peer is added after the shutdown snapshot+clear and
+                // leaks past shutdown), or if the peer already closed/disconnected during application setup.
+                if (_stopped || peer.IsClosed || peerInfo.IsDisconnected || !peerInfo.Connection.IsConnected)
                     return false;
 
                 _clients[peerInfo.Id] = peer;
@@ -395,6 +400,7 @@ namespace SetNet.Core
             BasePeer[] snapshot;
             lock (_clients)
             {
+                _stopped = true; // refuse any peer the accept loop is concurrently trying to register
                 snapshot = new BasePeer[_clients.Count];
                 _clients.Values.CopyTo(snapshot, 0);
                 _clients.Clear();
@@ -457,6 +463,7 @@ namespace SetNet.Core
             BasePeer[] snapshot;
             lock (_clients)
             {
+                _stopped = true; // refuse any peer the accept loop is concurrently trying to register
                 snapshot = new BasePeer[_clients.Count];
                 _clients.Values.CopyTo(snapshot, 0);
                 _clients.Clear();

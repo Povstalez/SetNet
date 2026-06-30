@@ -203,7 +203,7 @@ namespace SetNet.Core.Transport.Udp
         /// immediately and drops duplicates. Always marks an ACK pending for the tick loop to flush.
         /// </summary>
         /// <param name="dg">The raw reliable datagram carrying a sequence number, message type, and payload.</param>
-        /// <remarks>Delivery to the inbound queue happens outside the lock to avoid holding it across the enqueue; the reorder buffer is bounded to twice the window size to cap memory under sustained loss.</remarks>
+        /// <remarks>Delivery to the inbound queue happens outside the lock to avoid holding it across the enqueue. Acceptance is bounded to the receive window <c>[base, base+window)</c>, so the reorder buffer holds at most <c>window-1</c> entries and a long-missing sequence always stays within the 64-bit ACK window.</remarks>
         public void OnReliableDatagram(byte[] dg)
         {
             if (_disposed) return;
@@ -213,12 +213,30 @@ namespace SetNet.Core.Transport.Udp
 
             lock (_lock)
             {
-                if (_config.UdpOrderedReliable)
+                // _expectedSeq is the receive base: the lowest sequence not yet received-and-consumed. Acceptance
+                // is bounded to the window [base, base+window) so the high-water mark — and thus the 64-bit ACK
+                // window anchored at it — can never run more than `window` (<=64) past the oldest gap. That keeps a
+                // long-missing sequence ackable when it finally arrives, and back-pressures the sender (its send
+                // window fills with un-acked far-ahead packets until the gap is retransmitted and the base advances).
+                int cmp = Compare(seq, _expectedSeq);
+                int window = _config.UdpReliableWindowSize;
+
+                if (cmp < 0)
                 {
-                    int cmp = Compare(seq, _expectedSeq);
+                    // Duplicate below the base (already received and consumed): re-ACK so the sender stops resending.
+                    RecordReceivedForAck(seq);
+                }
+                else if (cmp >= window)
+                {
+                    // Beyond the receive window: refuse — no record/ACK/buffer/deliver. The ACK flush below still
+                    // reports the current state so the sender can free its already-received slots and retransmit
+                    // the gap; this packet stays un-acked and is retransmitted later, once the base has advanced.
+                }
+                else if (_config.UdpOrderedReliable)
+                {
                     if (cmp == 0)
                     {
-                        RecordReceivedForAck(seq); // delivered in order — safe to ACK
+                        RecordReceivedForAck(seq);
                         toDeliver = new List<TransportMessage> { new TransportMessage(type, payload) };
                         _expectedSeq++;
                         while (_reorder.TryGetValue(_expectedSeq, out var buffered))
@@ -228,32 +246,33 @@ namespace SetNet.Core.Transport.Udp
                             _expectedSeq++;
                         }
                     }
-                    else if (cmp > 0)
+                    else if (!_reorder.ContainsKey(seq))
                     {
-                        // Only ACK a future packet once we have actually retained it. If the reorder buffer is full
-                        // we must NOT ACK it — otherwise the sender clears it from _unacked and stops retransmitting,
-                        // leaving a permanent gap that wedges the ordered stream forever. Dropping without an ACK
-                        // makes the sender retransmit later (natural back-pressure) once buffer space frees.
-                        if (_reorder.ContainsKey(seq))
-                        {
-                            RecordReceivedForAck(seq); // already buffered (duplicate) — we have it, so ACK
-                        }
-                        else if (_reorder.Count < _config.UdpReliableWindowSize * 2)
-                        {
-                            _reorder[seq] = new TransportMessage(type, payload);
-                            RecordReceivedForAck(seq);
-                        }
-                        // else: reorder full -> drop WITHOUT acking, so the sender keeps retransmitting it.
+                        _reorder[seq] = new TransportMessage(type, payload); // new early arrival within the window
+                        RecordReceivedForAck(seq);
                     }
                     else
                     {
-                        RecordReceivedForAck(seq); // cmp < 0: already delivered — ACK so the sender stops resending
+                        RecordReceivedForAck(seq); // duplicate of an already-buffered packet — re-ACK
                     }
                 }
-                else
+                else // unordered, within the window: deliver immediately but track contiguity to advance the base
                 {
-                    if (RecordReceivedForAck(seq)) // unordered: deliver any genuinely-new packet, drop duplicates
+                    if (cmp == 0)
+                    {
+                        RecordReceivedForAck(seq);
                         toDeliver = new List<TransportMessage> { new TransportMessage(type, payload) };
+                        _expectedSeq++;
+                        while (_reorder.Remove(_expectedSeq)) // markers of already-delivered later packets
+                            _expectedSeq++;
+                    }
+                    else if (!_reorder.ContainsKey(seq))
+                    {
+                        _reorder[seq] = default;                                            // received-marker for dedup + base advance
+                        RecordReceivedForAck(seq);
+                        toDeliver = new List<TransportMessage> { new TransportMessage(type, payload) }; // deliver now
+                    }
+                    // else duplicate: already delivered and recorded; the ACK flush below re-acks it.
                 }
             }
 
