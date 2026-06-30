@@ -235,9 +235,12 @@ namespace SetNet.Core
                 }
                 catch (Exception ex)
                 {
-                    // Setup failed after the token was registered: drop it so its bind callback (capturing this
-                    // peer/connection) is released immediately instead of waiting for the TTL sweep.
+                    // Setup failed after the token was registered: drop the token so its bind callback is released,
+                    // AND abandon the binding so that if the UDP handshake won the race and already bound a
+                    // UdpServerConnection, that connection is closed (and removed from the listener's demux table)
+                    // rather than leaking with no peer to own it — Both mode runs no UDP idle sweep to reap it.
                     udp.UnregisterExpectedToken(token);
+                    binding.Abandon();
                     _config.Logger.Log($"Both-mode setup failed for {peerInfo.Id}: {ex.Message}", global::SetNet.Logging.LogLevel.Error);
                     accepted.Connection.Close();
                     continue;
@@ -274,17 +277,37 @@ namespace SetNet.Core
             /// <summary>A UDP connection that arrived before the peer existed, held until <see cref="SetPeer"/> can attach it.</summary>
             private UdpServerConnection? _pending;
 
+            /// <summary>Set when setup failed before a peer was produced; a late <see cref="Attach"/> then closes its connection instead of stashing it.</summary>
+            private bool _abandoned;
+
             /// <summary>
             /// Called by the UDP listener when the handshake token matches: attaches the UDP connection to
             /// the peer if it already exists, otherwise stashes it as pending for <see cref="SetPeer"/>.
+            /// If the binding was abandoned (setup failed with no peer), the connection is closed immediately.
             /// </summary>
             /// <param name="conn">The newly bound server-side UDP connection for this client.</param>
             public void Attach(UdpServerConnection conn)
             {
                 lock (_lock)
                 {
+                    if (_abandoned) { conn.Close(); return; }
                     if (_peer != null) _peer.AttachUdp(conn);
                     else _pending = conn;
+                }
+            }
+
+            /// <summary>
+            /// Abandons the binding because peer setup failed before a peer was produced. Closes any UDP
+            /// connection the handshake already stashed, and makes any later <see cref="Attach"/> close its
+            /// connection too — so a bound UDP connection is never left orphaned in the listener's demux table.
+            /// </summary>
+            public void Abandon()
+            {
+                lock (_lock)
+                {
+                    _abandoned = true;
+                    _pending?.Close();
+                    _pending = null;
                 }
             }
 
