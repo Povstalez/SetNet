@@ -34,15 +34,21 @@ namespace SetNet.Utils
         /// </summary>
         public CancellationToken ExternalToken { get; } = new CancellationToken();
 
+        /// <summary>Cached linked token source bridging <see cref="_cts"/> and <see cref="ExternalToken"/>; created lazily only when <see cref="ExternalToken"/> can actually be cancelled, and disposed in <see cref="StopAsync"/>.</summary>
+        private CancellationTokenSource? _linkedCts;
+
         /// <summary>
         /// A cancellation token that is triggered when either the internal stop signal or
         /// <see cref="ExternalToken"/> fires. The loop checks this so both shutdown paths take effect.
         /// </summary>
         /// <remarks>
-        /// Each access creates a fresh linked token source; the resulting source is not disposed here, so the
-        /// property is intended for use within the loop rather than tight, high-frequency polling.
+        /// When <see cref="ExternalToken"/> cannot be cancelled (the default), this is simply the internal
+        /// token — no linked source is allocated. Otherwise a single linked source is created once and reused
+        /// (and disposed by <see cref="StopAsync"/>), so repeated access does not leak token registrations.
         /// </remarks>
-        public CancellationToken CombinedToken => CancellationTokenSource.CreateLinkedTokenSource(_cts.Token, ExternalToken).Token;
+        public CancellationToken CombinedToken => ExternalToken.CanBeCanceled
+            ? (_linkedCts ??= CancellationTokenSource.CreateLinkedTokenSource(_cts.Token, ExternalToken)).Token
+            : _cts.Token;
 
         /// <summary>
         /// Registers a periodic action to be invoked approximately every <paramref name="milliseconds"/> once the
@@ -100,6 +106,8 @@ namespace SetNet.Utils
                 }
                 catch (TaskCanceledException) { }
             }
+            _linkedCts?.Dispose();
+            _cts.Dispose();
         }
 
         /// <summary>

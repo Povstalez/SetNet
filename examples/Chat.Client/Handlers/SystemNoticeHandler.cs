@@ -10,14 +10,13 @@ namespace Chat.Client.Handlers;
 /// (joins/leaves) prefixed with an asterisk. Auto-discovered via the <see cref="MessageHandlerAttribute"/>.
 /// </summary>
 [MessageHandler((ushort)ChatMessageTypes.SystemNotice)]
-public class SystemNoticeHandler : IClientMessageHandler
+public class SystemNoticeHandler : IClientMessageHandler<SystemNoticeMessage>
 {
-    /// <summary>Deserializes and prints the system notice to the console.</summary>
-    /// <param name="data">The MessagePack-serialized <see cref="SystemNoticeMessage"/> payload.</param>
+    /// <summary>Prints the system notice to the console.</summary>
+    /// <param name="message">The deserialized <see cref="SystemNoticeMessage"/>.</param>
     /// <returns>A completed task (rendering is synchronous).</returns>
-    public Task HandleAsync(byte[] data)
+    public Task HandleAsync(SystemNoticeMessage message)
     {
-        var message = MessagePackSerializer.Deserialize<SystemNoticeMessage>(data);
         Console.WriteLine($"* {message.Text}");
         return Task.CompletedTask;
     }

@@ -25,8 +25,8 @@ namespace SetNet.Core
         /// <summary>True when the peer is being closed because the client's heartbeat timed out, so the loss is treated as unexpected without double-reporting an error.</summary>
         private volatile bool _isHeartbeatTimeoutClose;
 
-        /// <summary>Guards against starting the receive loop more than once for this peer.</summary>
-        private volatile bool _receiving;
+        /// <summary>0 until the receive loop is started, then 1. Set via <see cref="Interlocked"/> so <see cref="StartReceive"/> is idempotent and starts the loop exactly once whether called by the framework or the application.</summary>
+        private int _receiving;
 
         /// <summary>Monotonic timestamp (ticks) of the last Ping received from the client, used to detect a silent/dead client.</summary>
         private long _lastPingReceivedTicks;
@@ -36,6 +36,12 @@ namespace SetNet.Core
 
         /// <summary>True once the heartbeat tick has been scheduled, so Close only unschedules if it was started.</summary>
         private bool _heartbeatScheduled;
+
+        /// <summary>0 until the peer is closed, then 1. Set via <see cref="Interlocked"/> so <see cref="Close"/> — and thus <see cref="OnDisconnected"/> — runs exactly once no matter how many paths request it.</summary>
+        private int _closed;
+
+        /// <summary>True once this peer has begun terminal close/cleanup.</summary>
+        internal bool IsClosed => Volatile.Read(ref _closed) != 0;
 
         /// <summary>
         /// Initializes the peer from the accepted connection's <see cref="PeerInfo"/> and adopts its
@@ -47,24 +53,23 @@ namespace SetNet.Core
         {
             CurrentPeerInfo = currentPeerInfo;
             Connection = currentPeerInfo.Connection;
-            InitDispatchGate(currentPeerInfo.Config.MaxInFlightMessages);
+            InitDispatchGate(currentPeerInfo.Config.MaxInFlightMessages, currentPeerInfo.Config.SequentialDispatch);
         }
 
         /// <summary>
         /// Registers the peer's message handlers and starts the per-client receive loop (plus the heartbeat
         /// timeout watcher when enabled). Called by the server once the peer is ready to process traffic.
         /// </summary>
-        /// <exception cref="InvalidOperationException">Thrown if receive has already been started for this peer.</exception>
         /// <remarks>
-        /// The <see cref="_receiving"/> guard prevents a double start. The receive and heartbeat loops run
-        /// fire-and-forget; the loop sets up the inbound Ping handler so the peer can answer with Pong.
+        /// Idempotent: a second call is a no-op, so it is safe for both the framework (which calls it after
+        /// <see cref="BaseServer.OnNewClient"/> returns) and application code to invoke it. The receive and
+        /// heartbeat loops run fire-and-forget; the loop sets up the inbound Ping handler so the peer can answer with Pong.
         /// </remarks>
         public void StartReceive()
         {
-            if (_receiving)
-                throw new InvalidOperationException($"Receive already started for peer {CurrentPeerInfo.Id}.");
+            if (Interlocked.Exchange(ref _receiving, 1) != 0)
+                return; // already started — framework and a manual call are both safe
 
-            _receiving = true;
             RegisterDataHandlers();
 
             if (CurrentPeerInfo.Config.HeartbeatEnabled)
@@ -86,10 +91,26 @@ namespace SetNet.Core
         /// Stores the UDP channel on <see cref="CurrentPeerInfo"/> (so unreliable sends can be routed to it)
         /// and starts a secondary, fire-and-forget UDP receive loop. Invoked by the server's
         /// <c>PeerBinding</c>; not part of the public API.
+        /// <para>
+        /// Guards against a late bind: the TCP lifeline can tear the peer down (heartbeat timeout, IO error, kick)
+        /// before the UDP handshake binds. If the peer is already closed we close the incoming connection instead
+        /// of attaching it — otherwise it would be owned by a dead peer and never reaped (Both mode runs no UDP
+        /// idle sweep). The post-store re-check closes the small window where <see cref="Close"/> ran after the
+        /// guard but observed <see cref="PeerInfo.UdpConnection"/> still null.
+        /// </para>
         /// </remarks>
         internal void AttachUdp(ITransportConnection udp)
         {
+            if (Volatile.Read(ref _closed) != 0) { udp.Close(); return; }
+
             CurrentPeerInfo.UdpConnection = udp;
+
+            if (Volatile.Read(ref _closed) != 0)
+            {
+                udp.Close(); // Close() raced in after our guard but before the store saw it; don't leak the channel.
+                return;
+            }
+
             _ = HandleUdpAsync(udp);
         }
 
@@ -124,7 +145,7 @@ namespace SetNet.Core
             {
                 hadError = true;
                 if (!_isIntentionalClose && !_isHeartbeatTimeoutClose)
-                    OnError($"Client {CurrentPeerInfo.Id} error: {ex.Message}");
+                    SafeLifecycleHook(nameof(OnError), () => OnError($"Client {CurrentPeerInfo.Id} error: {ex.Message}"));
             }
             finally
             {
@@ -135,7 +156,7 @@ namespace SetNet.Core
                     _isIntentionalClose = false;
                 else if (hadError || wasHeartbeat)
                 {
-                    OnUnexpectedDisconnect();
+                    SafeLifecycleHook(nameof(OnUnexpectedDisconnect), OnUnexpectedDisconnect);
                     Close();
                 }
                 else
@@ -202,7 +223,7 @@ namespace SetNet.Core
             if (elapsed > CurrentPeerInfo.Config.HeartbeatTimeoutMs)
             {
                 _isHeartbeatTimeoutClose = true;
-                OnError($"Client {CurrentPeerInfo.Id} heartbeat timeout.");
+                SafeLifecycleHook(nameof(OnError), () => OnError($"Client {CurrentPeerInfo.Id} heartbeat timeout."));
                 Connection?.Close();
                 TimerScheduler.Shared.Unschedule(_heartbeatTickId);
             }
@@ -243,14 +264,38 @@ namespace SetNet.Core
         /// <param name="channel">Reliable-UDP channel id (ignored for TCP/unreliable).</param>
         /// <returns>A task that completes once the message has been handed to the transport.</returns>
         /// <exception cref="InvalidOperationException">Thrown if the peer is closing or its connection is no longer connected.</exception>
-        protected async Task SendAsync<T>(ushort type, T message, DeliveryMethod delivery, byte channel)
+        protected Task SendAsync<T>(ushort type, T message, DeliveryMethod delivery, byte channel)
+            => SendRawAsync(type, SetNetSerializer.Serialize(message), delivery, channel);
+
+        /// <summary>
+        /// Sends an already-serialized payload to this client using the configured default delivery, <b>without
+        /// serializing</b>. The escape hatch for forwarding raw bytes received in <see cref="BaseSocket.OnRawFrame"/>
+        /// (relay/proxy scenarios), avoiding a needless deserialize-then-reserialize round trip. Expose a public wrapper
+        /// on your peer subclass if you need to forward to it from outside (e.g. a server-side broadcast loop).
+        /// </summary>
+        /// <param name="type">The wire type id to frame the payload under.</param>
+        /// <param name="payload">The raw, already-serialized message body.</param>
+        /// <returns>A task that completes once the frame has been handed to the transport.</returns>
+        protected Task SendRawAsync(ushort type, byte[] payload)
+            => SendRawAsync(type, payload, CurrentPeerInfo.Config.DefaultDelivery, 0);
+
+        /// <summary>
+        /// Sends an already-serialized payload with an explicit delivery method and reliable-UDP channel, without
+        /// serializing. See <see cref="SendRawAsync(ushort, byte[])"/>.
+        /// </summary>
+        /// <param name="type">The wire type id to frame the payload under.</param>
+        /// <param name="payload">The raw, already-serialized message body.</param>
+        /// <param name="delivery">The delivery guarantee for this send.</param>
+        /// <param name="channel">Reliable-UDP channel id (ignored for TCP/unreliable).</param>
+        /// <returns>A task that completes once the frame has been handed to the transport.</returns>
+        /// <exception cref="InvalidOperationException">Thrown if the peer is closing or its connection is no longer connected.</exception>
+        protected async Task SendRawAsync(ushort type, byte[] payload, DeliveryMethod delivery, byte channel = 0)
         {
             if (_isIntentionalClose || Connection == null || !Connection.IsConnected)
                 throw new InvalidOperationException($"Cannot send: peer {CurrentPeerInfo.Id} is not connected.");
 
-            var data = MessagePackSerializer.Serialize(message);
             CurrentPeerInfo.Config.Metrics.IncrementMessagesSent();
-            await RouteSendAsync(type, data, delivery, channel).ConfigureAwait(false);
+            await RouteSendAsync(type, payload, delivery, channel).ConfigureAwait(false);
         }
 
         /// <summary>
@@ -293,15 +338,37 @@ namespace SetNet.Core
         /// </remarks>
         public virtual void Close()
         {
+            // Exactly-once: whichever path closes first (server kick, receive-loop teardown, heartbeat timeout)
+            // wins; later calls are no-ops, so OnDisconnected and the pool removal never run twice.
+            if (Interlocked.Exchange(ref _closed, 1) != 0) return;
             _isIntentionalClose = true;
             if (_heartbeatScheduled) TimerScheduler.Shared.Unschedule(_heartbeatTickId);
+            ShutdownDispatch();
             CurrentPeerInfo.Disconnect();
-            OnDisconnected();
+            SafeLifecycleHook(nameof(OnDisconnected), OnDisconnected);
+        }
+
+        /// <summary>Runs an application lifecycle hook without letting user code interrupt peer cleanup.</summary>
+        private void SafeLifecycleHook(string hookName, Action hook)
+        {
+            try { hook(); }
+            catch (Exception ex)
+            {
+                SafeLog($"{hookName} hook failed for peer {CurrentPeerInfo.Id}: {ex.Message}",
+                    global::SetNet.Logging.LogLevel.Error);
+            }
+        }
+
+        /// <summary>Logs best-effort; a throwing application logger must not escape lifecycle cleanup.</summary>
+        private void SafeLog(string message, global::SetNet.Logging.LogLevel level)
+        {
+            try { CurrentPeerInfo.Config.Logger.Log(message, level); }
+            catch { }
         }
 
         /// <summary>
         /// Binds every reflection-discovered server handler to its wire type id on the message processor, so
-        /// inbound frames from this client are dispatched to the correct <see cref="SetNet.Data.IServerMessageHandler"/>.
+        /// inbound frames from this client are dispatched to the correct <see cref="SetNet.Data.IServerMessageHandler{TMessage}"/>.
         /// </summary>
         /// <remarks>Virtual so subclasses can extend or replace the default registration behavior.</remarks>
         protected virtual void RegisterDataHandlers()
@@ -342,7 +409,7 @@ namespace SetNet.Core
         /// <returns>A delegate that asynchronously routes payload bytes (with this peer) to the matching server handler.</returns>
         private Func<byte[], Task> CreateHandlerDelegate(ushort messageType)
         {
-            return async data => await CurrentPeerInfo.CommandExecutor.Handlers[messageType].HandleAsync(this, data).ConfigureAwait(false);
+            return data => CurrentPeerInfo.CommandExecutor.DispatchAsync(messageType, this, data);
         }
     }
 }

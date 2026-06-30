@@ -44,4 +44,41 @@ public class AsyncQueueTests
         Assert.True(ok);
         Assert.Equal("later", item);
     }
+
+    [Fact]
+    public async Task TryEnqueue_DropsAtCapacity_AndRecoversAfterDrain()
+    {
+        // Bounded queue (OOM protection): TryEnqueue accepts up to capacity, then drops; draining frees space.
+        var q = new AsyncQueue<int>(capacity: 2);
+        Assert.True(q.TryEnqueue(1));
+        Assert.True(q.TryEnqueue(2));
+        Assert.False(q.TryEnqueue(3)); // at capacity -> dropped
+
+        var (ok, item) = await q.DequeueAsync();
+        Assert.True(ok);
+        Assert.Equal(1, item);
+
+        Assert.True(q.TryEnqueue(4)); // space freed by the dequeue
+    }
+
+    [Fact]
+    public void Enqueue_IgnoresCapacity()
+    {
+        // The unbounded Enqueue path (used by the accept queue) must never drop, even past the bound.
+        var q = new AsyncQueue<int>(capacity: 1);
+        q.Enqueue(1);
+        q.Enqueue(2);
+        q.Enqueue(3); // no throw, no drop
+    }
+
+    [Fact]
+    public async Task TryEnqueue_Unbounded_NeverDrops()
+    {
+        var q = new AsyncQueue<int>(); // capacity 0 = unbounded
+        for (int i = 0; i < 1000; i++)
+            Assert.True(q.TryEnqueue(i));
+        var (ok, first) = await q.DequeueAsync();
+        Assert.True(ok);
+        Assert.Equal(0, first);
+    }
 }

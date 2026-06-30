@@ -23,9 +23,10 @@ namespace SetNet.Core.Transport.Udp
         /// <param name="sendRaw">Egress callback shared by every channel (buffer, length).</param>
         /// <param name="inbound">Inbound queue every channel delivers ordered/deduped messages into.</param>
         /// <param name="onFailure">Failure callback invoked when any channel exhausts its retransmit budget.</param>
-        public ReliabilityChannelSet(Configuration config, Func<byte[], int, Task> sendRaw, AsyncQueue<TransportMessage> inbound, Action onFailure)
+        /// <param name="enabled">When false, no channels are built regardless of config — used for the Both-mode server UDP leg, which carries only unreliable traffic (reliable rides TCP), so its reliability machinery would be pure overhead.</param>
+        public ReliabilityChannelSet(Configuration config, Func<byte[], int, Task> sendRaw, AsyncQueue<TransportMessage> inbound, Action onFailure, bool enabled = true)
         {
-            if (!config.UdpReliabilityEnabled)
+            if (!enabled || !config.UdpReliabilityEnabled)
             {
                 _channels = Array.Empty<ReliabilityChannel>();
                 return;

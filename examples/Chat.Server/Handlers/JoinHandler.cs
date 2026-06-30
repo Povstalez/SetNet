@@ -12,18 +12,17 @@ namespace Chat.Server.Handlers;
 /// <see cref="MessageHandlerAttribute"/> at server start.
 /// </summary>
 [MessageHandler((ushort)ChatMessageTypes.Join)]
-public class JoinHandler : IServerMessageHandler
+public class JoinHandler : IServerMessageHandler<JoinMessage>
 {
     /// <summary>
-    /// Deserializes the join request, stores a sanitized username on the sending <see cref="ChatPeer"/>,
-    /// and broadcasts a "joined" system notice to all connected users.
+    /// Stores a sanitized username on the sending <see cref="ChatPeer"/> and broadcasts a "joined" system
+    /// notice to all connected users.
     /// </summary>
     /// <param name="peer">The peer that sent the join message (a <see cref="ChatPeer"/>).</param>
-    /// <param name="data">The MessagePack-serialized <see cref="JoinMessage"/> payload.</param>
+    /// <param name="message">The deserialized <see cref="JoinMessage"/>.</param>
     /// <returns>A task that completes once the join notice has been broadcast.</returns>
-    public async Task HandleAsync(BasePeer peer, byte[] data)
+    public async Task HandleAsync(BasePeer peer, JoinMessage message)
     {
-        var message = MessagePackSerializer.Deserialize<JoinMessage>(data);
         var chatPeer = (ChatPeer)peer;
         chatPeer.Username = string.IsNullOrWhiteSpace(message.Username) ? "anon" : message.Username.Trim();
 

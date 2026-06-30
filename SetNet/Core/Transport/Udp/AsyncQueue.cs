@@ -28,18 +28,50 @@ namespace SetNet.Core.Transport.Udp
         /// </summary>
         private readonly SemaphoreSlim _signal = new SemaphoreSlim(0);
 
+        /// <summary>Maximum number of pending items before <see cref="TryEnqueue"/> rejects new ones; 0 = unbounded.</summary>
+        private readonly int _capacity;
+
+        /// <summary>Approximate current pending-item count, maintained for the <see cref="_capacity"/> check.</summary>
+        private int _count;
+
         /// <summary>Set once <see cref="Complete"/> has been called; tells waiting consumers to return the EOF sentinel.</summary>
         private volatile bool _completed;
 
+        /// <summary>Creates a queue with an optional capacity bound.</summary>
+        /// <param name="capacity">Maximum pending items before <see cref="TryEnqueue"/> drops; 0 (default) is unbounded.</param>
+        public AsyncQueue(int capacity = 0)
+        {
+            _capacity = capacity;
+        }
+
         /// <summary>
-        /// Adds an item to the tail of the queue and wakes one waiting consumer.
-        /// Exists so producers (e.g. the datagram dispatch path) can push decoded frames without blocking.
+        /// Adds an item to the tail of the queue and wakes one waiting consumer, ignoring the capacity bound.
+        /// Use for control queues that must never drop (e.g. the accept queue). Prefer <see cref="TryEnqueue"/>
+        /// for data queues that should shed load instead of growing without bound.
         /// </summary>
         /// <param name="item">The item to enqueue; ownership is handed to the consumer that dequeues it.</param>
         public void Enqueue(T item)
         {
             _items.Enqueue(item);
+            Interlocked.Increment(ref _count);
             _signal.Release();
+        }
+
+        /// <summary>
+        /// Adds an item only if the queue is below its capacity bound, returning <c>false</c> (item dropped) when
+        /// full. Lets the receive path shed load — dropping best-effort UDP, or failing a reliable peer — instead
+        /// of growing the queue without limit under a fast sender or slow consumer (OOM protection).
+        /// </summary>
+        /// <param name="item">The item to enqueue.</param>
+        /// <returns><c>true</c> if enqueued; <c>false</c> if the queue was at capacity and the item was dropped.</returns>
+        public bool TryEnqueue(T item)
+        {
+            if (_capacity > 0 && Volatile.Read(ref _count) >= _capacity)
+                return false;
+            _items.Enqueue(item);
+            Interlocked.Increment(ref _count);
+            _signal.Release();
+            return true;
         }
 
         /// <summary>
@@ -72,7 +104,10 @@ namespace SetNet.Core.Transport.Udp
                 // Block until either an item was enqueued or completion was signalled.
                 await _signal.WaitAsync(ct).ConfigureAwait(false);
                 if (_items.TryDequeue(out var item))
+                {
+                    Interlocked.Decrement(ref _count);
                     return (true, item);
+                }
                 // Woken with nothing to take and the queue is done: report EOF.
                 if (_completed)
                     return (false, default!);

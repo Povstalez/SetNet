@@ -4,9 +4,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Overview
 
-SetNet is a .NET networking library for client-server communication over **TCP, UDP, or both at once**. It provides a framework for building networked applications with automatic message handler registration, serialization via MessagePack, and utilities for task scheduling.
+SetNet is a .NET networking library for client-server communication over **TCP, UDP, or both at once**. It provides a framework for building networked applications with automatic message handler registration, pluggable serialization (no serializer is bundled — MessagePack is available via the **SetNet.MessagePack** companion package, or supply your own `ISerializer`), and utilities for task scheduling.
 
-The transport is pluggable behind a thin abstraction in `SetNet/Core/Transport/`: `ITransportConnection` (a framed message channel to one peer), `ITransportConnector` (client dialer), and `ITransportListener` (server acceptor). `BaseSocket`/`BaseClient`/`BasePeer`/`BaseServer` are transport-agnostic; everything above the transport (`MessageProcessor`, `CommandExecutor`, handler interfaces, MessagePack, heartbeat, lifecycle hooks) is shared by all transports. Select the transport with `Configuration.TransportType` (`Tcp` | `Udp` | `Both`, default `Tcp`).
+The transport is pluggable behind a thin abstraction in `SetNet/Core/Transport/`: `ITransportConnection` (a framed message channel to one peer), `ITransportConnector` (client dialer), and `ITransportListener` (server acceptor). `BaseSocket`/`BaseClient`/`BasePeer`/`BaseServer` are transport-agnostic; everything above the transport (`MessageProcessor`, the command executors, handler interfaces, pluggable serialization, heartbeat, lifecycle hooks) is shared by all transports. Select the transport with `Configuration.TransportType` (`Tcp` | `Udp` | `Both`, default `Tcp`).
 
 ## Build and Test Commands
 
@@ -61,19 +61,21 @@ The flow: Server accepts connection → creates a BasePeer → peer receives mes
 
 ### 2. **Message Handling Framework** (`SetNet/Core/Commands/` + `SetNet/Data/`)
 
-- **CommandExecutor<T>**: Uses reflection to auto-discover and register message handlers at startup. Looks for classes implementing `IServerMessageHandler` or `IClientMessageHandler` that are decorated with `MessageHandlerAttribute`.
+- **ServerCommandExecutor / ClientCommandExecutor**: Use reflection to auto-discover and register message handlers at startup. Look for classes implementing `IServerMessageHandler<T>` or `IClientMessageHandler<T>` decorated with `MessageHandlerAttribute`, instantiate each, and wrap it in an internal invoker (`ServerHandlerInvoker<T>`/`ClientHandlerInvoker<T>`, in `HandlerInvoker.cs`) that deserializes the payload via `SetNetSerializer` and calls the typed handler. Discovery is cached per handler interface in `HandlerDiscovery`.
   
-- **MessageHandlerAttribute**: Marks a handler class and specifies its message type (ushort). Used by CommandExecutor for reflection-based registration.
+- **MessageHandlerAttribute**: Marks a handler class and specifies its message type (ushort). Used by the executors for reflection-based registration.
   
-- **IServerMessageHandler**: Interface for handlers that process messages on the server side. Signature: `Task HandleAsync(BasePeer peer, byte[] data)`.
+- **IServerMessageHandler\<TMessage\>**: Interface for handlers that process messages on the server side. Signature: `Task HandleAsync(BasePeer peer, TMessage message)` — the library deserializes the payload into `TMessage` before calling.
   
-- **IClientMessageHandler**: Interface for handlers that process messages on the client side. Signature: `Task HandleAsync(byte[] data)`.
+- **IClientMessageHandler\<TMessage\>**: Interface for handlers that process messages on the client side. Signature: `Task HandleAsync(TMessage message)`.
 
-Message handlers are discovered and instantiated automatically via reflection in the CommandExecutor constructor.
+Message handlers are **strongly typed** (no manual deserialization) and are discovered and instantiated automatically via reflection when the executor is constructed.
+
+- **Raw frame escape hatch**: `BaseSocket.OnRawFrame(ushort type, byte[] data)` (virtual, default no-op) is called for every application frame (system types excluded via `SystemMessageTypes.IsSystem`) before typed dispatch; returning `true` consumes the frame and skips typed handling. Paired with `BaseClient`/`BasePeer.SendRawAsync(type, payload, delivery?)` which sends already-serialized bytes without re-serializing. Together they enable relay/proxy peers that forward traffic with zero (de)serialization while normal handlers stay typed.
 
 ### 3. **Serialization** (`SetNet/Messaging/`)
 
-- **MessagePackSerializer**: Serializes/deserializes messages using the MessagePack format. Used for converting strongly-typed messages to byte arrays before transmission.
+- **ISerializer / SetNetSerializer**: Pluggable serialization seam. The core bundles **no** serializer; one is registered once at startup via `SetNetSerializer.Use(ISerializer)` (the backing instance is not exposed publicly). The library uses it everywhere through the `SetNetSerializer.Serialize/Deserialize` façade — both the send path and the typed-handler receive path. The MessagePack adapter (`MessagePackNetSerializer`, `UntrustedData`-hardened) lives in the separate **SetNet.MessagePack** project/package. Until a serializer is registered, the façade throws a clear error.
   
 - **PacketBuilder**: Encodes messages into the wire protocol (prefixes with length header) and reassembles incoming data into complete packets. Handles frame boundaries.
   
@@ -81,9 +83,9 @@ Message handlers are discovered and instantiated automatically via reflection in
 
 ### 4. **Configuration** (`SetNet/Config/`)
 
-- **Configuration**: Holds connection settings (Host, Port, BufferSize, MaxConnections), reconnection options (AutoReconnect, MaxReconnectAttempts, ReconnectDelayMs), heartbeat options, **transport options** (`TransportType` Tcp/Udp/Both, `DefaultDelivery`, `UdpPort`, UDP handshake/expiry timeouts, the UDP reliability layer settings), **TLS** (`UseSsl`, `ServerCertificate`, `SslTargetHost`, `ServerCertificateValidationCallback`), and **production-hardening limits**: `MaxConnectionsLimit`, `MaxUdpPeers`, `MaxMessageSize` (TCP frame cap), `MaxConnectionsPerIpPerSecond` (per-IP rate limit), `MaxInFlightMessages` (handler back-pressure). `Validate()` is called on connect/start. A `NetworkMetrics` instance (`Metrics`) exposes live counters.
+- **Configuration**: Holds connection settings (Host, Port, BufferSize, MaxConnections), reconnection options (AutoReconnect, MaxReconnectAttempts, ReconnectDelayMs), heartbeat options, **transport options** (`TransportType` Tcp/Udp/Both, `DefaultDelivery`, `UdpPort`, UDP handshake/expiry timeouts, the UDP reliability layer settings incl. `UdpReliableChannels`), **TLS** (`UseSsl`, `ServerCertificate`, `SslTargetHost`, `ServerCertificateValidationCallback`), **dispatch/send tuning** (`TcpNoDelay` Nagle toggle default-on, `MaxInFlightMessages` back-pressure, `SequentialDispatch` ordered dispatch, `SendBatching`/`SendBatchFlushMs` coalesced writes, `SendTimeoutMs` per-write deadline), and **production-hardening limits**: `MaxConnectionsLimit`, `MaxUdpPeers`, `MaxMessageSize` (TCP frame cap), `MaxConnectionsPerIpPerSecond` (per-IP rate limit), `MaxInboundQueue` (per-connection inbound-queue cap / OOM protection). `Validate()` is called on connect/start (and cross-checks e.g. reliable-default vs disabled UDP reliability). A `NetworkMetrics` instance (`Metrics`) exposes live counters.
 
-- **Production hardening** (added after a readiness audit): TLS over TCP via `SslStream` (`Core/Transport/Tcp/TcpTls.cs`); `MaxConnectionsLimit`/`MaxUdpPeers` caps and `OnNewClient` guarded so a bad accept can't kill the loop; `MaxMessageSize` frame cap (slow-loris/OOM protection); per-IP `RateLimiter` (`Core/RateLimiter.cs`) on TCP accept + UDP handshake; back-pressure dispatch gate (`MaxInFlightMessages`); `BaseServer.ActiveConnections`; reconnect/heartbeat errors are logged. **Authentication is intentionally left to the application** (validate inside the server's `OnNewClient`/handlers); MessagePack is bumped to a non-vulnerable version.
+- **Production hardening** (added after a readiness audit, then a two-round fix→re-audit loop): TLS over TCP via `SslStream` (`Core/Transport/Tcp/TcpTls.cs`); a resilient accept loop (`TcpListenerAdapter` skips a bad/garbage/stalled TLS handshake and continues, with a handshake timeout, instead of dying); `MaxConnectionsLimit`/`MaxUdpPeers` caps and `OnNewClient`+`StartReceive` guarded so a bad accept can't kill the loop (the framework also calls the idempotent `StartReceive` itself); `MaxMessageSize` frame cap + a `length < 2` guard (slow-loris/OOM/negative-length protection); per-IP `RateLimiter` (`Core/RateLimiter.cs`, with idle-window eviction) on TCP accept + UDP handshake; back-pressure dispatch gate (`MaxInFlightMessages`, re-armed per connection generation); `SendTimeoutMs` bounds a stuck-peer write; Both-mode UDP bind tokens are TTL-swept (no leak) and the UDP `Disconnect` control packet is token-validated; client/peer teardown fires `OnDisconnected` exactly once; a throwing application logger can't crash the process; `BaseServer.ActiveConnections`; reconnect/heartbeat errors are logged. **Authentication is intentionally left to the application** (validate inside the server's `OnNewClient`/handlers); MessagePack is bumped to a non-vulnerable version. **UDP datagrams have no per-packet auth/encryption** — route confidentiality/integrity-sensitive traffic over TLS-over-TCP (or Both with reliable delivery).
 
 - **NetworkMetrics** (`SetNet/Diagnostics/`): thread-safe counters (messages sent/received, connections accepted/rejected, reliable retransmits/acks, handshakes dropped) plus `Snapshot()` for export.
   
@@ -119,12 +121,11 @@ Message handlers are discovered and instantiated automatically via reflection in
    **Server-side handler:**
    ```csharp
    [MessageHandler((ushort)MessageTypes.PlayerMove)]
-   public class PlayerMoveHandler : IServerMessageHandler
+   public class PlayerMoveHandler : IServerMessageHandler<PlayerMoveMessage>
    {
-       public async Task HandleAsync(BasePeer peer, byte[] data)
+       public async Task HandleAsync(BasePeer peer, PlayerMoveMessage message)
        {
-           var message = MessagePackSerializer.Deserialize<PlayerMoveMessage>(data);
-           // Process and respond
+           // Process and respond (message is already deserialized)
        }
    }
    ```
@@ -132,11 +133,10 @@ Message handlers are discovered and instantiated automatically via reflection in
    **Client-side handler:**
    ```csharp
    [MessageHandler((ushort)MessageTypes.UpdateState)]
-   public class UpdateStateHandler : IClientMessageHandler
+   public class UpdateStateHandler : IClientMessageHandler<StateUpdateMessage>
    {
-       public async Task HandleAsync(byte[] data)
+       public async Task HandleAsync(StateUpdateMessage message)
        {
-           var message = MessagePackSerializer.Deserialize<StateUpdateMessage>(data);
            // Update client state
        }
    }
@@ -312,7 +312,6 @@ public class GameServerPeer : BasePeer
 | Server calls `Close()` (intentional kick) | ❌ | ❌ | ✅ |
 | Client crash / IO error / Socket error | ✅ | ✅ | ✅ |
 | Client graceful close (bytesRead==0) | ❌ | ❌ | ✅ |
-```
 
 ## Project Structure
 
@@ -321,7 +320,7 @@ public class GameServerPeer : BasePeer
   - `Core/Transport/`: transport abstraction + enums (`TransportType`, `DeliveryMethod`); `Tcp/`, `Udp/` (handshake, demux, `ReliabilityChannel`), `Both/` implementations; `TransportFactory`
   - `Config/`: Configuration, PeerInfo
   - `Data/`: Handler interfaces, MessageHandlerAttribute
-  - `Messaging/`: MessageProcessor, MessagePackSerializer, IMessagePackFactory
+  - `Messaging/`: MessageProcessor, ISerializer + SetNetSerializer (pluggable serialization seam; core bundles no serializer — the MessagePack adapter `MessagePackNetSerializer` is in the separate `SetNet.MessagePack` project)
   - `Events/`: EventManager
   - `Logging/`: ILogger, ConsoleLogger, NoOpLogger
   - `Utils/`: GameLoopScheduler, UpdateScheduler
@@ -344,9 +343,9 @@ public class GameServerPeer : BasePeer
 ## Debugging Tips
 
 - Message handlers are auto-registered via reflection. If a handler isn't being called, verify:
-  1. The class implements `IServerMessageHandler` or `IClientMessageHandler`
+  1. The class implements `IServerMessageHandler<T>` or `IClientMessageHandler<T>`
   2. It's decorated with `MessageHandlerAttribute` with the correct message type
-  3. The message type (ushort) matches what's being sent
+  3. Both the message type (ushort) and the generic `T` match what's being sent
   4. The handler is in an assembly loaded by the AppDomain
 
 - Connection issues often stem from Configuration mismatches (host/port). Verify both client and server use the same values.

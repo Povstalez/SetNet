@@ -31,26 +31,94 @@ namespace SetNet.Core
         private SemaphoreSlim? _dispatchGate;
 
         /// <summary>
-        /// Enables back-pressure by bounding concurrent handler execution to <paramref name="maxInFlight"/>.
-        /// Called by subclasses from their configuration; 0 or less leaves dispatch unbounded.
+        /// Cancels a parked <see cref="DispatchAsync"/> gate wait when the socket tears down, so a receive loop
+        /// blocked on a saturated gate (e.g. all handler slots held by stuck handlers) unblocks promptly on
+        /// close instead of hanging forever. Created alongside the gate; null when no gate is configured.
+        /// </summary>
+        private CancellationTokenSource? _dispatchCts;
+
+        /// <summary>When true, the receive loop awaits each handler to completion before reading the next frame (in-order, non-overlapping dispatch).</summary>
+        private bool _sequentialDispatch;
+
+        /// <summary>
+        /// Configures dispatch behaviour for this socket: optional back-pressure (bounding concurrent handler
+        /// execution to <paramref name="maxInFlight"/>) and optional sequential (in-order) dispatch. Called by
+        /// subclasses from their configuration.
         /// </summary>
         /// <param name="maxInFlight">Maximum concurrent handlers per connection; 0 disables the gate.</param>
-        protected void InitDispatchGate(int maxInFlight)
+        /// <param name="sequential">When true, handlers run one-at-a-time in receive order (takes precedence over the gate).</param>
+        protected void InitDispatchGate(int maxInFlight, bool sequential = false)
         {
+            _sequentialDispatch = sequential;
             if (maxInFlight > 0)
+            {
                 _dispatchGate = new SemaphoreSlim(maxInFlight, maxInFlight);
+                _dispatchCts = new CancellationTokenSource();
+            }
         }
 
         /// <summary>
-        /// Dispatches an inbound message, applying back-pressure when a dispatch gate is configured: it waits
-        /// for a free slot before admitting the message (so the caller's receive loop pauses when saturated),
-        /// then runs the handler and releases the slot on completion. With no gate it dispatches immediately.
+        /// Cancels any pending gate wait so the receive loop unblocks during teardown. Idempotent and safe to call
+        /// even when no gate is configured. Invoked by subclasses from their close/disconnect path.
+        /// </summary>
+        protected void ShutdownDispatch()
+        {
+            try { _dispatchCts?.Cancel(); } catch { /* already disposed */ }
+        }
+
+        /// <summary>
+        /// Re-arms the dispatch gate for a fresh connection generation by installing a new, uncancelled
+        /// cancellation source. Must be called before starting a new receive loop after a teardown
+        /// (reconnect, or a Disconnect→Connect cycle), otherwise <see cref="ShutdownDispatch"/> would have left
+        /// the token permanently cancelled and the next gated dispatch would throw on the first frame.
+        /// </summary>
+        /// <remarks>
+        /// The previous source is left for the GC rather than disposed: it has no timer (no finalizer cost) and is
+        /// only swapped here, between connection generations when no <see cref="DispatchAsync"/> is in flight.
+        /// </remarks>
+        protected void ResetDispatch()
+        {
+            if (_dispatchGate != null)
+                _dispatchCts = new CancellationTokenSource();
+        }
+
+        /// <summary>Disposes the dispatch gate and its cancellation source. Called from the owner's dispose path.</summary>
+        protected void DisposeDispatch()
+        {
+            try { _dispatchCts?.Dispose(); } catch { /* ignore */ }
+            try { _dispatchGate?.Dispose(); } catch { /* ignore */ }
+        }
+
+        /// <summary>
+        /// Dispatches an inbound message. In sequential mode it awaits the handler to completion (guaranteeing
+        /// in-order, non-overlapping execution). Otherwise, with a dispatch gate it applies back-pressure —
+        /// waiting for a free slot before admitting the message (cancellable on teardown) — and with no gate it
+        /// dispatches immediately without waiting for the handler.
         /// </summary>
         /// <param name="type">The wire type id used to select the handler.</param>
         /// <param name="data">The message payload bytes passed to the handler.</param>
-        /// <returns>A task that completes once the message has been admitted for handling (not when the handler finishes).</returns>
+        /// <returns>A task that completes once the message has been admitted for handling (or, in sequential mode, once the handler finishes).</returns>
         protected async Task DispatchAsync(ushort type, byte[] data)
         {
+            // Give the raw-frame interceptor first refusal on application frames (system frames are excluded).
+            // If it consumes the frame (e.g. a relay forwards the raw bytes), skip typed dispatch entirely —
+            // no deserialization happens. Defaults to a no-op pass-through. A throwing hook is isolated exactly
+            // like a faulty handler (reported, frame dropped) so it cannot tear down the receive loop.
+            if (!SystemMessageTypes.IsSystem(type))
+            {
+                bool consumed;
+                try { consumed = OnRawFrame(type, data); }
+                catch (Exception ex) { HandleProcessingError(type, ex); return; }
+                if (consumed) return;
+            }
+
+            if (_sequentialDispatch)
+            {
+                // Await completion so the next frame is not read until this handler finishes — strict ordering.
+                await _messageProcessor.ProcessMessageAsync(type, data).ConfigureAwait(false);
+                return;
+            }
+
             var gate = _dispatchGate;
             if (gate == null)
             {
@@ -58,11 +126,25 @@ namespace SetNet.Core
                 return;
             }
 
-            await gate.WaitAsync().ConfigureAwait(false);
+            // Pass the teardown token so a saturated gate (all slots held by stuck handlers) cannot wedge the
+            // receive loop forever — closing the socket cancels the wait and lets the loop exit. Capture the
+            // current generation's source locally so a concurrent ResetDispatch swap can't be observed mid-call.
+            var cts = _dispatchCts;
+            await gate.WaitAsync(cts!.Token).ConfigureAwait(false);
+
             Task handlerTask;
             try { handlerTask = _messageProcessor.ProcessMessageAsync(type, data); }
             catch { gate.Release(); throw; }
-            _ = handlerTask.ContinueWith(_ => gate.Release(), TaskScheduler.Default);
+            _ = ReleaseWhenDone(handlerTask, gate);
+        }
+
+        /// <summary>Awaits a dispatched handler and releases its gate slot, avoiding the closure a <c>ContinueWith</c> would allocate per message.</summary>
+        /// <param name="task">The handler task (never faults — faults are reported inside the processor).</param>
+        /// <param name="gate">The gate semaphore to release on completion.</param>
+        private static async Task ReleaseWhenDone(Task task, SemaphoreSlim gate)
+        {
+            try { await task.ConfigureAwait(false); }
+            finally { gate.Release(); }
         }
 
         /// <summary>
@@ -74,6 +156,25 @@ namespace SetNet.Core
         {
             _messageProcessor = new MessageProcessor { OnHandlerError = HandleProcessingError };
         }
+
+        /// <summary>
+        /// Raw inbound-frame interception hook, called for every <b>application</b> frame (reserved system frames
+        /// such as heartbeat/bind-token are excluded) <b>before</b> it is dispatched to a typed handler. Override
+        /// it to inspect or forward the raw, still-serialized payload <b>without deserializing</b> — for example a
+        /// relay/proxy that re-sends frames to other peers via <c>SendRawAsync</c>.
+        /// </summary>
+        /// <param name="type">The wire type id of the frame.</param>
+        /// <param name="data">The raw, still-serialized payload (a fresh per-message array; safe to keep or forward).</param>
+        /// <returns>
+        /// <see langword="true"/> to mark the frame consumed and <b>skip</b> typed handler dispatch (relay case);
+        /// <see langword="false"/> (the default) to let it continue to its registered handler (normal case, or
+        /// observe-and-pass-through such as logging/metrics).
+        /// </returns>
+        /// <remarks>
+        /// Runs synchronously on the receive path; do any forwarding fire-and-forget (or batch it) rather than
+        /// blocking. The base implementation returns <see langword="false"/>, so normal endpoints pay nothing.
+        /// </remarks>
+        protected virtual bool OnRawFrame(ushort type, byte[] data) => false;
 
         /// <summary>Called when a message handler throws. Overridden by client/peer to log via the configured logger.</summary>
         /// <param name="type">The wire type id of the message whose handler threw.</param>

@@ -30,21 +30,29 @@ namespace SetNet.Core.Transport.Tcp
         public async Task<ITransportConnection> ConnectAsync(Configuration config, CancellationToken ct = default)
         {
             var client = new TcpClient();
-            var connectTask = client.ConnectAsync(config.Host, config.Port);
-
-            if (config.ConnectTimeoutMs > 0)
+            try
             {
-                if (await Task.WhenAny(connectTask, Task.Delay(config.ConnectTimeoutMs, ct)).ConfigureAwait(false) != connectTask)
+                client.NoDelay = config.TcpNoDelay; // disable Nagle by default for low-latency small frames
+                var connectTask = client.ConnectAsync(config.Host, config.Port);
+
+                if (config.ConnectTimeoutMs > 0)
                 {
-                    client.Close();
-                    throw new TimeoutException($"Connection timed out after {config.ConnectTimeoutMs}ms");
+                    if (await Task.WhenAny(connectTask, Task.Delay(config.ConnectTimeoutMs, ct)).ConfigureAwait(false) != connectTask)
+                        throw new TimeoutException($"Connection timed out after {config.ConnectTimeoutMs}ms");
                 }
+
+                await connectTask.ConfigureAwait(false); // surface connect errors
+
+                var stream = await TcpTls.WrapClientAsync(client, config, ct).ConfigureAwait(false);
+                return new TcpConnection(client, stream, config.BufferSize, config.MaxMessageSize, config.SendBatching, config.SendBatchFlushMs, config.SendTimeoutMs);
             }
-
-            await connectTask.ConfigureAwait(false); // surface connect errors
-
-            var stream = await TcpTls.WrapClientAsync(client, config, ct).ConfigureAwait(false);
-            return new TcpConnection(client, stream, config.BufferSize, config.MaxMessageSize, config.SendBatching, config.SendBatchFlushMs);
+            catch
+            {
+                // Connect/timeout/TLS-handshake failure: close the socket so a failed (or retried) connect never
+                // leaks a file descriptor. Ownership only transfers to TcpConnection on the success path above.
+                try { client.Close(); } catch { /* already torn down */ }
+                throw;
+            }
         }
     }
 }

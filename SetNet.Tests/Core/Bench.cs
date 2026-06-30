@@ -26,9 +26,9 @@ public static class BenchStats
 
 /// <summary>Server-side pure sink handler (no echo) used to measure ingest throughput.</summary>
 [MessageHandler(800)]
-public class BenchSinkHandler : IServerMessageHandler
+public class BenchSinkHandler : IServerMessageHandler<BenchMessage>
 {
-    public System.Threading.Tasks.Task HandleAsync(BasePeer peer, byte[] data)
+    public System.Threading.Tasks.Task HandleAsync(BasePeer peer, BenchMessage message)
     {
         BenchStats.Increment();
         return System.Threading.Tasks.Task.CompletedTask;
@@ -57,6 +57,7 @@ public class BenchClient : BaseClient
 {
     public BenchClient(Configuration config) : base(config) { }
     public Task SendBenchAsync(int n) => SendAsync((ushort)800, new BenchMessage { N = n });
+    public Task FlushBenchAsync() => FlushAsync();
     protected override void OnConnected() { }
     protected override void OnDisconnected() { }
     protected override void OnError(string error) { }
@@ -69,25 +70,36 @@ public static class Bench
         Console.WriteLine($"=== SetNet benchmark (GC server={System.Runtime.GCSettings.IsServerGC}, cores={Environment.ProcessorCount}) ===");
 
         // ── 1. Single-connection message throughput (tiny reliable TCP messages) ──
+        // Measured twice: the default latency-first path (TcpNoDelay=true, each message sent immediately) and
+        // the throughput path (SendBatching=true, coalesced into one write per flush). NoDelay is left on for
+        // both — batching gives high throughput AND low latency, which is the recommended high-rate config.
         const int messages = 100_000;
-        BenchStats.Reset();
-        var tputServer = new BenchServer(new Configuration { Host = "127.0.0.1", Port = 5710, Logger = new SetNet.Logging.NoOpLogger() });
-        _ = tputServer.StartAsync();
-        await Task.Delay(300);
-        var tputClient = new BenchClient(new Configuration { Host = "127.0.0.1", Port = 5710, Logger = new SetNet.Logging.NoOpLogger() });
-        await tputClient.ConnectAsync();
 
-        var sw = Stopwatch.StartNew();
-        for (int i = 0; i < messages; i++)
-            await tputClient.SendBenchAsync(i);
-        while (BenchStats.Received < messages) await Task.Delay(2);
-        sw.Stop();
+        async Task RunThroughput(bool batching, string label, int port)
+        {
+            BenchStats.Reset();
+            var server = new BenchServer(new Configuration { Host = "127.0.0.1", Port = port, SendBatching = batching, Logger = new SetNet.Logging.NoOpLogger() });
+            _ = server.StartAsync();
+            await Task.Delay(300);
+            var client = new BenchClient(new Configuration { Host = "127.0.0.1", Port = port, SendBatching = batching, Logger = new SetNet.Logging.NoOpLogger() });
+            await client.ConnectAsync();
 
-        var rate = messages / sw.Elapsed.TotalSeconds;
-        Console.WriteLine($"[throughput] {messages:N0} msgs in {sw.Elapsed.TotalMilliseconds:N0} ms = {rate:N0} msgs/sec on ONE connection");
-        tputClient.Disconnect();
-        await tputServer.StopAsync();
-        await Task.Delay(200);
+            var sw2 = Stopwatch.StartNew();
+            for (int i = 0; i < messages; i++)
+                await client.SendBenchAsync(i);
+            await client.FlushBenchAsync(); // flush the final batch (no-op when batching is off)
+            while (BenchStats.Received < messages) await Task.Delay(2);
+            sw2.Stop();
+
+            var r = messages / sw2.Elapsed.TotalSeconds;
+            Console.WriteLine($"[throughput:{label}] {messages:N0} msgs in {sw2.Elapsed.TotalMilliseconds:N0} ms = {r:N0} msgs/sec on ONE connection");
+            client.Disconnect();
+            await server.StopAsync();
+            await Task.Delay(200);
+        }
+
+        await RunThroughput(batching: false, label: "default", port: 5710);
+        await RunThroughput(batching: true, label: "batched", port: 5712);
 
         // ── 2. Many idle connections: memory + connect time ──
         const int conns = 2000;

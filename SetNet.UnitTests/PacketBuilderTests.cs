@@ -67,6 +67,41 @@ public class PacketBuilderTests
         Assert.False(rx.TryGetCompletePacket(out _));
     }
 
+    [Theory]
+    [InlineData(0)] // length prefix = 0
+    [InlineData(1)] // length prefix = 1 (too short to even hold the 2-byte type)
+    public void SubMinimumLengthPrefix_ReturnsFalse_DoesNotThrow(int badLength)
+    {
+        // Regression: a frame whose declared length is 0 or 1 used to compute a negative payload size in
+        // TryGetCompleteMessage (length-2) and throw OverflowException, tearing down the connection. It must
+        // now be rejected like a negative prefix — no throw, no message.
+        var rx = new PacketBuilder();
+        rx.AppendData(new byte[] { (byte)badLength, 0, 0, 0, 9, 9 }); // little-endian length, then junk
+        Assert.False(rx.TryGetCompleteMessage(out _, out _));
+        Assert.False(rx.TryGetCompletePacket(out _));
+    }
+
+    [Fact]
+    public void ParsePacket_ShorterThanTypeField_ReturnsEmpty_DoesNotThrow()
+    {
+        // Regression: ParsePacket on a <2-byte packet used to allocate new byte[len-2] (negative) and throw.
+        var (type, data) = PacketBuilder.ParsePacket(new byte[] { 7 });
+        Assert.Equal((ushort)0, type);
+        Assert.Empty(data);
+    }
+
+    [Fact]
+    public void EmptyPayloadFrame_RoundTrips()
+    {
+        // length == 2 (type only, empty payload) is the smallest VALID frame and must still decode.
+        var wire = new PacketBuilder().BuildPacket(33, Array.Empty<byte>());
+        var rx = new PacketBuilder();
+        rx.AppendData(wire);
+        Assert.True(rx.TryGetCompleteMessage(out var type, out var payload));
+        Assert.Equal((ushort)33, type);
+        Assert.Empty(payload);
+    }
+
     [Fact]
     public void WriteFrame_IntoOversizedBuffer_ReturnsExactLength()
     {

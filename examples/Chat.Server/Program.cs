@@ -4,6 +4,11 @@
 
 using Chat.Server;
 using SetNet.Config;
+using SetNet.Messaging;
+using SetNet.MessagePack;
+
+// The core library bundles no serializer; register the MessagePack adapter once at startup.
+SetNetSerializer.Use(new MessagePackNetSerializer());
 
 var host = args.Length > 0 ? args[0] : "127.0.0.1";
 var port = args.Length > 1 && int.TryParse(args[1], out var parsed) ? parsed : 5000;

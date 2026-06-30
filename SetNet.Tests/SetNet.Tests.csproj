@@ -9,6 +9,7 @@
 
     <ItemGroup>
       <ProjectReference Include="..\SetNet\SetNet.csproj" />
+      <ProjectReference Include="..\SetNet.MessagePack\SetNet.MessagePack.csproj" />
     </ItemGroup>
 
 </Project>

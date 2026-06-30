@@ -4,9 +4,9 @@ namespace SetNet.Data.Attributes
 {
     /// <summary>
     /// Marks a message-handler class for reflection-based discovery and associates it with the
-    /// wire message-type identifier it processes. <c>CommandExecutor</c> scans loaded assemblies
-    /// for classes carrying this attribute (and implementing <see cref="SetNet.Data.IServerMessageHandler"/>
-    /// or <see cref="SetNet.Data.IClientMessageHandler"/>) and registers them automatically, so handlers
+    /// wire message-type identifier it processes. The command executors scan loaded assemblies
+    /// for classes carrying this attribute (and implementing <see cref="SetNet.Data.IServerMessageHandler{TMessage}"/>
+    /// or <see cref="SetNet.Data.IClientMessageHandler{TMessage}"/>) and register them automatically, so handlers
     /// never have to be wired up by hand. It sits at the boundary between the routing layer and
     /// user-defined message logic.
     /// </summary>

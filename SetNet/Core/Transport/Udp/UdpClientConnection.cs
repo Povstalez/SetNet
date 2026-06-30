@@ -27,8 +27,8 @@ namespace SetNet.Core.Transport.Udp
         /// <summary>Session token identifying this UDP flow; echoed in the disconnect datagram on close.</summary>
         private readonly Guid _token;
 
-        /// <summary>Single-consumer queue feeding <see cref="ReceiveAsync"/> with decoded, ready-to-dispatch messages.</summary>
-        private readonly AsyncQueue<TransportMessage> _inbound = new AsyncQueue<TransportMessage>();
+        /// <summary>Single-consumer queue feeding <see cref="ReceiveAsync"/> with decoded, ready-to-dispatch messages (capacity-bounded for OOM protection).</summary>
+        private readonly AsyncQueue<TransportMessage> _inbound;
 
         /// <summary>Serializes concurrent <see cref="UdpClient.SendAsync(byte[], int)"/> calls, which are not safe to overlap.</summary>
         private readonly SemaphoreSlim _sendLock = new SemaphoreSlim(1, 1);
@@ -55,6 +55,7 @@ namespace SetNet.Core.Transport.Udp
             _udp = udp;
             _config = config;
             _token = token;
+            _inbound = new AsyncQueue<TransportMessage>(config.MaxInboundQueue);
 
             _reliability = new ReliabilityChannelSet(config, SendRawAsync, _inbound, Close);
 
@@ -178,8 +179,9 @@ namespace SetNet.Core.Transport.Udp
             switch (dg[0])
             {
                 case PacketKind.Unreliable:
-                    if (UdpDatagram.TryParseUnreliable(dg, out var type, out var payload))
-                        _inbound.Enqueue(new TransportMessage(type, payload));
+                    if (UdpDatagram.TryParseUnreliable(dg, out var type, out var payload)
+                        && !_inbound.TryEnqueue(new TransportMessage(type, payload)))
+                        _config.Metrics.IncrementInboundDropped(); // best-effort: shed unreliable load when the queue is full
                     break;
                 case PacketKind.Reliable:
                     _reliability.OnReliableDatagram(dg);

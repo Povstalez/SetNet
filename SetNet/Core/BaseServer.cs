@@ -27,7 +27,7 @@ namespace SetNet.Core
         private readonly Configuration _config;
 
         /// <summary>Reflection-discovered registry of server-side message handlers, shared with every peer for dispatch.</summary>
-        private readonly CommandExecutor<IServerMessageHandler> _commandExecutor;
+        private readonly ServerCommandExecutor _commandExecutor;
 
         /// <summary>The primary (TCP or UDP) listener accepting incoming connections; null until started.</summary>
         private ITransportListener? _listener;
@@ -41,6 +41,9 @@ namespace SetNet.Core
         /// <summary>Guards against double-dispose.</summary>
         private bool _disposed;
 
+        /// <summary>Set once <see cref="StopAsync"/>/<see cref="Dispose(bool)"/> has cleared the pool, so a peer accepted concurrently is not registered (and leaked) after shutdown. Guarded by the <c>_clients</c> lock.</summary>
+        private bool _stopped;
+
         /// <summary>Per-IP connection rate limiter for the TCP accept path (no-op when disabled in config).</summary>
         private readonly RateLimiter _rateLimiter;
 
@@ -52,7 +55,7 @@ namespace SetNet.Core
         protected BaseServer(Configuration config)
         {
             _config = config;
-            _commandExecutor = new CommandExecutor<IServerMessageHandler>();
+            _commandExecutor = new ServerCommandExecutor();
             _rateLimiter = new RateLimiter(config.MaxConnectionsPerIpPerSecond);
         }
 
@@ -91,7 +94,19 @@ namespace SetNet.Core
 
             while (!_cts.IsCancellationRequested)
             {
-                var accepted = await _listener.AcceptAsync(_cts.Token).ConfigureAwait(false);
+                AcceptedConnection? accepted;
+                try
+                {
+                    accepted = await _listener.AcceptAsync(_cts.Token).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException) { break; }
+                catch (Exception ex)
+                {
+                    // AcceptAsync already absorbs per-connection faults; an escape here means the listener itself
+                    // is unusable, so log and exit the loop rather than spinning on a permanent fault.
+                    _config.Logger.Log($"Accept loop terminated: {ex.Message}", global::SetNet.Logging.LogLevel.Error);
+                    break;
+                }
                 if (accepted == null) break;
 
                 if (accepted.RemoteEndPoint != null && !_rateLimiter.Allow(accepted.RemoteEndPoint.Address))
@@ -124,9 +139,24 @@ namespace SetNet.Core
                     continue;
                 }
 
-                lock (_clients)
+                if (!TryRegisterPeer(peerInfo, peer))
                 {
-                    _clients[peerInfo.Id] = peer;
+                    accepted.Connection.Close();
+                    continue;
+                }
+
+                try
+                {
+                    peer.StartReceive(); // idempotent: ensures the receive loop runs even if OnNewClient didn't start it
+                }
+                catch (Exception ex)
+                {
+                    // A failing StartReceive must not kill the accept loop or leave a registered dead peer.
+                    _config.Logger.Log($"StartReceive failed for {peerInfo.Id}: {ex.Message}", global::SetNet.Logging.LogLevel.Error);
+                    peer.Close();
+                    accepted.Connection.Close();
+                    RemoveClient(peerInfo);
+                    continue;
                 }
 
                 _config.Metrics.IncrementConnectionsAccepted();
@@ -176,7 +206,17 @@ namespace SetNet.Core
 
             while (!_cts.IsCancellationRequested)
             {
-                var accepted = await tcp.AcceptAsync(_cts.Token).ConfigureAwait(false);
+                AcceptedConnection? accepted;
+                try
+                {
+                    accepted = await tcp.AcceptAsync(_cts.Token).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException) { break; }
+                catch (Exception ex)
+                {
+                    _config.Logger.Log($"Accept loop terminated: {ex.Message}", global::SetNet.Logging.LogLevel.Error);
+                    break;
+                }
                 if (accepted == null) break;
 
                 if (accepted.RemoteEndPoint != null && !_rateLimiter.Allow(accepted.RemoteEndPoint.Address))
@@ -211,20 +251,63 @@ namespace SetNet.Core
                 }
                 catch (Exception ex)
                 {
+                    // Setup failed after the token was registered: drop the token so its bind callback is released,
+                    // AND abandon the binding so that if the UDP handshake won the race and already bound a
+                    // UdpServerConnection, that connection is closed (and removed from the listener's demux table)
+                    // rather than leaking with no peer to own it — Both mode runs no UDP idle sweep to reap it.
+                    udp.UnregisterExpectedToken(token);
+                    binding.Abandon();
                     _config.Logger.Log($"Both-mode setup failed for {peerInfo.Id}: {ex.Message}", global::SetNet.Logging.LogLevel.Error);
+                    accepted.Connection.Close();
+                    continue;
+                }
+
+                if (!TryRegisterPeer(peerInfo, peer))
+                {
+                    udp.UnregisterExpectedToken(token);
+                    binding.Abandon();
                     accepted.Connection.Close();
                     continue;
                 }
 
                 binding.SetPeer(peer);
 
-                lock (_clients)
+                try
                 {
-                    _clients[peerInfo.Id] = peer;
+                    peer.StartReceive(); // idempotent: ensures the receive loop runs even if OnNewClient didn't start it
+                }
+                catch (Exception ex)
+                {
+                    udp.UnregisterExpectedToken(token);
+                    binding.Abandon();
+                    _config.Logger.Log($"StartReceive failed for {peerInfo.Id}: {ex.Message}", global::SetNet.Logging.LogLevel.Error);
+                    peer.Close();
+                    accepted.Connection.Close();
+                    RemoveClient(peerInfo);
+                    continue;
                 }
 
                 _config.Metrics.IncrementConnectionsAccepted();
                 _config.Logger.Log($"Client connected: {peerInfo.Id}", global::SetNet.Logging.LogLevel.Info);
+            }
+        }
+
+        /// <summary>
+        /// Registers a peer in the live pool only if it has not already disconnected during application setup.
+        /// This closes the race where user code starts receive inside OnNewClient and the peer closes before the
+        /// accept loop reaches the dictionary add.
+        /// </summary>
+        private bool TryRegisterPeer(PeerInfo peerInfo, BasePeer peer)
+        {
+            lock (_clients)
+            {
+                // Refuse if the server has stopped (else this peer is added after the shutdown snapshot+clear and
+                // leaks past shutdown), or if the peer already closed/disconnected during application setup.
+                if (_stopped || peer.IsClosed || peerInfo.IsDisconnected || !peerInfo.Connection.IsConnected)
+                    return false;
+
+                _clients[peerInfo.Id] = peer;
+                return true;
             }
         }
 
@@ -247,17 +330,37 @@ namespace SetNet.Core
             /// <summary>A UDP connection that arrived before the peer existed, held until <see cref="SetPeer"/> can attach it.</summary>
             private UdpServerConnection? _pending;
 
+            /// <summary>Set when setup failed before a peer was produced; a late <see cref="Attach"/> then closes its connection instead of stashing it.</summary>
+            private bool _abandoned;
+
             /// <summary>
             /// Called by the UDP listener when the handshake token matches: attaches the UDP connection to
             /// the peer if it already exists, otherwise stashes it as pending for <see cref="SetPeer"/>.
+            /// If the binding was abandoned (setup failed with no peer), the connection is closed immediately.
             /// </summary>
             /// <param name="conn">The newly bound server-side UDP connection for this client.</param>
             public void Attach(UdpServerConnection conn)
             {
                 lock (_lock)
                 {
+                    if (_abandoned) { conn.Close(); return; }
                     if (_peer != null) _peer.AttachUdp(conn);
                     else _pending = conn;
+                }
+            }
+
+            /// <summary>
+            /// Abandons the binding because peer setup failed before a peer was produced. Closes any UDP
+            /// connection the handshake already stashed, and makes any later <see cref="Attach"/> close its
+            /// connection too — so a bound UDP connection is never left orphaned in the listener's demux table.
+            /// </summary>
+            public void Abandon()
+            {
+                lock (_lock)
+                {
+                    _abandoned = true;
+                    _pending?.Close();
+                    _pending = null;
                 }
             }
 
@@ -291,13 +394,19 @@ namespace SetNet.Core
             _cts?.Cancel();
             _listener?.Stop();
             _udpListener?.Stop();
+            // Snapshot then clear under the lock, and Close() the peers OUTSIDE the lock: each Close() re-enters
+            // RemoveClient (which locks _clients and removes the peer), so closing over a copy of an
+            // already-cleared dictionary avoids mutating the collection while it is being enumerated.
+            BasePeer[] snapshot;
             lock (_clients)
             {
-                foreach (var client in _clients.Values)
-                    client.Close();
-
+                _stopped = true; // refuse any peer the accept loop is concurrently trying to register
+                snapshot = new BasePeer[_clients.Count];
+                _clients.Values.CopyTo(snapshot, 0);
                 _clients.Clear();
             }
+            foreach (var client in snapshot)
+                client.Close();
 
             _config.Logger.Log("Server stopped", global::SetNet.Logging.LogLevel.Info);
             return Task.CompletedTask;
@@ -351,12 +460,16 @@ namespace SetNet.Core
             _cts?.Cancel();
             _listener?.Stop();
             _udpListener?.Stop();
+            BasePeer[] snapshot;
             lock (_clients)
             {
-                foreach (var client in _clients.Values)
-                    client.Close();
+                _stopped = true; // refuse any peer the accept loop is concurrently trying to register
+                snapshot = new BasePeer[_clients.Count];
+                _clients.Values.CopyTo(snapshot, 0);
                 _clients.Clear();
             }
+            foreach (var client in snapshot) // close outside the lock over a copy (see StopAsync)
+                client.Close();
             _cts?.Dispose();
         }
     }

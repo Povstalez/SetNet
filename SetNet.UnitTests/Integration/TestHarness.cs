@@ -77,6 +77,37 @@ public class TestServer : BaseServer
     }
 }
 
+/// <summary>Test server whose <see cref="OnNewClient"/> deliberately does NOT call StartReceive, to verify the framework starts it.</summary>
+public class ForgetfulServer : BaseServer
+{
+    /// <summary>Creates the server with the given configuration.</summary>
+    /// <param name="config">Transport/endpoint settings.</param>
+    public ForgetfulServer(Configuration config) : base(config) { }
+
+    /// <inheritdoc/>
+    protected override BasePeer OnNewClient(PeerInfo peerInfo) => new TestPeer(peerInfo); // intentionally no StartReceive()
+}
+
+/// <summary>Test client that counts how many times <see cref="OnDisconnected"/> fires.</summary>
+public class CountingClient : BaseClient
+{
+    /// <summary>Number of times the terminal disconnect callback has fired.</summary>
+    public int DisconnectedCount;
+
+    /// <summary>Creates the client with the given configuration.</summary>
+    /// <param name="config">Transport/endpoint settings.</param>
+    public CountingClient(Configuration config) : base(config) { }
+
+    /// <inheritdoc/>
+    protected override void OnConnected() { }
+
+    /// <inheritdoc/>
+    protected override void OnDisconnected() => System.Threading.Interlocked.Increment(ref DisconnectedCount);
+
+    /// <inheritdoc/>
+    protected override void OnError(string error) { }
+}
+
 /// <summary>Test client exposing a public echo-send helper.</summary>
 public class TestClient : BaseClient
 {
@@ -94,6 +125,10 @@ public class TestClient : BaseClient
     public Task SendEchoAsync(string text, DeliveryMethod delivery, byte channel)
         => SendAsync((ushort)900, new EchoMessage { Text = text }, delivery, channel);
 
+    /// <summary>Sends an <see cref="EchoMessage"/> under an arbitrary wire type (for raw-frame/relay tests).</summary>
+    public Task SendAsTypeAsync(ushort type, string text, DeliveryMethod delivery)
+        => SendAsync(type, new EchoMessage { Text = text }, delivery);
+
     /// <summary>Exposes the protected batch flush for tests.</summary>
     public Task FlushManuallyAsync() => FlushAsync();
 
@@ -109,12 +144,11 @@ public class TestClient : BaseClient
 
 /// <summary>Server-side echo handler: records the text and echoes it back to the sender (type 901).</summary>
 [MessageHandler(900)]
-public class EchoServerHandler : IServerMessageHandler
+public class EchoServerHandler : IServerMessageHandler<EchoMessage>
 {
     /// <inheritdoc/>
-    public async Task HandleAsync(BasePeer peer, byte[] data)
+    public async Task HandleAsync(BasePeer peer, EchoMessage message)
     {
-        var message = SetNet.Messaging.MessagePackSerializer.Deserialize<EchoMessage>(data);
         TestInbox.ServerReceived.Enqueue(message.Text);
         await ((TestPeer)peer).SendMessageAsync((ushort)901, new EchoMessage { Text = message.Text });
     }
@@ -122,12 +156,11 @@ public class EchoServerHandler : IServerMessageHandler
 
 /// <summary>Client-side echo handler: records the text echoed back by the server (type 901).</summary>
 [MessageHandler(901)]
-public class EchoClientHandler : IClientMessageHandler
+public class EchoClientHandler : IClientMessageHandler<EchoMessage>
 {
     /// <inheritdoc/>
-    public Task HandleAsync(byte[] data)
+    public Task HandleAsync(EchoMessage message)
     {
-        var message = SetNet.Messaging.MessagePackSerializer.Deserialize<EchoMessage>(data);
         TestInbox.ClientReceived.Enqueue(message.Text);
         return Task.CompletedTask;
     }

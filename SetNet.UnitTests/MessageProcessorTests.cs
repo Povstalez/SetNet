@@ -64,4 +64,31 @@ public class MessageProcessorTests
         var mp = new MessageProcessor();
         mp.ProcessMessage(999, Array.Empty<byte>()); // no handler registered → no-op
     }
+
+    [Fact]
+    public void ThrowingErrorSink_OnSyncHandlerFault_DoesNotEscape()
+    {
+        // Regression: a faulty OnHandlerError (e.g. a logger that throws) must not escape ProcessMessage —
+        // for the async path it would otherwise crash the process via async void.
+        var mp = new MessageProcessor();
+        mp.OnHandlerError = (_, _) => throw new InvalidOperationException("logger boom");
+        mp.RegisterHandler((ushort)5, _ => throw new InvalidOperationException("handler boom"));
+
+        mp.ProcessMessage(5, Array.Empty<byte>()); // must not throw
+    }
+
+    [Fact]
+    public async Task ThrowingErrorSink_OnAsyncHandlerFault_DoesNotCrash()
+    {
+        // The async observer is `async void`; if its OnHandlerError throws, the exception would become an
+        // unhandled exception on a thread-pool thread and terminate the process. ReportError must swallow it.
+        var mp = new MessageProcessor();
+        var entered = new TaskCompletionSource<bool>();
+        mp.OnHandlerError = (_, _) => { entered.TrySetResult(true); throw new InvalidOperationException("logger boom"); };
+        mp.RegisterHandler((ushort)5, async _ => { await Task.Yield(); throw new InvalidOperationException("handler boom"); });
+
+        mp.ProcessMessage(5, Array.Empty<byte>());
+
+        Assert.True(await entered.Task); // the sink ran and threw; we are still alive
+    }
 }

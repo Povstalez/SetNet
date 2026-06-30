@@ -83,10 +83,14 @@ namespace SetNet.Core
                 while (!_cts.IsCancellationRequested)
                 {
                     await Task.Delay(BaseTickMs, _cts.Token).ConfigureAwait(false);
+                    // Read the clock ONCE per tick and compare every entry against the local, instead of a
+                    // Stopwatch.GetTimestamp() syscall per entry — so the scan cost scales as cheap integer
+                    // comparisons (O(entries)) rather than O(entries) syscalls at 200 Hz.
+                    var now = MonotonicClock.Timestamp;
                     foreach (var kv in _entries)
                     {
                         var entry = kv.Value;
-                        if (!MonotonicClock.IsDue(entry.DueTimestamp)) continue;
+                        if (entry.DueTimestamp > now) continue;
 
                         // Re-arm from "now" so a slow tick does not cause a catch-up storm.
                         entry.DueTimestamp = MonotonicClock.DueInMs(entry.IntervalMs);

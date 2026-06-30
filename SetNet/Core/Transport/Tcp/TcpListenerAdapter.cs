@@ -1,9 +1,11 @@
 using System;
+using System.IO;
 using System.Net;
 using System.Net.Sockets;
 using System.Threading;
 using System.Threading.Tasks;
 using SetNet.Config;
+using SetNet.Logging;
 
 namespace SetNet.Core.Transport.Tcp
 {
@@ -58,16 +60,73 @@ namespace SetNet.Core.Transport.Tcp
         /// </remarks>
         public async Task<AcceptedConnection?> AcceptAsync(CancellationToken ct = default)
         {
-            try
+            // Loop internally so a single bad connection (garbage/stalled TLS handshake, a client RST mid-setup,
+            // a transient accept error) is skipped rather than propagating out and killing the server's accept
+            // loop. null is returned ONLY when the listener has actually stopped, which is the loop's exit signal.
+            while (!ct.IsCancellationRequested)
             {
-                var client = await _listener.AcceptTcpClientAsync().ConfigureAwait(false);
-                var remote = client.Client.RemoteEndPoint as IPEndPoint;
-                var stream = await TcpTls.WrapServerAsync(client, _config).ConfigureAwait(false);
-                var connection = new TcpConnection(client, stream, _config.BufferSize, _config.MaxMessageSize, _config.SendBatching, _config.SendBatchFlushMs);
-                return new AcceptedConnection(connection, Guid.Empty, remote);
+                TcpClient client;
+                try
+                {
+                    client = await _listener.AcceptTcpClientAsync().ConfigureAwait(false);
+                }
+                catch (ObjectDisposedException) { return null; }               // listener stopped
+                catch (SocketException) when (ct.IsCancellationRequested) { return null; }
+                catch (SocketException ex)
+                {
+                    // Transient accept error (e.g. ECONNABORTED after a client RST, or fd pressure under EMFILE).
+                    // Do NOT tear down the accept loop — log, back off briefly, and keep accepting.
+                    _config.Logger.Log($"TCP accept error (continuing): {ex.SocketErrorCode}", LogLevel.Warning);
+                    try { await Task.Delay(50, ct).ConfigureAwait(false); }
+                    catch (OperationCanceledException) { return null; }
+                    continue;
+                }
+
+                IPEndPoint? remote = null;
+                try
+                {
+                    client.NoDelay = _config.TcpNoDelay; // disable Nagle by default for low-latency small frames
+                    remote = client.Client.RemoteEndPoint as IPEndPoint;
+                    var stream = await WrapServerWithTimeoutAsync(client, ct).ConfigureAwait(false);
+                    var connection = new TcpConnection(client, stream, _config.BufferSize, _config.MaxMessageSize, _config.SendBatching, _config.SendBatchFlushMs, _config.SendTimeoutMs);
+                    return new AcceptedConnection(connection, Guid.Empty, remote);
+                }
+                catch (Exception ex)
+                {
+                    // Per-connection setup failure (bad/garbage/stalled TLS handshake, IO error): close this
+                    // client so its socket isn't leaked, count the rejection, and accept the next connection.
+                    _config.Logger.Log($"Rejecting connection from {remote?.ToString() ?? "unknown"}: {ex.Message}", LogLevel.Warning);
+                    _config.Metrics.IncrementConnectionsRejected();
+                    try { client.Close(); } catch { /* already torn down */ }
+                }
             }
-            catch (ObjectDisposedException) { return null; }
-            catch (SocketException) when (ct.IsCancellationRequested) { return null; }
+
+            return null;
+        }
+
+        /// <summary>
+        /// Performs the server-side TLS handshake with a timeout so a client that completes the TCP connect but
+        /// stalls the handshake cannot occupy the accept path indefinitely (a slow-handshake DoS). Plaintext
+        /// connections return immediately.
+        /// </summary>
+        /// <param name="client">The freshly accepted client to wrap.</param>
+        /// <param name="ct">Server shutdown token, linked into the handshake timeout.</param>
+        /// <returns>The negotiated stream (TLS or plaintext).</returns>
+        /// <exception cref="TimeoutException">The TLS handshake did not complete within <see cref="Configuration.ConnectTimeoutMs"/>.</exception>
+        private async Task<Stream> WrapServerWithTimeoutAsync(TcpClient client, CancellationToken ct)
+        {
+            if (!_config.UseSsl)
+                return await TcpTls.WrapServerAsync(client, _config).ConfigureAwait(false);
+
+            using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            timeoutCts.CancelAfter(_config.ConnectTimeoutMs > 0 ? _config.ConnectTimeoutMs : 10000);
+
+            var handshake = TcpTls.WrapServerAsync(client, _config);
+            var finished = await Task.WhenAny(handshake, Task.Delay(Timeout.Infinite, timeoutCts.Token)).ConfigureAwait(false);
+            if (finished != handshake)
+                throw new TimeoutException("TLS handshake timed out."); // caller closes the client, aborting the pending handshake
+
+            return await handshake.ConfigureAwait(false);
         }
 
         /// <summary>Disposes the adapter by stopping the listener and releasing its endpoint.</summary>

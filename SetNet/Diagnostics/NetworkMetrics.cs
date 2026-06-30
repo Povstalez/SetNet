@@ -17,6 +17,7 @@ namespace SetNet.Diagnostics
         private long _reliableRetransmits;
         private long _reliableAcksReceived;
         private long _handshakesDropped;
+        private long _inboundDropped;
 
         /// <summary>Total application messages handed to the transport for sending.</summary>
         public long MessagesSent => Interlocked.Read(ref _messagesSent);
@@ -39,6 +40,9 @@ namespace SetNet.Diagnostics
         /// <summary>Total UDP handshakes dropped because the peer cap was reached (flood protection).</summary>
         public long HandshakesDropped => Interlocked.Read(ref _handshakesDropped);
 
+        /// <summary>Total inbound messages dropped because a connection's inbound queue was at capacity (back-pressure overflow).</summary>
+        public long InboundDropped => Interlocked.Read(ref _inboundDropped);
+
         internal void IncrementMessagesSent() => Interlocked.Increment(ref _messagesSent);
         internal void IncrementMessagesReceived() => Interlocked.Increment(ref _messagesReceived);
         internal void IncrementConnectionsAccepted() => Interlocked.Increment(ref _connectionsAccepted);
@@ -46,12 +50,13 @@ namespace SetNet.Diagnostics
         internal void IncrementReliableRetransmits() => Interlocked.Increment(ref _reliableRetransmits);
         internal void IncrementReliableAcksReceived() => Interlocked.Increment(ref _reliableAcksReceived);
         internal void IncrementHandshakesDropped() => Interlocked.Increment(ref _handshakesDropped);
+        internal void IncrementInboundDropped() => Interlocked.Increment(ref _inboundDropped);
 
         /// <summary>Takes a consistent-enough point-in-time snapshot of all counters for export/logging.</summary>
         /// <returns>An immutable snapshot of the current counter values.</returns>
         public NetworkMetricsSnapshot Snapshot() => new NetworkMetricsSnapshot(
             MessagesSent, MessagesReceived, ConnectionsAccepted, ConnectionsRejected,
-            ReliableRetransmits, ReliableAcksReceived, HandshakesDropped);
+            ReliableRetransmits, ReliableAcksReceived, HandshakesDropped, InboundDropped);
 
         /// <summary>Resets all counters to zero (e.g. for periodic interval reporting).</summary>
         public void Reset()
@@ -63,6 +68,7 @@ namespace SetNet.Diagnostics
             Interlocked.Exchange(ref _reliableRetransmits, 0);
             Interlocked.Exchange(ref _reliableAcksReceived, 0);
             Interlocked.Exchange(ref _handshakesDropped, 0);
+            Interlocked.Exchange(ref _inboundDropped, 0);
         }
     }
 
@@ -84,9 +90,13 @@ namespace SetNet.Diagnostics
         /// <summary>UDP handshakes dropped by the peer cap.</summary>
         public long HandshakesDropped { get; }
 
+        /// <summary>Inbound messages dropped by the inbound-queue cap.</summary>
+        public long InboundDropped { get; }
+
         /// <summary>Creates a snapshot with the given counter values.</summary>
         public NetworkMetricsSnapshot(long messagesSent, long messagesReceived, long connectionsAccepted,
-            long connectionsRejected, long reliableRetransmits, long reliableAcksReceived, long handshakesDropped)
+            long connectionsRejected, long reliableRetransmits, long reliableAcksReceived, long handshakesDropped,
+            long inboundDropped)
         {
             MessagesSent = messagesSent;
             MessagesReceived = messagesReceived;
@@ -95,12 +105,13 @@ namespace SetNet.Diagnostics
             ReliableRetransmits = reliableRetransmits;
             ReliableAcksReceived = reliableAcksReceived;
             HandshakesDropped = handshakesDropped;
+            InboundDropped = inboundDropped;
         }
 
         /// <summary>Renders the snapshot as a compact single-line string for logging.</summary>
         /// <returns>A human-readable summary of all counters.</returns>
         public override string ToString() =>
             $"sent={MessagesSent} recv={MessagesReceived} accepted={ConnectionsAccepted} rejected={ConnectionsRejected} " +
-            $"retransmits={ReliableRetransmits} acks={ReliableAcksReceived} handshakesDropped={HandshakesDropped}";
+            $"retransmits={ReliableRetransmits} acks={ReliableAcksReceived} handshakesDropped={HandshakesDropped} inboundDropped={InboundDropped}";
     }
 }

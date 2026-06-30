@@ -34,7 +34,15 @@ namespace SetNet.Core.Transport.Tcp
                 : new SslStream(network, leaveInnerStreamOpen: false);
 
             var targetHost = string.IsNullOrEmpty(config.SslTargetHost) ? config.Host : config.SslTargetHost;
-            await ssl.AuthenticateAsClientAsync(targetHost).ConfigureAwait(false);
+            try
+            {
+                await ssl.AuthenticateAsClientAsync(targetHost).ConfigureAwait(false);
+            }
+            catch
+            {
+                ssl.Dispose(); // also closes the inner network stream (leaveInnerStreamOpen: false)
+                throw;
+            }
             return ssl;
         }
 
@@ -56,7 +64,15 @@ namespace SetNet.Core.Transport.Tcp
                     "Configuration.UseSsl is enabled but Configuration.ServerCertificate is not set.");
 
             var ssl = new SslStream(network, leaveInnerStreamOpen: false);
-            await ssl.AuthenticateAsServerAsync(config.ServerCertificate).ConfigureAwait(false);
+            try
+            {
+                await ssl.AuthenticateAsServerAsync(config.ServerCertificate).ConfigureAwait(false);
+            }
+            catch
+            {
+                ssl.Dispose(); // also closes the inner network stream (leaveInnerStreamOpen: false)
+                throw;
+            }
             return ssl;
         }
     }

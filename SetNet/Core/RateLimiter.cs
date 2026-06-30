@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Net;
+using System.Threading;
 
 namespace SetNet.Core
 {
@@ -17,6 +18,9 @@ namespace SetNet.Core
 
         /// <summary>Per-IP sliding window state.</summary>
         private readonly ConcurrentDictionary<IPAddress, Window> _windows = new ConcurrentDictionary<IPAddress, Window>();
+
+        /// <summary>Monotonic timestamp of the last idle-window prune, used to throttle sweeps to at most once per second.</summary>
+        private long _lastPruneTicks = MonotonicClock.Timestamp;
 
         /// <summary>The start timestamp and event count of one IP's current window.</summary>
         private sealed class Window
@@ -41,6 +45,7 @@ namespace SetNet.Core
         public bool Allow(IPAddress ip)
         {
             if (_maxPerSecond <= 0) return true;
+            PruneIdle();
             if (_windows.Count > MaxTrackedIps && !_windows.ContainsKey(ip))
                 return true; // memory guard: stop tracking new IPs under a spoofed-source flood
 
@@ -58,6 +63,28 @@ namespace SetNet.Core
 
                 window.Count++;
                 return true;
+            }
+        }
+
+        /// <summary>
+        /// Periodically (at most once per second) evicts windows whose one-second slot has fully elapsed, so the
+        /// tracking table stays bounded by the set of recently-active IPs instead of accumulating one permanent
+        /// entry per IP ever seen. Without this the table could drift to <see cref="MaxTrackedIps"/> from ordinary
+        /// transient traffic and then silently stop limiting new IPs.
+        /// </summary>
+        private void PruneIdle()
+        {
+            var last = Interlocked.Read(ref _lastPruneTicks);
+            if (MonotonicClock.ElapsedMs(last) < 1000) return;
+            // Claim the prune slot; if another thread won the race, skip (only one sweeper per interval).
+            if (Interlocked.CompareExchange(ref _lastPruneTicks, MonotonicClock.Timestamp, last) != last) return;
+
+            foreach (var kv in _windows)
+            {
+                // A window idle for >= 2s cannot be holding back any current event; drop it. If the IP is
+                // active again it is cheaply re-added by GetOrAdd on its next event.
+                if (MonotonicClock.ElapsedMs(kv.Value.Start) >= 2000)
+                    _windows.TryRemove(kv.Key, out _);
             }
         }
     }
