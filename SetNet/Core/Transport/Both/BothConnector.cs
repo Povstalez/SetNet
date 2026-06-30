@@ -47,7 +47,7 @@ namespace SetNet.Core.Transport.Both
                         LogLevel.Warning);
                 }
 
-                return new BothConnection(tcp, udp);
+                return new BothConnection(tcp, udp, config);
             }
             catch
             {

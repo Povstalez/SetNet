@@ -32,6 +32,7 @@ namespace SetNet.Core.Transport.Tcp
             var client = new TcpClient();
             try
             {
+                client.NoDelay = config.TcpNoDelay; // disable Nagle by default for low-latency small frames
                 var connectTask = client.ConnectAsync(config.Host, config.Port);
 
                 if (config.ConnectTimeoutMs > 0)

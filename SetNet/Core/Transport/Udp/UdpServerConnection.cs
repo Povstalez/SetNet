@@ -19,8 +19,8 @@ namespace SetNet.Core.Transport.Udp
         /// <summary>Transport configuration controlling datagram size limits, reliability, and expiry behaviour.</summary>
         private readonly Configuration _config;
 
-        /// <summary>Buffer of decoded application messages awaiting consumption by <see cref="ReceiveAsync"/>.</summary>
-        private readonly AsyncQueue<TransportMessage> _inbound = new AsyncQueue<TransportMessage>();
+        /// <summary>Buffer of decoded application messages awaiting consumption by <see cref="ReceiveAsync"/> (capacity-bounded for OOM protection).</summary>
+        private readonly AsyncQueue<TransportMessage> _inbound;
 
         /// <summary>
         /// Optional reliability layer (sequencing, ACKs, retransmit). Non-null only when
@@ -49,15 +49,17 @@ namespace SetNet.Core.Transport.Udp
         /// <param name="remote">The remote endpoint this connection represents.</param>
         /// <param name="token">The handshake-negotiated session token identifying this peer.</param>
         /// <param name="config">Transport configuration (datagram limits, reliability toggles, expiry timeout).</param>
-        public UdpServerConnection(UdpServerListener listener, IPEndPoint remote, Guid token, Configuration config)
+        /// <param name="reliabilityEnabled">When false (Both mode, where reliable rides TCP), the UDP leg builds no reliability channels.</param>
+        public UdpServerConnection(UdpServerListener listener, IPEndPoint remote, Guid token, Configuration config, bool reliabilityEnabled = true)
         {
             _listener = listener;
             Remote = remote;
             Token = token;
             _config = config;
+            _inbound = new AsyncQueue<TransportMessage>(config.MaxInboundQueue);
             Interlocked.Exchange(ref _lastReceivedTicks, MonotonicClock.Timestamp);
 
-            _reliability = new ReliabilityChannelSet(config, SendRawAsync, _inbound, Close);
+            _reliability = new ReliabilityChannelSet(config, SendRawAsync, _inbound, Close, reliabilityEnabled);
         }
 
         /// <summary>Gets a value indicating whether the connection is still open (has not been closed or expired).</summary>
@@ -151,8 +153,9 @@ namespace SetNet.Core.Transport.Udp
             switch (dg[0])
             {
                 case PacketKind.Unreliable:
-                    if (UdpDatagram.TryParseUnreliable(dg, out var type, out var payload))
-                        _inbound.Enqueue(new TransportMessage(type, payload));
+                    if (UdpDatagram.TryParseUnreliable(dg, out var type, out var payload)
+                        && !_inbound.TryEnqueue(new TransportMessage(type, payload)))
+                        _config.Metrics.IncrementInboundDropped(); // best-effort: shed unreliable load when the queue is full
                     break;
                 case PacketKind.Reliable:
                     _reliability.OnReliableDatagram(dg);

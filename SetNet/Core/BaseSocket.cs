@@ -123,7 +123,16 @@ namespace SetNet.Core
             Task handlerTask;
             try { handlerTask = _messageProcessor.ProcessMessageAsync(type, data); }
             catch { gate.Release(); throw; }
-            _ = handlerTask.ContinueWith(_ => gate.Release(), TaskScheduler.Default);
+            _ = ReleaseWhenDone(handlerTask, gate);
+        }
+
+        /// <summary>Awaits a dispatched handler and releases its gate slot, avoiding the closure a <c>ContinueWith</c> would allocate per message.</summary>
+        /// <param name="task">The handler task (never faults — faults are reported inside the processor).</param>
+        /// <param name="gate">The gate semaphore to release on completion.</param>
+        private static async Task ReleaseWhenDone(Task task, SemaphoreSlim gate)
+        {
+            try { await task.ConfigureAwait(false); }
+            finally { gate.Release(); }
         }
 
         /// <summary>

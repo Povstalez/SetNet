@@ -85,6 +85,7 @@ namespace SetNet.Core.Transport.Tcp
                 IPEndPoint? remote = null;
                 try
                 {
+                    client.NoDelay = _config.TcpNoDelay; // disable Nagle by default for low-latency small frames
                     remote = client.Client.RemoteEndPoint as IPEndPoint;
                     var stream = await WrapServerWithTimeoutAsync(client, ct).ConfigureAwait(false);
                     var connection = new TcpConnection(client, stream, _config.BufferSize, _config.MaxMessageSize, _config.SendBatching, _config.SendBatchFlushMs, _config.SendTimeoutMs);

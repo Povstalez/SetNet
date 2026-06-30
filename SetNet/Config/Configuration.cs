@@ -23,6 +23,14 @@ namespace SetNet.Config
         /// <summary>Gets or sets the receive/send buffer size in bytes used for socket reads. Defaults to 4096.</summary>
         public int BufferSize { get; set; } = 4096;
 
+        /// <summary>
+        /// Disables Nagle's algorithm (sets <c>TcpClient.NoDelay</c>) on all TCP sockets. Defaults to <c>true</c>
+        /// because this library's pattern is many small framed messages, where Nagle can add up to ~40ms latency;
+        /// the library also offers its own opt-in <see cref="SendBatching"/>. Set to <c>false</c> to let the OS
+        /// coalesce small writes (higher throughput, higher latency).
+        /// </summary>
+        public bool TcpNoDelay { get; set; } = true;
+
         /// <summary>Gets or sets the maximum number of simultaneous client connections the server will accept. Defaults to 100.</summary>
         public int MaxConnections { get; set; } = 100;
 
@@ -167,6 +175,15 @@ namespace SetNet.Config
         /// limiting. Defaults to 0.
         /// </summary>
         public int MaxConnectionsPerIpPerSecond { get; set; } = 0;
+
+        /// <summary>
+        /// Maximum number of decoded-but-not-yet-dispatched inbound messages buffered per connection. Bounds
+        /// memory when a peer sends faster than handlers consume: over the cap, best-effort (unreliable) messages
+        /// are dropped (counted in <see cref="NetworkMetrics"/>) and a reliable stream that overflows tears the
+        /// connection down rather than corrupting ordering or growing without bound (OOM). 0 disables the bound.
+        /// Defaults to 16384.
+        /// </summary>
+        public int MaxInboundQueue { get; set; } = 16384;
 
         /// <summary>
         /// Maximum number of message handlers that may run concurrently per connection. When the limit is

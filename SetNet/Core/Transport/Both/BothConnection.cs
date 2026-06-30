@@ -1,6 +1,7 @@
 using System;
 using System.Threading;
 using System.Threading.Tasks;
+using SetNet.Config;
 using SetNet.Core.Transport.Udp;
 
 namespace SetNet.Core.Transport.Both
@@ -19,8 +20,11 @@ namespace SetNet.Core.Transport.Both
         /// <summary>The optional UDP channel for unreliable traffic. <c>null</c> when UDP was unavailable and the connection degraded to TCP-only.</summary>
         private readonly ITransportConnection? _udp;
 
-        /// <summary>Single inbound queue into which frames from both the TCP and UDP pumps are merged, so consumers see one unified stream.</summary>
-        private readonly AsyncQueue<TransportMessage> _merged = new AsyncQueue<TransportMessage>();
+        /// <summary>Single inbound queue into which frames from both the TCP and UDP pumps are merged, so consumers see one unified stream (capacity-bounded for OOM protection).</summary>
+        private readonly AsyncQueue<TransportMessage> _merged;
+
+        /// <summary>Configuration supplying the inbound-queue bound and metrics for overflow accounting.</summary>
+        private readonly Configuration _config;
 
         /// <summary>Set once the connection has been torn down; <c>volatile</c> so the value is observed promptly across the pump tasks and consumer threads.</summary>
         private volatile bool _closed;
@@ -31,14 +35,17 @@ namespace SetNet.Core.Transport.Both
         /// </summary>
         /// <param name="tcp">The reliable TCP channel; serves as the connection lifeline.</param>
         /// <param name="udp">The optional UDP channel for unreliable traffic, or <c>null</c> to operate TCP-only.</param>
+        /// <param name="config">Configuration supplying the inbound-queue bound (<see cref="Configuration.MaxInboundQueue"/>) and metrics.</param>
         /// <remarks>
         /// The pump tasks are fire-and-forget (assigned to discards). The TCP pump, when it ends, triggers
         /// <see cref="Close"/> so a dropped lifeline tears down UDP and completes the queue.
         /// </remarks>
-        public BothConnection(ITransportConnection tcp, ITransportConnection? udp)
+        public BothConnection(ITransportConnection tcp, ITransportConnection? udp, Configuration config)
         {
             _tcp = tcp;
             _udp = udp;
+            _config = config;
+            _merged = new AsyncQueue<TransportMessage>(config.MaxInboundQueue);
             _ = PumpAsync(_tcp, isTcp: true);
             if (_udp != null) _ = PumpAsync(_udp, isTcp: false);
         }
@@ -111,7 +118,13 @@ namespace SetNet.Core.Transport.Both
                     var msg = await conn.ReceiveAsync().ConfigureAwait(false);
                     if (msg == null) break;
                     if (_closed) break; // don't enqueue after the consumer has been signalled EOF
-                    _merged.Enqueue(msg.Value);
+                    if (!_merged.TryEnqueue(msg.Value))
+                    {
+                        // Merged queue full (consumer hopelessly behind). UDP frames are best-effort, so drop them;
+                        // TCP frames are reliable/ordered, so tear the connection down rather than corrupt the stream.
+                        _config.Metrics.IncrementInboundDropped();
+                        if (isTcp) break; // -> finally -> Close()
+                    }
                 }
             }
             catch { /* channel ended */ }

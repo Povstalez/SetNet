@@ -169,17 +169,21 @@ namespace SetNet.Core.Transport.Tcp
         /// <exception cref="TimeoutException">The write did not complete within <see cref="_sendTimeoutMs"/>.</exception>
         private async Task TimedWriteHeldAsync(byte[] buf, int count, CancellationToken ct)
         {
-            if (_sendTimeoutMs <= 0)
+            var writeTask = _stream.WriteAsync(buf, 0, count, ct);
+
+            // Fast path (the overwhelmingly common case): a healthy write into the OS send buffer completes
+            // synchronously, so no timeout machinery is armed — the hot send path stays allocation-free.
+            if (_sendTimeoutMs <= 0 || writeTask.IsCompleted)
             {
-                await _stream.WriteAsync(buf, 0, count, ct).ConfigureAwait(false);
+                await writeTask.ConfigureAwait(false);
                 return;
             }
 
-            // Link the timeout to the caller's token so the delay timer is released promptly on the hot path
-            // (cancelled below) rather than lingering armed for the full timeout on every healthy send.
-            using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-            var writeTask = _stream.WriteAsync(buf, 0, count, timeoutCts.Token);
-            var delay = Task.Delay(_sendTimeoutMs, timeoutCts.Token);
+            // Slow path: the write did not complete synchronously (full send buffer / stuck peer), so arm the
+            // stuck-peer timeout. Task.Delay(Infinite, token) registers no timer (only the CTS does), and the
+            // delay is released when we cancel below.
+            using var timeoutCts = new CancellationTokenSource(_sendTimeoutMs);
+            var delay = Task.Delay(Timeout.Infinite, timeoutCts.Token);
             var finished = await Task.WhenAny(writeTask, delay).ConfigureAwait(false);
 
             if (finished != writeTask)
@@ -189,11 +193,11 @@ namespace SetNet.Core.Transport.Tcp
                 // only once no live write remains. A subsequent sender then hits a disposed stream — never a
                 // concurrent write on a live one.
                 Teardown(flushBatch: false);
-                try { await writeTask.ConfigureAwait(false); } catch { /* expected: faulted by the dispose/cancel */ }
+                try { await writeTask.ConfigureAwait(false); } catch { /* expected: faulted by the dispose */ }
                 throw new TimeoutException($"TCP send timed out after {_sendTimeoutMs}ms.");
             }
 
-            // Write won: cancel the timeout so its timer is released immediately, then surface any write fault.
+            // Write won: cancel the timeout (releases the delay) and surface any write fault.
             timeoutCts.Cancel();
             await writeTask.ConfigureAwait(false);
         }

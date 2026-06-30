@@ -288,7 +288,8 @@ namespace SetNet.Core.Transport.Udp
             {
                 if (!_expectedTokens.TryRemove(token, out var pending))
                     return; // unknown (or expired) token in Both mode -> ignore
-                var bound = new UdpServerConnection(this, remote, token, _config);
+                // Both mode: reliable traffic rides TCP, so the bound UDP leg needs no reliability channels.
+                var bound = new UdpServerConnection(this, remote, token, _config, reliabilityEnabled: false);
                 _byEndpoint[remote] = bound;
                 pending.OnBound(bound);
                 SendHandshakeAck(token, remote);

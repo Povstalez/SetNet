@@ -280,6 +280,16 @@ await SendAsync(type, chat,     DeliveryMethod.Reliable, channel: 1);
 // Втрата пакета на каналі 1 (chat) не затримує доставку на каналі 0 (movement).
 ```
 
+### Орієнтовні цифри
+
+In-process бенчмарк (`dotnet run -c Release --project SetNet.Tests -- bench`, ServerGC):
+
+- **~1.8M msgs/сек** на одному з'єднанні з `SendBatching = true` (рекомендований шлях для високого темпу).
+- **~230k msgs/сек** з дефолтом (`TcpNoDelay = true`, без батчингу) — оптимізовано під **затримку**, не throughput.
+- **~4 КБ** памʼяті на endpoint; 2000 зʼєднань встановлюються за ~110 мс.
+
+> 💡 Дефолт оптимізує затримку (кожне дрібне повідомлення йде одразу). Для **високої пропускної здатності вмикайте `SendBatching`** — він дає і throughput, і низьку затримку. Повна модель продуктивності, межі масштабування й roadmap — у [docs/PERFORMANCE.md](docs/PERFORMANCE.md).
+
 ## Обробка розривів і перепідключення
 
 `BaseClient` розрізняє навмисний і неочікуваний розрив. Перевизначте потрібні хуки:
@@ -594,9 +604,10 @@ var config = new Configuration
     ConnectTimeoutMs = 10000,
 
     // Dispatch / надсилання
+    TcpNoDelay = true,          // вимкнути Nagle (низька затримка дрібних кадрів); false — вищий throughput незабатчених
     MaxInFlightMessages = 0,    // 0 = без back-pressure (хендлери fire-and-forget); >0 = межа одночасних хендлерів
     SequentialDispatch = false, // true = чекати завершення кожного хендлера перед наступним кадром (строгий порядок)
-    SendBatching = false,       // true = коалесувати TCP-надсилання в один запис (для game-tick патерну)
+    SendBatching = false,       // true = коалесувати TCP-надсилання в один запис (для game-tick патерну; ~1.8M msgs/сек)
     SendBatchFlushMs = 15,      // авто-flush буфера батчингу
     SendTimeoutMs = 30000,      // межа на один запис у сокет; 0 = вимкнено (захист від «застряглого» peer)
 
@@ -609,7 +620,8 @@ var config = new Configuration
     MaxConnectionsLimit = 0,               // якщо >0 — переважає MaxConnections
     MaxUdpPeers = 1000,
     MaxMessageSize = 1024 * 1024,
-    MaxConnectionsPerIpPerSecond = 0       // 0 = вимкнено
+    MaxConnectionsPerIpPerSecond = 0,      // 0 = вимкнено
+    MaxInboundQueue = 16384                // межа вхідної черги на з'єднання (OOM-захист); 0 = без межі
 };
 ```
 

@@ -55,6 +55,9 @@ namespace SetNet.Core.Transport.Udp
         /// <summary>Counting semaphore enforcing the send window: each in-flight unacked packet holds one slot for back-pressure.</summary>
         private readonly SemaphoreSlim _windowSlots;
 
+        /// <summary>Reused scratch list of sequence numbers due for retransmit, refilled each tick to avoid a per-tick allocation. Guarded by <see cref="_lock"/>.</summary>
+        private readonly List<ushort> _dueScratch = new List<ushort>();
+
         // Inbound state
         /// <summary>Ordered-delivery cursor: the next sequence number expected to be delivered to the consumer.</summary>
         private ushort _expectedSeq;                                  // ordered delivery cursor
@@ -237,7 +240,14 @@ namespace SetNet.Core.Transport.Udp
 
             if (toDeliver != null)
                 foreach (var m in toDeliver)
-                    _inbound.Enqueue(m);
+                    if (!_inbound.TryEnqueue(m))
+                    {
+                        // Reliable inbound overflow: silently dropping would leave a permanent gap in the ordered
+                        // stream, so fail the connection instead (the consumer is hopelessly behind).
+                        _config.Metrics.IncrementInboundDropped();
+                        _onFailure?.Invoke();
+                        break;
+                    }
 
             // Coalesce: mark an ACK pending; the tick loop flushes one cumulative ACK per interval
             // instead of emitting one ACK datagram per received packet.
@@ -322,6 +332,15 @@ namespace SetNet.Core.Transport.Udp
         private void OnTick()
         {
             if (_disposed) return;
+            // Idle fast-path: with no ACK owed and nothing in flight there is nothing to retransmit or flush, so
+            // skip spawning TickAsync entirely (no async state machine, no scratch work) on a quiet channel.
+            if (!_ackPending)
+            {
+                lock (_lock)
+                {
+                    if (_unacked.Count == 0) return;
+                }
+            }
             _ = TickAsync();
         }
 
@@ -354,11 +373,17 @@ namespace SetNet.Core.Transport.Udp
 
             lock (_lock)
             {
-                foreach (var seq in new List<ushort>(_unacked.Keys))
+                // First pass: read-only scan collecting only the due sequences into a reused scratch list
+                // (no per-tick List<ushort> allocation of all keys, and no mutation during enumeration).
+                _dueScratch.Clear();
+                foreach (var kv in _unacked)
+                    if (MonotonicClock.ElapsedMs(kv.Value.LastSentTicks) >= _config.UdpReliableAckTimeoutMs)
+                        _dueScratch.Add(kv.Key);
+
+                // Second pass: bump/resend each due packet (value-update on an existing key; never adds/removes here).
+                foreach (var seq in _dueScratch)
                 {
                     var p = _unacked[seq];
-                    if (MonotonicClock.ElapsedMs(p.LastSentTicks) < _config.UdpReliableAckTimeoutMs) continue;
-
                     p.Retransmits++;
                     if (p.Retransmits > _config.UdpReliableMaxRetransmits)
                     {
