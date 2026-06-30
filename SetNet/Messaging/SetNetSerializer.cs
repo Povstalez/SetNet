@@ -3,53 +3,58 @@ using System;
 namespace SetNet.Messaging
 {
     /// <summary>
-    /// Process-wide serialization seam. <see cref="Default"/> is the serializer the library uses wherever a
-    /// connection does not override it (and the one the static <see cref="Serialize{T}"/>/<see cref="Deserialize{T}"/>
-    /// helpers delegate to).
+    /// Process-wide serialization façade — the single entry point the whole library uses to turn messages into
+    /// wire bytes and back. Register a serializer once at startup with <see cref="Use"/>, then everything (the
+    /// send path and the typed-handler receive path) flows through <see cref="Serialize{T}"/> /
+    /// <see cref="Deserialize{T}"/>.
     /// </summary>
     /// <remarks>
-    /// The core library ships with NO serializer bundled, so you must choose one before sending or receiving.
-    /// Assign an <see cref="ISerializer"/> ONCE at startup, before connecting — for example the MessagePack
-    /// adapter from the <c>SetNet.MessagePack</c> package:
-    /// <code>SetNetSerializer.Default = new MessagePackNetSerializer();</code>
-    /// or any custom implementation (JSON, Protobuf, …). Until one is set, <see cref="Serialize{T}"/> and
-    /// <see cref="Deserialize{T}"/> throw an <see cref="InvalidOperationException"/> explaining what to do.
-    /// This single process-wide instance is what the library uses everywhere — both the send path and the
-    /// <see cref="Serialize{T}"/>/<see cref="Deserialize{T}"/> facade used inside message handlers. Both ends of
-    /// a connection must use the same serializer.
+    /// The core library ships with NO serializer bundled, so you must choose one before sending or receiving —
+    /// for example the MessagePack adapter from the <c>SetNet.MessagePack</c> package:
+    /// <code>SetNetSerializer.Use(new MessagePackNetSerializer());</code>
+    /// or any custom <see cref="ISerializer"/> (JSON, Protobuf, …). Until one is registered,
+    /// <see cref="Serialize{T}"/> and <see cref="Deserialize{T}"/> throw an <see cref="InvalidOperationException"/>
+    /// explaining what to do. Both ends of a connection must use the same serializer.
     /// </remarks>
     public static class SetNetSerializer
     {
-        /// <summary>
-        /// The active serializer used when a connection does not specify its own. Set this once at startup.
-        /// Defaults to an unconfigured serializer that throws on use, since the core library bundles no format —
-        /// install <c>SetNet.MessagePack</c> (or supply your own <see cref="ISerializer"/>) and assign it here.
-        /// </summary>
-        public static ISerializer Default { get; set; } = new UnconfiguredSerializer();
+        /// <summary>The active serializer. Not exposed publicly — callers configure it via <see cref="Use"/> and use it via <see cref="Serialize{T}"/>/<see cref="Deserialize{T}"/>.</summary>
+        private static ISerializer _serializer = new UnconfiguredSerializer();
 
-        /// <summary>Serializes a message via <see cref="Default"/>.</summary>
+        /// <summary>
+        /// Registers the serializer the whole application uses. Call this ONCE at startup, before connecting.
+        /// </summary>
+        /// <param name="serializer">The serialization strategy (e.g. <c>MessagePackNetSerializer</c> or your own).</param>
+        /// <exception cref="ArgumentNullException">Thrown if <paramref name="serializer"/> is <see langword="null"/>.</exception>
+        public static void Use(ISerializer serializer)
+            => _serializer = serializer ?? throw new ArgumentNullException(nameof(serializer));
+
+        /// <summary>The currently registered serializer. Internal so tests can save/restore it; external code uses <see cref="Use"/> / <see cref="Serialize{T}"/> / <see cref="Deserialize{T}"/>.</summary>
+        internal static ISerializer Current => _serializer;
+
+        /// <summary>Serializes a message with the registered serializer.</summary>
         /// <typeparam name="T">The message type.</typeparam>
         /// <param name="value">The message to serialize.</param>
         /// <returns>The serialized payload.</returns>
-        public static byte[] Serialize<T>(T value) => Default.Serialize(value);
+        public static byte[] Serialize<T>(T value) => _serializer.Serialize(value);
 
-        /// <summary>Deserializes a payload via <see cref="Default"/>. Prefer this in handlers over a format-specific helper.</summary>
+        /// <summary>Deserializes a payload with the registered serializer.</summary>
         /// <typeparam name="T">The target message type.</typeparam>
         /// <param name="data">The received payload.</param>
         /// <returns>The decoded message.</returns>
-        public static T Deserialize<T>(byte[] data) => Default.Deserialize<T>(data);
+        public static T Deserialize<T>(byte[] data) => _serializer.Deserialize<T>(data);
 
         /// <summary>
-        /// Placeholder serializer installed when none has been configured. Every operation throws an
+        /// Placeholder serializer installed when none has been registered. Every operation throws an
         /// <see cref="InvalidOperationException"/> describing how to register a real serializer, so the failure
         /// is immediate and self-explanatory rather than a confusing null/empty payload downstream.
         /// </summary>
         private sealed class UnconfiguredSerializer : ISerializer
         {
             private const string Message =
-                "No serializer configured. Set SetNetSerializer.Default (or Configuration.Serializer) once at " +
-                "startup — e.g. 'SetNetSerializer.Default = new MessagePackNetSerializer();' from the " +
-                "SetNet.MessagePack package, or your own ISerializer implementation.";
+                "No serializer configured. Register one once at startup — e.g. " +
+                "'SetNetSerializer.Use(new MessagePackNetSerializer());' from the SetNet.MessagePack package, " +
+                "or your own ISerializer implementation.";
 
             /// <inheritdoc/>
             public byte[] Serialize<T>(T value) => throw new InvalidOperationException(Message);

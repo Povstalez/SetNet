@@ -23,17 +23,17 @@ public sealed class JsonNetSerializer : ISerializer
 }
 
 /// <summary>
-/// Unit-level checks of the pluggable serialization seam. They read the process-wide
-/// <see cref="SetNetSerializer.Default"/> (set to MessagePack by the test module initializer), so they join the
-/// non-parallel "integration" collection to avoid racing the test that temporarily swaps the default to JSON.
+/// Unit-level checks of the pluggable serialization seam. They read the process-wide registered serializer
+/// (set to MessagePack by the test module initializer), so they join the non-parallel "integration" collection
+/// to avoid racing the test that temporarily swaps it to JSON.
 /// </summary>
 [Collection("integration")]
 public class SerializerUnitTests
 {
     [Fact]
-    public void Default_Is_MessagePack()
+    public void Registered_Serializer_Is_MessagePack()
     {
-        Assert.IsType<MessagePackNetSerializer>(SetNetSerializer.Default);
+        Assert.IsType<MessagePackNetSerializer>(SetNetSerializer.Current);
     }
 
     [Fact]
@@ -59,9 +59,9 @@ public class SerializerUnitTests
 }
 
 /// <summary>
-/// End-to-end proof that the library carries traffic over a consumer-chosen serializer: with the global
-/// <see cref="SetNetSerializer.Default"/> swapped to JSON, a full client → server → client echo round-trips.
-/// Lives in the non-parallel "integration" collection and restores the default in a finally block.
+/// End-to-end proof that the library carries traffic over a consumer-chosen serializer: with the registered
+/// serializer swapped to JSON, a full client → server → client echo round-trips. Lives in the non-parallel
+/// "integration" collection and restores the original serializer in a finally block.
 /// </summary>
 [Collection("integration")]
 public class SerializerIntegrationTests
@@ -69,8 +69,8 @@ public class SerializerIntegrationTests
     [Fact]
     public async Task CustomSerializer_RoundTripsEndToEnd()
     {
-        var original = SetNetSerializer.Default;
-        SetNetSerializer.Default = new JsonNetSerializer();
+        var original = SetNetSerializer.Current;
+        SetNetSerializer.Use(new JsonNetSerializer());
         try
         {
             TestInbox.Reset();
@@ -98,7 +98,7 @@ public class SerializerIntegrationTests
         }
         finally
         {
-            SetNetSerializer.Default = original;
+            SetNetSerializer.Use(original);
         }
     }
 

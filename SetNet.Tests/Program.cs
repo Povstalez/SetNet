@@ -9,7 +9,7 @@ using SetNet.MessagePack;
 using SetNet.Tests;
 
 // The core library bundles no serializer; register the MessagePack adapter once at startup.
-SetNetSerializer.Default = new MessagePackNetSerializer();
+SetNetSerializer.Use(new MessagePackNetSerializer());
 
 var scenario = args.Length > 0 ? args[0].ToLowerInvariant() : "tcp";
 

@@ -75,7 +75,7 @@ Message handlers are **strongly typed** (no manual deserialization) and are disc
 
 ### 3. **Serialization** (`SetNet/Messaging/`)
 
-- **ISerializer / SetNetSerializer**: Pluggable serialization seam. The core bundles **no** serializer; the single process-wide `SetNetSerializer.Default` (settable once at startup) is what the library uses everywhere — both the send path and the `SetNetSerializer.Serialize/Deserialize` facade used in handlers. The MessagePack adapter (`MessagePackNetSerializer`, `UntrustedData`-hardened) lives in the separate **SetNet.MessagePack** project/package. Until a serializer is registered, the facade throws a clear error.
+- **ISerializer / SetNetSerializer**: Pluggable serialization seam. The core bundles **no** serializer; one is registered once at startup via `SetNetSerializer.Use(ISerializer)` (the backing instance is not exposed publicly). The library uses it everywhere through the `SetNetSerializer.Serialize/Deserialize` façade — both the send path and the typed-handler receive path. The MessagePack adapter (`MessagePackNetSerializer`, `UntrustedData`-hardened) lives in the separate **SetNet.MessagePack** project/package. Until a serializer is registered, the façade throws a clear error.
   
 - **PacketBuilder**: Encodes messages into the wire protocol (prefixes with length header) and reassembles incoming data into complete packets. Handles frame boundaries.
   

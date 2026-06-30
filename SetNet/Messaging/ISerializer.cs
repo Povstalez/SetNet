@@ -4,7 +4,7 @@ namespace SetNet.Messaging
     /// Pluggable serialization strategy: converts strongly-typed messages to and from the byte payload carried
     /// on the wire. The core library bundles no serializer; install one (e.g. <c>MessagePackNetSerializer</c>
     /// from the <c>SetNet.MessagePack</c> package) or supply your own (JSON, Protobuf, or any custom format),
-    /// then register it process-wide via <see cref="SetNetSerializer.Default"/>.
+    /// then register it process-wide via <see cref="SetNetSerializer.Use"/>.
     /// </summary>
     /// <remarks>
     /// Both ends of a connection must use the SAME serializer. Implementations must be thread-safe (they are

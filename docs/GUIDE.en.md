@@ -27,13 +27,12 @@ A short overview is in the [README](../README.md); performance and scaling limit
 - **Consumers/tests/examples**: .NET 8.
 
 ```bash
-# locally — a project reference
-dotnet add reference ../SetNet/SetNet.csproj
+dotnet add package SetNet
 # serializer (the core does not include one) — e.g. the MessagePack adapter:
-dotnet add reference ../SetNet.MessagePack/SetNet.MessagePack.csproj
+dotnet add package SetNet.MessagePack
 ```
 
-> ℹ️ The `SetNet` core **does not include a built-in serializer**. Add `SetNet.MessagePack` (or your own `ISerializer`) and assign it at startup — see [section 4](#4-messages-and-handlers).
+> ℹ️ The `SetNet` core **does not include a built-in serializer**. Add `SetNet.MessagePack` (or your own `ISerializer`) and register it at startup — see [section 4](#4-messages-and-handlers).
 
 ---
 
@@ -182,7 +181,7 @@ Until a serializer is assigned, `SetNetSerializer.Serialize/Deserialize` throw a
 using SetNet.Messaging;
 using SetNet.MessagePack;
 
-SetNetSerializer.Default = new MessagePackNetSerializer();  // globally, at startup
+SetNetSerializer.Use(new MessagePackNetSerializer());  // globally, at startup
 ```
 
 **Option 2 — your own format** (e.g. System.Text.Json), with no dependencies:
@@ -197,11 +196,11 @@ public sealed class MyJsonSerializer : ISerializer
     public T Deserialize<T>(byte[] data) => JsonSerializer.Deserialize<T>(data)!;
 }
 
-SetNetSerializer.Default = new MyJsonSerializer();
+SetNetSerializer.Use(new MyJsonSerializer());
 ```
 
 **Rules:**
-- The serializer is **one per application** — the global `SetNetSerializer.Default`. **Everything** goes through it: both the send path and the deserialization of incoming messages before the handler is called. There is no per-connection setting — a single place.
+- The serializer is **one per application** — registered once via `SetNetSerializer.Use(...)`. **Everything** goes through it: both the send path and the deserialization of incoming messages before the handler is called. There is no per-connection setting — a single place.
 - Handlers are **strongly typed** — they receive the ready `T`; no manual deserialization (the library does it). `SetNetSerializer.Serialize/Deserialize` remain available for ad-hoc needs.
 - **Both ends** of a connection must use the same format.
 - DTO requirements are dictated by the chosen serializer: for MessagePack — `[MessagePackObject]`/`[Key]` (see above); System.Text.Json works with ordinary public properties.
@@ -518,7 +517,7 @@ Detailed scaling limits are in [PERFORMANCE.md](PERFORMANCE.en.md).
 |---|---|
 | Handler not called | No `[MessageHandler]`, the wrong type, doesn't implement the interface, or the class is not in a loaded assembly. |
 | Messages get "corrupted" | Different serializers on the two ends; (MessagePack) a DTO without `[MessagePackObject]`/`[Key]`; or the type doesn't match. |
-| `InvalidOperationException: No serializer configured` | `SetNetSerializer.Default` not assigned — do it at startup (see section 4). |
+| `InvalidOperationException: No serializer configured` | `SetNetSerializer.Use(...)` not called — do it at startup (see section 4). |
 | Won't connect | Host/Port differ on the client and server; firewall; (UDP) handshake is blocked. |
 | Out-of-order processing | This is the default behavior — enable `SequentialDispatch`. |
 | Reliable UDP throws on send | `DefaultDelivery=Reliable` + `UdpReliabilityEnabled=false` on plain UDP. Validate() catches this. |

@@ -12,5 +12,5 @@ internal static class TestModuleInit
 {
     /// <summary>Runs once, automatically, when the test assembly is loaded.</summary>
     [ModuleInitializer]
-    internal static void Init() => SetNetSerializer.Default = new MessagePackNetSerializer();
+    internal static void Init() => SetNetSerializer.Use(new MessagePackNetSerializer());
 }

@@ -9,10 +9,10 @@ namespace SetNet.MessagePack
     /// </summary>
     /// <remarks>
     /// Register it once at startup, before connecting:
-    /// <code>SetNetSerializer.Default = new MessagePackNetSerializer();</code>
-    /// or per connection via <c>Configuration.Serializer</c>. Stateless and thread-safe (the shared options are
-    /// immutable). Messages must be MessagePack-serializable — annotate DTOs with <c>[MessagePackObject]</c> and
-    /// <c>[Key(n)]</c> (or use <c>[MessagePackObject(true)]</c> for key-as-name).
+    /// <code>SetNetSerializer.Use(new MessagePackNetSerializer());</code>
+    /// Stateless and thread-safe (the shared options are immutable). Messages must be MessagePack-serializable —
+    /// annotate DTOs with <c>[MessagePackObject]</c> and <c>[Key(n)]</c> (or use <c>[MessagePackObject(true)]</c>
+    /// for key-as-name).
     /// </remarks>
     public sealed class MessagePackNetSerializer : ISerializer
     {

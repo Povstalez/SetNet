@@ -1,7 +1,7 @@
 # SetNet — детальний посібник користувача
 
 Повна інструкція з використання бібліотеки: від «hello world» до production-конфігурації.
-Короткий огляд — у [README](../README.md); продуктивність і межі масштабування — у [PERFORMANCE.md](PERFORMANCE.md).
+Короткий огляд — у [README](../README.md); продуктивність і межі масштабування — у [PERFORMANCE.ua.md](PERFORMANCE.ua.md).
 
 ## Зміст
 1. [Вимоги та встановлення](#1-вимоги-та-встановлення)
@@ -27,10 +27,9 @@
 - **Споживачі/тести/приклади**: .NET 8.
 
 ```bash
-# локально — посилання на проект
-dotnet add reference ../SetNet/SetNet.csproj
+dotnet add package SetNet
 # серіалізатор (ядро його не містить) — напр. MessagePack-адаптер:
-dotnet add reference ../SetNet.MessagePack/SetNet.MessagePack.csproj
+dotnet add package SetNet.MessagePack
 ```
 
 > ℹ️ Ядро `SetNet` **не містить вбудованого серіалізатора**. Додайте `SetNet.MessagePack` (або власний `ISerializer`) і призначте його на старті — див. [розділ 4](#4-повідомлення-та-хендлери).
@@ -182,7 +181,7 @@ public interface ISerializer
 using SetNet.Messaging;
 using SetNet.MessagePack;
 
-SetNetSerializer.Default = new MessagePackNetSerializer();  // глобально, на старті
+SetNetSerializer.Use(new MessagePackNetSerializer());  // глобально, на старті
 ```
 
 **Варіант 2 — власний формат** (напр. System.Text.Json), без жодних залежностей:
@@ -197,11 +196,11 @@ public sealed class MyJsonSerializer : ISerializer
     public T Deserialize<T>(byte[] data) => JsonSerializer.Deserialize<T>(data)!;
 }
 
-SetNetSerializer.Default = new MyJsonSerializer();
+SetNetSerializer.Use(new MyJsonSerializer());
 ```
 
 **Правила:**
-- Серіалізатор **один на застосунок** — глобальний `SetNetSerializer.Default`. Через нього проходить **усе**: і надсилання, і десеріалізація вхідних повідомлень перед викликом хендлера. Жодного per-connection налаштування немає — одне місце.
+- Серіалізатор **один на застосунок** — реєструється раз через `SetNetSerializer.Use(...)`. Через нього проходить **усе**: і надсилання, і десеріалізація вхідних повідомлень перед викликом хендлера. Жодного per-connection налаштування немає — одне місце.
 - Хендлери **типізовані** — отримують готовий `T`, десеріалізувати вручну не треба (бібліотека робить це сама). Для ad-hoc випадків доступні `SetNetSerializer.Serialize/Deserialize`.
 - **Обидва боки** з'єднання мають використовувати один формат.
 - Вимоги до DTO диктує обраний серіалізатор: для MessagePack — `[MessagePackObject]`/`[Key]` (див. вище); System.Text.Json працює зі звичайними публічними властивостями.
@@ -385,7 +384,7 @@ await FlushAsync();        // один запис у сокет (на BaseClient
 Обмежує час одного запису в сокет — «застряглий» peer не блокує відправку назавжди. `0` вимикає.
 
 ### Nagle (`TcpNoDelay`, дефолт `true`)
-Вимкнений Nagle = низька затримка дрібних кадрів. Для масового потоку незабатчених повідомлень `false` дає вищий throughput (але +затримка). Деталі — у [PERFORMANCE.md](PERFORMANCE.md).
+Вимкнений Nagle = низька затримка дрібних кадрів. Для масового потоку незабатчених повідомлень `false` дає вищий throughput (але +затримка). Деталі — у [PERFORMANCE.ua.md](PERFORMANCE.ua.md).
 
 ---
 
@@ -508,7 +507,7 @@ ev.Trigger("PlayerJoined", "Alex");
 - [ ] Експорт `config.Metrics.Snapshot()` у моніторинг.
 - [ ] **Soak/load-тест** на реальному трафіку перед повним запуском.
 
-Детальні межі масштабування — у [PERFORMANCE.md](PERFORMANCE.md).
+Детальні межі масштабування — у [PERFORMANCE.ua.md](PERFORMANCE.ua.md).
 
 ---
 
@@ -518,7 +517,7 @@ ev.Trigger("PlayerJoined", "Alex");
 |---|---|
 | Хендлер не викликається | Немає `[MessageHandler]`, не той тип, не реалізує інтерфейс, або клас не в завантаженому assembly. |
 | Повідомлення «б'ються» | Різні серіалізатори на двох боках; (MessagePack) DTO без `[MessagePackObject]`/`[Key]`; або тип не збігається. |
-| `InvalidOperationException: No serializer configured` | Не призначено `SetNetSerializer.Default` — зробіть це на старті (див. розділ 4). |
+| `InvalidOperationException: No serializer configured` | Не викликано `SetNetSerializer.Use(...)` — зробіть це на старті (див. розділ 4). |
 | Не підключається | Host/Port різні на клієнті й сервері; брандмауер; (UDP) handshake блокується. |
 | Обробка не в порядку | Це дефолтна поведінка — увімкніть `SequentialDispatch`. |
 | Reliable-UDP кидає на надсиланні | `DefaultDelivery=Reliable` + `UdpReliabilityEnabled=false` на чистому UDP. Validate() це ловить. |
