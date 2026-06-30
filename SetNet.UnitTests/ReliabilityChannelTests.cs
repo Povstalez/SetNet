@@ -69,6 +69,61 @@ public class ReliabilityChannelTests
         Assert.Equal(PacketKind.Reliable, sent[0][0]);
     }
 
+    [Fact]
+    public async Task OversizedReliableSend_DoesNotConsumeSequence_OrderedStreamSurvives()
+    {
+        // Regression: an oversized reliable send used to consume a sequence number BEFORE the size check, leaving
+        // a permanent hole the ordered receiver blocks on forever. The next valid send must still arrive in order.
+        var senderConfig = Config(ordered: true);
+        senderConfig.UdpMaxDatagramPayload = 32; // header is 6B, so any payload > 26B is oversized
+
+        var inbound = new AsyncQueue<TransportMessage>();
+        ReliabilityChannel receiver = null!;
+        using var sender = new ReliabilityChannel(senderConfig, 0,
+            (buf, count) => { receiver.OnReliableDatagram(buf[..count]); return Task.CompletedTask; },
+            new AsyncQueue<TransportMessage>());
+        receiver = new ReliabilityChannel(Config(ordered: true), 0, (_, _) => Task.CompletedTask, inbound);
+
+        await sender.SendAsync(100, new byte[] { 1 });                                   // seq 0 -> delivered
+        await Assert.ThrowsAsync<ArgumentOutOfRangeException>(
+            () => sender.SendAsync(100, new byte[64]));                                  // oversized -> throws
+        await sender.SendAsync(100, new byte[] { 2 });                                   // must be seq 1, not seq 2
+
+        Assert.Equal(new byte[] { 1 }, (await Dequeue(inbound))!.Value.Payload);
+        Assert.Equal(new byte[] { 2 }, (await Dequeue(inbound))!.Value.Payload);         // arrives only if no gap
+        receiver.Dispose();
+    }
+
+    [Fact]
+    public async Task OrderedReorderOverflow_DoesNotAckDroppedSequence()
+    {
+        // Regression: a future packet dropped because the reorder buffer is full must NOT be acknowledged —
+        // otherwise the sender stops retransmitting it and the ordered stream wedges permanently. The emitted
+        // cumulative ACK must cover only the retained sequences, not the dropped one.
+        var config = new Configuration
+        {
+            Host = "127.0.0.1", Port = 1, TransportType = TransportType.Udp,
+            UdpReliabilityEnabled = true, UdpOrderedReliable = true,
+            UdpReliableWindowSize = 2,        // reorder cap = window * 2 = 4
+            UdpReliableAckTimeoutMs = 20      // fast ack tick
+        };
+
+        ushort lastAckSeq = 0;
+        var gotAck = false;
+        using var receiver = new ReliabilityChannel(config, 0,
+            (buf, count) => { if (UdpDatagram.TryParseAck(buf[..count], out _, out lastAckSeq, out _)) gotAck = true; return Task.CompletedTask; },
+            new AsyncQueue<TransportMessage>());
+
+        // seq 0 is "lost"; feed future seqs 1..4 (buffered, reorder fills to cap) then 5 (dropped: reorder full).
+        for (ushort s = 1; s <= 4; s++) receiver.OnReliableDatagram(UdpDatagram.BuildReliable(0, s, 100, new[] { (byte)s }));
+        receiver.OnReliableDatagram(UdpDatagram.BuildReliable(0, 5, 100, new byte[] { 5 }));
+
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        while (!gotAck && sw.ElapsedMilliseconds < 1000) await Task.Delay(10);
+        Assert.True(gotAck, "receiver never emitted an ACK");
+        Assert.Equal((ushort)4, lastAckSeq); // cumulative ACK covers the buffered 1..4, NOT the dropped 5
+    }
+
     private static async Task<TransportMessage?> Dequeue(AsyncQueue<TransportMessage> queue, int timeoutMs = 1000)
     {
         using var cts = new CancellationTokenSource(timeoutMs);

@@ -137,7 +137,10 @@ namespace SetNet.Core.Transport.Udp
             byte[] datagram;
             lock (_lock)
             {
-                var seq = _nextSeq++;
+                // PEEK the next sequence — do NOT consume it yet. An oversized datagram is rejected below; if we
+                // had already incremented _nextSeq it would leave a permanent hole in the sequence space that the
+                // receiver's ordered cursor blocks on forever (the seq is never sent, so never retransmitted).
+                var seq = _nextSeq;
                 datagram = UdpDatagram.BuildReliable(_channel, seq, type, payload);
                 if (datagram.Length > _config.UdpMaxDatagramPayload)
                 {
@@ -145,6 +148,7 @@ namespace SetNet.Core.Transport.Udp
                     throw new ArgumentOutOfRangeException(nameof(payload),
                         $"Reliable UDP datagram ({datagram.Length}B) exceeds UdpMaxDatagramPayload ({_config.UdpMaxDatagramPayload}B).");
                 }
+                _nextSeq++; // commit the sequence number now that the packet is valid and recorded for delivery/retransmit
                 _unacked[seq] = new OutboundPacket
                 {
                     Datagram = datagram,
@@ -209,13 +213,12 @@ namespace SetNet.Core.Transport.Udp
 
             lock (_lock)
             {
-                var isNew = RecordReceivedForAck(seq);
-
                 if (_config.UdpOrderedReliable)
                 {
                     int cmp = Compare(seq, _expectedSeq);
                     if (cmp == 0)
                     {
+                        RecordReceivedForAck(seq); // delivered in order — safe to ACK
                         toDeliver = new List<TransportMessage> { new TransportMessage(type, payload) };
                         _expectedSeq++;
                         while (_reorder.TryGetValue(_expectedSeq, out var buffered))
@@ -227,14 +230,30 @@ namespace SetNet.Core.Transport.Udp
                     }
                     else if (cmp > 0)
                     {
-                        if (!_reorder.ContainsKey(seq) && _reorder.Count < _config.UdpReliableWindowSize * 2)
+                        // Only ACK a future packet once we have actually retained it. If the reorder buffer is full
+                        // we must NOT ACK it — otherwise the sender clears it from _unacked and stops retransmitting,
+                        // leaving a permanent gap that wedges the ordered stream forever. Dropping without an ACK
+                        // makes the sender retransmit later (natural back-pressure) once buffer space frees.
+                        if (_reorder.ContainsKey(seq))
+                        {
+                            RecordReceivedForAck(seq); // already buffered (duplicate) — we have it, so ACK
+                        }
+                        else if (_reorder.Count < _config.UdpReliableWindowSize * 2)
+                        {
                             _reorder[seq] = new TransportMessage(type, payload);
+                            RecordReceivedForAck(seq);
+                        }
+                        // else: reorder full -> drop WITHOUT acking, so the sender keeps retransmitting it.
                     }
-                    // cmp < 0: already delivered, drop
+                    else
+                    {
+                        RecordReceivedForAck(seq); // cmp < 0: already delivered — ACK so the sender stops resending
+                    }
                 }
-                else if (isNew)
+                else
                 {
-                    toDeliver = new List<TransportMessage> { new TransportMessage(type, payload) };
+                    if (RecordReceivedForAck(seq)) // unordered: deliver any genuinely-new packet, drop duplicates
+                        toDeliver = new List<TransportMessage> { new TransportMessage(type, payload) };
                 }
             }
 

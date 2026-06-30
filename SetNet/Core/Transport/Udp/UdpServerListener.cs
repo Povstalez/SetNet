@@ -255,30 +255,27 @@ namespace SetNet.Core.Transport.Udp
         {
             if (!UdpDatagram.TryParseToken(dg, out var token)) return;
 
-            if (_byEndpoint.TryGetValue(remote, out var existing))
+            _byEndpoint.TryGetValue(remote, out var existing);
+            if (existing != null && existing.Token == token)
             {
-                if (existing.Token == token)
-                {
-                    // Retransmitted handshake: re-ack idempotently.
-                    SendHandshakeAck(existing.Token, remote);
-                    return;
-                }
-
-                // Same endpoint, different token = a fresh session (e.g. reconnect). Drop the stale
-                // connection and fall through to create a new one with fresh reliability state.
-                existing.Close();
+                // Retransmitted handshake on the SAME token: re-ack idempotently.
+                SendHandshakeAck(existing.Token, remote);
+                return;
             }
+            // A different token on a live endpoint may be a genuine reconnect OR a spoof. Do NOT tear the live
+            // session down here — only after the new handshake passes validation below, so a single spoofed
+            // handshake from the victim's endpoint cannot kick it.
 
-            // Per-IP rate limit on new handshakes (retransmits hit the existing-endpoint path above).
+            // Per-IP rate limit on new handshakes (retransmits hit the same-token path above).
             if (!_rateLimiter.Allow(remote.Address))
             {
                 _config.Metrics.IncrementHandshakesDropped();
                 return;
             }
 
-            // Bound memory under a UDP handshake flood: refuse new peers past the cap (silent drop to
-            // avoid log-flooding; the dropped count is tracked via metrics).
-            if (_config.MaxUdpPeers > 0 && _byEndpoint.Count >= _config.MaxUdpPeers)
+            // Bound memory under a UDP handshake flood: refuse new peers past the cap. A replace of an existing
+            // endpoint does not grow the table, so it is not gated here.
+            if (existing == null && _config.MaxUdpPeers > 0 && _byEndpoint.Count >= _config.MaxUdpPeers)
             {
                 _config.Metrics.IncrementHandshakesDropped();
                 return;
@@ -287,7 +284,8 @@ namespace SetNet.Core.Transport.Udp
             if (_boundMode)
             {
                 if (!_expectedTokens.TryRemove(token, out var pending))
-                    return; // unknown (or expired) token in Both mode -> ignore
+                    return; // unknown/expired token in Both mode -> ignore (and leave any live session untouched)
+                existing?.Close(); // validated reconnect (server-issued token matched): now reap the stale session
                 // Both mode: reliable traffic rides TCP, so the bound UDP leg needs no reliability channels.
                 var bound = new UdpServerConnection(this, remote, token, _config, reliabilityEnabled: false);
                 _byEndpoint[remote] = bound;
@@ -296,6 +294,7 @@ namespace SetNet.Core.Transport.Udp
                 return;
             }
 
+            existing?.Close(); // pure-UDP: rate-limit/cap passed -> accept the new session and reap the stale one
             var conn = new UdpServerConnection(this, remote, token, _config);
             _byEndpoint[remote] = conn;
             _accepted.Enqueue(new AcceptedConnection(conn, token, remote));
