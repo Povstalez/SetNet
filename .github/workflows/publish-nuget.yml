@@ -1,0 +1,43 @@
+name: Publish to NuGet
+
+# Runs when a GitHub Release is published. The package version is taken from the
+# release tag (e.g. tag "v1.0.0" -> package 1.0.0), so the NuGet version always
+# matches the release and the two can never drift.
+on:
+  release:
+    types: [published]
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Derive version from tag
+        id: version
+        # GITHUB_REF_NAME is the tag (e.g. "v1.0.0"); strip a leading "v".
+        run: echo "value=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Pack
+        run: |
+          dotnet pack SetNet/SetNet.csproj \
+            -c Release -p:Version=${{ steps.version.outputs.value }} -o ./artifacts
+          dotnet pack SetNet.MessagePack/SetNet.MessagePack.csproj \
+            -c Release -p:Version=${{ steps.version.outputs.value }} -o ./artifacts
+
+      - name: Push to NuGet
+        # SetNet first so SetNet.MessagePack's dependency on it resolves; --skip-duplicate
+        # makes re-runs idempotent. Requires the NUGET_API_KEY repository secret.
+        run: |
+          dotnet nuget push "./artifacts/SetNet.${{ steps.version.outputs.value }}.nupkg" \
+            --api-key "${{ secrets.NUGET_API_KEY }}" \
+            --source https://api.nuget.org/v3/index.json --skip-duplicate
+          dotnet nuget push "./artifacts/SetNet.MessagePack.${{ steps.version.outputs.value }}.nupkg" \
+            --api-key "${{ secrets.NUGET_API_KEY }}" \
+            --source https://api.nuget.org/v3/index.json --skip-duplicate
