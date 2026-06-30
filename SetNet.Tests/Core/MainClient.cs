@@ -20,13 +20,13 @@ public class MainClient(Configuration config) : BaseClient(config)
     
     private void OnPositionChanged(byte[] data)
     {
-        var message = MessagePackSerializer.Deserialize<TestMessage>(data);
+        var message = SetNetSerializer.Deserialize<TestMessage>(data);
         SendAsync((ushort)MessageTypes.PositionChanged, message);
     }
     
     private void OnUpdateClientId(byte[] obj)
     {
-        var message = MessagePackSerializer.Deserialize<UpdateClientIdMessage>(obj);
+        var message = SetNetSerializer.Deserialize<UpdateClientIdMessage>(obj);
         Console.WriteLine($"Update ClientId. {message.ClientId}");
 
         var testMsg = new TestMessage();

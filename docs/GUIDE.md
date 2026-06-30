@@ -29,7 +29,11 @@
 ```bash
 # локально — посилання на проект
 dotnet add reference ../SetNet/SetNet.csproj
+# серіалізатор (ядро його не містить) — напр. MessagePack-адаптер:
+dotnet add reference ../SetNet.MessagePack/SetNet.MessagePack.csproj
 ```
+
+> ℹ️ Ядро `SetNet` **не містить вбудованого серіалізатора**. Додайте `SetNet.MessagePack` (або власний `ISerializer`) і призначте його на старті — див. [розділ 4](#4-повідомлення-та-хендлери).
 
 ---
 
@@ -43,7 +47,7 @@ dotnet add reference ../SetNet/SetNet.csproj
 | `Configuration` | Усі налаштування (хост, порт, транспорт, ліміти, TLS…). |
 | `[MessageHandler(type)]` | Атрибут на класі-хендлері; реєстрація через рефлексію. |
 
-**Потік повідомлення:** `SendAsync<T>` → серіалізація (MessagePack за замовч., [змінна](#4-повідомлення-та-хендлери)) → фреймінг → транспорт → реасемблінг → десеріалізація → хендлер.
+**Потік повідомлення:** `SendAsync<T>` → серіалізація ([ваш `ISerializer`](#4-повідомлення-та-хендлери); напр. MessagePack) → фреймінг → транспорт → реасемблінг → десеріалізація → хендлер.
 
 > ⚠️ **Порядок обробки за замовчуванням не гарантований** навіть на TCP (хендлери — fire-and-forget). Див. [розділ 8](#8-продуктивність-і-порядок-обробки).
 
@@ -68,7 +72,7 @@ public class PlayerMoveMessage
 }
 ```
 
-> DTO **мають** бути `[MessagePackObject]` з `[Key(n)]` на кожному полі (або використовуйте `[MessagePackObject(true)]` для key-as-name).
+> При використанні MessagePack-серіалізатора DTO **мають** бути `[MessagePackObject]` з `[Key(n)]` на кожному полі (або `[MessagePackObject(true)]` для key-as-name). Для іншого серіалізатора вимоги диктує він — див. [розділ 4](#4-повідомлення-та-хендлери).
 
 ### Крок 2. Сервер
 
@@ -160,9 +164,9 @@ public class ChatHandler : IClientMessageHandler
 
 > ℹ️ Хендлери створюються через `Activator.CreateInstance` (потрібен публічний конструктор без параметрів) і **переюзаються як singleton** для всіх повідомлень цього типу. **DI у конструктор немає** — резолвіть сервіси через статичний service-locator чи власний механізм.
 
-### Серіалізація — за замовчуванням MessagePack, але змінна
+### Серіалізація — оберіть формат самі (MessagePack, JSON, …)
 
-Бібліотека серіалізує/десеріалізує через інтерфейс `ISerializer` (`SetNet.Messaging`):
+Ядро `SetNet` **не містить вбудованого серіалізатора** — формат обираєте ви через інтерфейс `ISerializer` (`SetNet.Messaging`):
 
 ```csharp
 public interface ISerializer
@@ -172,14 +176,18 @@ public interface ISerializer
 }
 ```
 
-За замовчуванням активний `MessagePackNetSerializer` (байт-у-байт ідентичний попередній статичній MessagePack-поведінці — нічого міняти не треба). Щоб перевести **весь застосунок** на інший формат, призначте власний серіалізатор **один раз на старті**, до підключення:
+Поки серіалізатор не призначено, `SetNetSerializer.Serialize/Deserialize` кидають `InvalidOperationException` із підказкою. Призначте його **один раз на старті**, до підключення.
+
+**Варіант 1 — MessagePack (рекомендований)** через окремий пакет `SetNet.MessagePack`. Він дає `MessagePackNetSerializer`, загартований профілем безпеки `UntrustedData` (захист від DoS при десеріалізації):
 
 ```csharp
-// Глобально: торкається всіх з'єднань і статичних хелперів SetNetSerializer.Serialize/Deserialize
-SetNetSerializer.Default = new MyJsonSerializer();
+using SetNet.Messaging;
+using SetNet.MessagePack;
+
+SetNetSerializer.Default = new MessagePackNetSerializer();  // глобально, на старті
 ```
 
-Приклад власного серіалізатора (System.Text.Json):
+**Варіант 2 — власний формат** (напр. System.Text.Json), без жодних залежностей:
 
 ```csharp
 using SetNet.Messaging;
@@ -190,19 +198,21 @@ public sealed class MyJsonSerializer : ISerializer
     public byte[] Serialize<T>(T value) => JsonSerializer.SerializeToUtf8Bytes(value);
     public T Deserialize<T>(byte[] data) => JsonSerializer.Deserialize<T>(data)!;
 }
+
+SetNetSerializer.Default = new MyJsonSerializer();
 ```
 
 Або **на конкретне з'єднання** через конфіг (зручно, коли різні сервери/клієнти мають різний формат):
 
 ```csharp
-var config = new Configuration { /* ... */ Serializer = new MyJsonSerializer() };
+var config = new Configuration { /* ... */ Serializer = new MessagePackNetSerializer() };
 ```
 
 **Правила:**
 - У хендлерах десеріалізуйте через фасад `SetNetSerializer.Deserialize<T>(data)` — він поважає `SetNetSerializer.Default` і не прив'язує код до конкретного формату. (Хендлер не має посилання на з'єднання, тож per-connection серіалізатор він не бачить.) На сервері, якщо ви використовуєте **per-connection** серіалізатор, десеріалізуйте через `peer.CurrentPeerInfo.Config.Serializer.Deserialize<T>(data)`.
 - `Configuration.Serializer` без явного значення повертається до `SetNetSerializer.Default`.
 - **Обидва боки** з'єднання мають використовувати один формат.
-- Якщо лишаєте MessagePack — ваші DTO мають бути `[MessagePackObject]`/`[Key]` (див. вище). Для JSON/інших форматів вимоги диктує вже ваш серіалізатор (System.Text.Json працює зі звичайними публічними властивостями).
+- Вимоги до DTO диктує обраний серіалізатор: для MessagePack — `[MessagePackObject]`/`[Key]` (див. вище); System.Text.Json працює зі звичайними публічними властивостями.
 
 ---
 
@@ -476,7 +486,8 @@ ev.Trigger("PlayerJoined", "Alex");
 | Симптом | Причина / розв'язання |
 |---|---|
 | Хендлер не викликається | Немає `[MessageHandler]`, не той тип, не реалізує інтерфейс, або клас не в завантаженому assembly. |
-| Повідомлення «б'ються» | DTO без `[MessagePackObject]`/`[Key]`, або тип не збігається на двох боках. |
+| Повідомлення «б'ються» | Різні серіалізатори на двох боках; (MessagePack) DTO без `[MessagePackObject]`/`[Key]`; або тип не збігається. |
+| `InvalidOperationException: No serializer configured` | Не призначено `SetNetSerializer.Default` — зробіть це на старті (див. розділ 4). |
 | Не підключається | Host/Port різні на клієнті й сервері; брандмауер; (UDP) handshake блокується. |
 | Обробка не в порядку | Це дефолтна поведінка — увімкніть `SequentialDispatch`. |
 | Reliable-UDP кидає на надсиланні | `DefaultDelivery=Reliable` + `UdpReliabilityEnabled=false` на чистому UDP. Validate() це ловить. |

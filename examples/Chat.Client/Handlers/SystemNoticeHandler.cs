@@ -17,7 +17,7 @@ public class SystemNoticeHandler : IClientMessageHandler
     /// <returns>A completed task (rendering is synchronous).</returns>
     public Task HandleAsync(byte[] data)
     {
-        var message = MessagePackSerializer.Deserialize<SystemNoticeMessage>(data);
+        var message = SetNetSerializer.Deserialize<SystemNoticeMessage>(data);
         Console.WriteLine($"* {message.Text}");
         return Task.CompletedTask;
     }

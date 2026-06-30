@@ -4,7 +4,7 @@ This file provides guidance to coding agents (Codex, Claude Code, and similar) w
 
 ## Overview
 
-SetNet is a .NET networking library for client-server communication over **TCP, UDP, or both at once**. It provides a framework for building networked applications with automatic message handler registration, serialization via MessagePack, and utilities for task scheduling.
+SetNet is a .NET networking library for client-server communication over **TCP, UDP, or both at once**. It provides a framework for building networked applications with automatic message handler registration, pluggable serialization (no serializer is bundled — MessagePack is available via the **SetNet.MessagePack** companion package, or supply your own `ISerializer`), and utilities for task scheduling.
 
 The transport is pluggable behind a thin abstraction in `SetNet/Core/Transport/`: `ITransportConnection` (a framed message channel to one peer), `ITransportConnector` (client dialer), and `ITransportListener` (server acceptor). `BaseSocket`/`BaseClient`/`BasePeer`/`BaseServer` are transport-agnostic; everything above the transport (`MessageProcessor`, `CommandExecutor`, handler interfaces, MessagePack, heartbeat, lifecycle hooks) is shared by all transports. Select the transport with `Configuration.TransportType` (`Tcp` | `Udp` | `Both`, default `Tcp`).
 
@@ -73,7 +73,7 @@ Message handlers are discovered and instantiated automatically via reflection in
 
 ### 3. **Serialization** (`SetNet/Messaging/`)
 
-- **MessagePackSerializer**: Serializes/deserializes messages using the MessagePack format (UntrustedData security profile).
+- **ISerializer / SetNetSerializer**: Pluggable serialization seam. The core bundles **no** serializer; `SetNetSerializer.Default` (settable once at startup) is what the send path and the `SetNetSerializer.Serialize/Deserialize` facade use, and `Configuration.Serializer` can override it per connection. The MessagePack adapter (`MessagePackNetSerializer`, `UntrustedData`-hardened) lives in the separate **SetNet.MessagePack** project/package. Until a serializer is registered, the facade throws a clear error.
 
 - **PacketBuilder**: Encodes messages into the wire protocol (4-byte length prefix + 2-byte type) and reassembles incoming data into complete packets. Rejects negative/0/1 declared lengths and frames over `MaxMessageSize`.
 
@@ -121,7 +121,7 @@ Message handlers are discovered and instantiated automatically via reflection in
    {
        public async Task HandleAsync(BasePeer peer, byte[] data)
        {
-           var message = MessagePackSerializer.Deserialize<PlayerMoveMessage>(data);
+           var message = SetNetSerializer.Deserialize<PlayerMoveMessage>(data);
            // Process and respond
        }
    }
@@ -134,7 +134,7 @@ Message handlers are discovered and instantiated automatically via reflection in
    {
        public async Task HandleAsync(byte[] data)
        {
-           var message = MessagePackSerializer.Deserialize<StateUpdateMessage>(data);
+           var message = SetNetSerializer.Deserialize<StateUpdateMessage>(data);
            // Update client state
        }
    }
@@ -187,7 +187,7 @@ Server-side, `BasePeer` mirrors this: `Close()` (kick) → only `OnDisconnected`
   - `Core/Transport/`: transport abstraction + enums (`TransportType`, `DeliveryMethod`); `Tcp/`, `Udp/` (handshake, demux, `ReliabilityChannel`/`ReliabilityChannelSet`), `Both/` implementations; `TransportFactory`
   - `Config/`: Configuration, PeerInfo
   - `Data/`: Handler interfaces, MessageHandlerAttribute
-  - `Messaging/`: MessageProcessor, MessagePackSerializer, ISerializer + MessagePackNetSerializer + SetNetSerializer (pluggable serialization, default MessagePack)
+  - `Messaging/`: MessageProcessor, ISerializer + SetNetSerializer (pluggable serialization seam; core bundles no serializer — the MessagePack adapter `MessagePackNetSerializer` is in the separate `SetNet.MessagePack` project)
   - `Events/`: EventManager
   - `Logging/`: ILogger, ConsoleLogger, NoOpLogger
   - `Diagnostics/`: NetworkMetrics

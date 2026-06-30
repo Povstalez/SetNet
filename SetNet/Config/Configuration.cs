@@ -88,9 +88,10 @@ namespace SetNet.Config
 
         /// <summary>
         /// Serializer used to encode/decode message payloads for this connection. When not set explicitly, it
-        /// falls back to the process-wide <see cref="SetNetSerializer.Default"/> (MessagePack by default), so you
-        /// can switch the whole app's format with one line at startup, or override it per connection here. Both
-        /// ends of a connection must use the same serializer.
+        /// falls back to the process-wide <see cref="SetNetSerializer.Default"/>, so you can switch the whole
+        /// app's format with one line at startup, or override it per connection here. The core library bundles
+        /// no serializer — set one (e.g. the MessagePack adapter from SetNet.MessagePack) before connecting.
+        /// Both ends of a connection must use the same serializer.
         /// </summary>
         public ISerializer Serializer
         {

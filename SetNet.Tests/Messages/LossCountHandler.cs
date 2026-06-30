@@ -12,7 +12,7 @@ public class LossCountHandler : IServerMessageHandler
 {
     public Task HandleAsync(BasePeer peer, byte[] data)
     {
-        var message = MessagePackSerializer.Deserialize<LossCountMessage>(data);
+        var message = SetNetSerializer.Deserialize<LossCountMessage>(data);
         LossStats.Increment(message.ViaReliable);
         return Task.CompletedTask;
     }

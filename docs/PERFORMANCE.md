@@ -60,8 +60,8 @@ await FlushAsync(); // один запис у сокет
 Ці зміни мають хороший потенціал, але зачіпають публічний API або є великим рефакторингом, тож винесені окремо, щоб не дестабілізувати поточну (повністю протестовану) кодову базу. Рекомендований підхід для кожної:
 
 ### P4/P5 — Zero-alloc серіалізація і прийом (найбільший важіль для GC)
-Зараз кожне повідомлення алокує: `byte[]` від `MessagePackSerializer.Serialize` (надсилання) і `byte[]` payload-копію в `PacketBuilder.TryGetCompleteMessage` (прийом).
-- **Надсилання:** змінити `ITransportConnection.SendAsync` на прийом `ReadOnlyMemory<byte>`; серіалізувати через `MessagePackSerializer.Serialize(IBufferWriter<byte>, ...)` у pooled-буфер, передати слайс, повернути буфер після фреймінгу. Прибирає алокацію серіалізації.
+Зараз кожне повідомлення алокує: `byte[]` від `ISerializer.Serialize` (надсилання) і `byte[]` payload-копію в `PacketBuilder.TryGetCompleteMessage` (прийом).
+- **Надсилання:** розширити `ISerializer`/`ITransportConnection.SendAsync` на роботу з `IBufferWriter<byte>`/`ReadOnlyMemory<byte>` у pooled-буфер, передати слайс, повернути буфер після фреймінгу. Прибирає алокацію серіалізації (для MessagePack — через `MessagePackSerializer.Serialize(IBufferWriter<byte>, …)`).
 - **Прийом:** для режимів `SequentialDispatch`/`MaxInFlightMessages>0` (де receive-loop відстежує завершення хендлера) — рентити payload з `ArrayPool` і передавати `ReadOnlyMemory<byte>`, повертати після dispatch. Потребує зміни контракту хендлерів (`byte[]` → `ReadOnlyMemory<byte>`).
 - **Ризик:** зміна core-API транспорту + контракту хендлерів. Робити як окрему версію (мінорний bump) з міграційним гайдом.
 

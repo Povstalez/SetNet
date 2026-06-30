@@ -18,7 +18,7 @@ public class ChatBroadcastHandler : IClientMessageHandler
     /// <returns>A completed task (rendering is synchronous).</returns>
     public Task HandleAsync(byte[] data)
     {
-        var message = MessagePackSerializer.Deserialize<ChatBroadcastMessage>(data);
+        var message = SetNetSerializer.Deserialize<ChatBroadcastMessage>(data);
         var time = DateTimeOffset.FromUnixTimeMilliseconds(message.UnixTimeMs).LocalDateTime.ToString("HH:mm:ss");
         Console.WriteLine($"[{time}] {message.Username}: {message.Text}");
         return Task.CompletedTask;

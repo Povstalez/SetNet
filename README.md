@@ -3,7 +3,7 @@
 **A lightweight, high-throughput .NET networking library for client–server games and real-time apps — over TCP, UDP, or both at once.**
 
 ![.NET Standard 2.1](https://img.shields.io/badge/.NET%20Standard-2.1-512BD4)
-![Serialization](https://img.shields.io/badge/serialization-MessagePack%20(pluggable)-blue)
+![Serialization](https://img.shields.io/badge/serialization-pluggable-blue)
 ![Transports](https://img.shields.io/badge/transport-TCP%20%7C%20UDP%20%7C%20Both-success)
 ![License](https://img.shields.io/badge/license-MIT-green)
 
@@ -24,15 +24,23 @@ await SendAsync(MsgType.Position, position, DeliveryMethod.Unreliable);
 - ⚡ **Fast** — ~**1.8M msgs/sec** on one connection with send batching, ~4 KB per endpoint; allocation-light hot paths.
 - 🔒 **Production-hardened** — TLS over TCP, connection/UDP-peer caps, per-IP rate limiting, frame-size cap, back-pressure, bounded inbound queues (OOM protection), a resilient accept loop, and live `NetworkMetrics`.
 - 🧩 **Auto handler registration** — mark a class `[MessageHandler(type)]`; reflection wires it up.
-- 📦 **Pluggable serialization** — MessagePack by default, byte-identical out of the box; swap in JSON or any format via `ISerializer` (globally with `SetNetSerializer.Default`, or per-connection with `Configuration.Serializer`).
+- 📦 **Pluggable serialization** — the core bundles no serializer. Pick a format via `ISerializer`: drop in the `SetNet.MessagePack` package (hardened MessagePack), or supply your own JSON/Protobuf/custom adapter — globally with `SetNetSerializer.Default`, or per-connection with `Configuration.Serializer`.
 
 ## Install
 
 Requires **.NET Standard 2.1** (consumable from .NET Core 3.0+/.NET 5–8, Unity, Mono, MAUI — not .NET Framework).
 
 ```bash
-# project reference (NuGet package coming)
+# project references (NuGet packages coming)
 dotnet add reference path/to/SetNet/SetNet.csproj
+# the core bundles no serializer — add one (or supply your own ISerializer):
+dotnet add reference path/to/SetNet.MessagePack/SetNet.MessagePack.csproj
+```
+
+Then register the serializer once at startup, before connecting:
+
+```csharp
+SetNetSerializer.Default = new MessagePackNetSerializer();   // from SetNet.MessagePack
 ```
 
 > **Unity:** works on desktop/mobile standalone (Unity 2021+, netstandard2.1). Two things to know: message handlers run on **background threads**, so marshal to the main thread before touching the Unity API (e.g. queue and drain in `Update()`); and on **IL2CPP/AOT** builds, MessagePack needs pre-generated formatters (or swap in an AOT-friendly serializer — see [Serialization](#serialization)). **WebGL is not supported** (no threads/sockets).
@@ -106,7 +114,16 @@ A full runnable chat (separate server + client processes) is in [`examples/`](ex
 
 ## Serialization
 
-MessagePack is the default and is **byte-identical out of the box** — existing code needs no change. The format is pluggable behind `ISerializer`, so you can swap in JSON, Protobuf, MemoryPack, or anything custom:
+The core library **bundles no serializer** — you choose the format behind the `ISerializer` seam and register it once at startup.
+
+**MessagePack** (recommended) via the `SetNet.MessagePack` package — `MessagePackNetSerializer` is hardened with the `UntrustedData` security profile (deserialization-DoS protection):
+
+```csharp
+using SetNet.MessagePack;
+SetNetSerializer.Default = new MessagePackNetSerializer();   // once, at startup
+```
+
+**Or your own format** (JSON, Protobuf, MemoryPack, …) — implement `ISerializer`:
 
 ```csharp
 public sealed class JsonSerializer : ISerializer
@@ -115,14 +132,11 @@ public sealed class JsonSerializer : ISerializer
     public T Deserialize<T>(byte[] data) => System.Text.Json.JsonSerializer.Deserialize<T>(data)!;
 }
 
-// process-wide, once at startup (before connecting):
-SetNetSerializer.Default = new JsonSerializer();
-
-// or per-connection:
-var config = new Configuration { /* ... */ Serializer = new JsonSerializer() };
+SetNetSerializer.Default = new JsonSerializer();             // global
+var config = new Configuration { /* ... */ Serializer = new JsonSerializer() };  // or per-connection
 ```
 
-In handlers, decode via the facade so the code stays format-agnostic: `SetNetSerializer.Deserialize<T>(data)`. Both ends of a connection must use the same serializer.
+In handlers, decode via the facade so the code stays format-agnostic: `SetNetSerializer.Deserialize<T>(data)`. Both ends of a connection must use the same serializer. (Until one is set, the serialize/deserialize calls throw a clear "configure a serializer" error.)
 
 ## Transport selection
 
@@ -189,8 +203,8 @@ In-process benchmark (`dotnet run -c Release --project SetNet.Tests -- bench`, S
 
 ## Documentation
 
-- 📖 **[Детальний посібник користувача (docs/GUIDE.md)](docs/GUIDE.md)** — full usage manual (Ukrainian): handlers, transports, reliable channels, reconnect, batching, hardening, the complete `Configuration` reference, and a production checklist.
-- ⚙️ **[docs/PERFORMANCE.md](docs/PERFORMANCE.md)** — performance model, scaling limits, structural roadmap.
+- 📖 **[User guide (docs/GUIDE.en.md)](docs/GUIDE.en.md)** — full usage manual: handlers, transports, reliable channels, reconnect, batching, hardening, the complete `Configuration` reference, and a production checklist. *(Українською: [docs/GUIDE.md](docs/GUIDE.md))*
+- ⚙️ **[Performance (docs/PERFORMANCE.en.md)](docs/PERFORMANCE.en.md)** — performance model, scaling limits, structural roadmap. *(Українською: [docs/PERFORMANCE.md](docs/PERFORMANCE.md))*
 - 🏗️ **[CLAUDE.md](CLAUDE.md)** / **[AGENTS.md](AGENTS.md)** — architecture overview for contributors and coding agents.
 
 ## Build & test
@@ -209,11 +223,12 @@ dotnet run --project examples/Chat.Client -- 127.0.0.1 5000 alice
 ## Project structure
 
 ```
-SetNet/             core library (transport abstraction, reliability, hardening)
+SetNet/             core library (transport abstraction, reliability, hardening) — no serializer dependency
+SetNet.MessagePack/ MessagePack ISerializer adapter (companion package)
 SetNet.Tests/       in-process scenario harness + benchmark
 SetNet.UnitTests/   xUnit unit + integration tests
 examples/           runnable chat (Chat.Shared / Chat.Server / Chat.Client)
-docs/               GUIDE.md, PERFORMANCE.md
+docs/               GUIDE(.en).md, PERFORMANCE(.en).md
 ```
 
 ## Status

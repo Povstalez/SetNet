@@ -23,7 +23,7 @@ public class ChatTextHandler : IServerMessageHandler
     /// <returns>A task that completes once the line has been broadcast.</returns>
     public async Task HandleAsync(BasePeer peer, byte[] data)
     {
-        var message = MessagePackSerializer.Deserialize<ChatTextMessage>(data);
+        var message = SetNetSerializer.Deserialize<ChatTextMessage>(data);
         var chatPeer = (ChatPeer)peer;
         var username = chatPeer.Username ?? "anon";
 

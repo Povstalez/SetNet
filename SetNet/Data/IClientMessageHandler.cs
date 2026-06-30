@@ -17,7 +17,7 @@ namespace SetNet.Data
         /// </summary>
         /// <param name="data">
         /// The raw, already-unframed message payload (without the length/type header). Usually fed to
-        /// <see cref="SetNet.Messaging.MessagePackSerializer.Deserialize{T}"/> to recover the typed message.
+        /// <see cref="SetNet.Messaging.SetNetSerializer.Deserialize{T}"/> to recover the typed message.
         /// </param>
         /// <returns>A task that completes when the message has been fully processed.</returns>
         Task HandleAsync(byte[] data);

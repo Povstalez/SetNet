@@ -1,14 +1,19 @@
+using System;
+
 namespace SetNet.Messaging
 {
     /// <summary>
     /// Process-wide serialization seam. <see cref="Default"/> is the serializer the library uses wherever a
     /// connection does not override it (and the one the static <see cref="Serialize{T}"/>/<see cref="Deserialize{T}"/>
-    /// helpers delegate to). It defaults to MessagePack.
+    /// helpers delegate to).
     /// </summary>
     /// <remarks>
-    /// To switch the whole application to another format, assign a custom <see cref="ISerializer"/> ONCE at
-    /// startup, before connecting:
-    /// <code>SetNetSerializer.Default = new MyJsonSerializer();</code>
+    /// The core library ships with NO serializer bundled, so you must choose one before sending or receiving.
+    /// Assign an <see cref="ISerializer"/> ONCE at startup, before connecting — for example the MessagePack
+    /// adapter from the <c>SetNet.MessagePack</c> package:
+    /// <code>SetNetSerializer.Default = new MessagePackNetSerializer();</code>
+    /// or any custom implementation (JSON, Protobuf, …). Until one is set, <see cref="Serialize{T}"/> and
+    /// <see cref="Deserialize{T}"/> throw an <see cref="InvalidOperationException"/> explaining what to do.
     /// Use <see cref="Serialize{T}"/>/<see cref="Deserialize{T}"/> inside message handlers (which have no
     /// connection reference) to stay serializer-agnostic. For a per-connection serializer, set
     /// <c>Configuration.Serializer</c> instead, and deserialize on the server via
@@ -18,9 +23,10 @@ namespace SetNet.Messaging
     {
         /// <summary>
         /// The active serializer used when a connection does not specify its own. Set this once at startup.
-        /// Defaults to <see cref="MessagePackNetSerializer"/>.
+        /// Defaults to an unconfigured serializer that throws on use, since the core library bundles no format —
+        /// install <c>SetNet.MessagePack</c> (or supply your own <see cref="ISerializer"/>) and assign it here.
         /// </summary>
-        public static ISerializer Default { get; set; } = new MessagePackNetSerializer();
+        public static ISerializer Default { get; set; } = new UnconfiguredSerializer();
 
         /// <summary>Serializes a message via <see cref="Default"/>.</summary>
         /// <typeparam name="T">The message type.</typeparam>
@@ -33,5 +39,24 @@ namespace SetNet.Messaging
         /// <param name="data">The received payload.</param>
         /// <returns>The decoded message.</returns>
         public static T Deserialize<T>(byte[] data) => Default.Deserialize<T>(data);
+
+        /// <summary>
+        /// Placeholder serializer installed when none has been configured. Every operation throws an
+        /// <see cref="InvalidOperationException"/> describing how to register a real serializer, so the failure
+        /// is immediate and self-explanatory rather than a confusing null/empty payload downstream.
+        /// </summary>
+        private sealed class UnconfiguredSerializer : ISerializer
+        {
+            private const string Message =
+                "No serializer configured. Set SetNetSerializer.Default (or Configuration.Serializer) once at " +
+                "startup — e.g. 'SetNetSerializer.Default = new MessagePackNetSerializer();' from the " +
+                "SetNet.MessagePack package, or your own ISerializer implementation.";
+
+            /// <inheritdoc/>
+            public byte[] Serialize<T>(T value) => throw new InvalidOperationException(Message);
+
+            /// <inheritdoc/>
+            public T Deserialize<T>(byte[] data) => throw new InvalidOperationException(Message);
+        }
     }
 }

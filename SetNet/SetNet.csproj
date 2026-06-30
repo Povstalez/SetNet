@@ -11,20 +11,21 @@
     <!-- NuGet package metadata -->
     <PropertyGroup>
         <PackageId>SetNet</PackageId>
-        <Version>0.2.0</Version>
-        <AssemblyVersion>0.2.0.0</AssemblyVersion>
-        <FileVersion>0.2.0.0</FileVersion>
+        <Version>0.3.0</Version>
+        <AssemblyVersion>0.3.0.0</AssemblyVersion>
+        <FileVersion>0.3.0.0</FileVersion>
         <Authors>Artem Lemeshev</Authors>
-        <Description>A lightweight .NET client/server networking library over TCP, UDP, or both, with MessagePack serialization, an optional UDP reliability layer, optional TLS, automatic message-handler registration, and built-in metrics.</Description>
-        <PackageTags>networking;tcp;udp;sockets;messagepack;game;realtime;reliable-udp</PackageTags>
+        <Description>A lightweight .NET client/server networking library over TCP, UDP, or both: a pluggable transport, an optional UDP reliability layer, optional TLS, automatic message-handler registration, pluggable serialization (no serializer bundled — add SetNet.MessagePack or your own ISerializer), and built-in metrics.</Description>
+        <PackageTags>networking;tcp;udp;sockets;game;realtime;reliable-udp</PackageTags>
         <PackageLicenseExpression>MIT</PackageLicenseExpression>
         <RepositoryUrl>https://github.com/Povstalez/SetNet.git</RepositoryUrl>
         <RepositoryType>git</RepositoryType>
         <PackageProjectUrl>https://github.com/Povstalez/SetNet</PackageProjectUrl>
+        <PackageReadmeFile>README.md</PackageReadmeFile>
     </PropertyGroup>
 
     <ItemGroup>
-      <PackageReference Include="MessagePack" Version="3.1.7" />
+      <None Include="../README.md" Pack="true" PackagePath="\" />
     </ItemGroup>
 
     <ItemGroup>

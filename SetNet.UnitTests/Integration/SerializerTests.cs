@@ -4,6 +4,7 @@ using MessagePack;
 using SetNet.Config;
 using SetNet.Core.Transport;
 using SetNet.Messaging;
+using SetNet.MessagePack;
 using Xunit;
 
 namespace SetNet.UnitTests.Integration;
@@ -22,9 +23,11 @@ public sealed class JsonNetSerializer : ISerializer
 }
 
 /// <summary>
-/// Unit-level checks of the pluggable serialization seam that do NOT touch global state or sockets, so they are
-/// safe to run in parallel with every other collection.
+/// Unit-level checks of the pluggable serialization seam. They read the process-wide
+/// <see cref="SetNetSerializer.Default"/> (set to MessagePack by the test module initializer), so they join the
+/// non-parallel "integration" collection to avoid racing the test that temporarily swaps the default to JSON.
 /// </summary>
+[Collection("integration")]
 public class SerializerUnitTests
 {
     [Fact]
@@ -60,14 +63,15 @@ public class SerializerUnitTests
     }
 
     [Fact]
-    public void MessagePackNetSerializer_IsByteIdenticalToStaticHelper()
+    public void MessagePackNetSerializer_AppliesUntrustedDataProfile()
     {
-        // The default adapter must produce the exact same bytes as the original static MessagePack path,
-        // so swapping the library onto the seam changes nothing for existing consumers.
+        // The adapter must encode with the hardened UntrustedData profile (not plain Standard options),
+        // so its bytes match a direct MessagePack call configured the same way.
         ISerializer adapter = new MessagePackNetSerializer();
         var viaAdapter = adapter.Serialize(new EchoMessage { Text = "same" });
-        var viaStatic = SetNet.Messaging.MessagePackSerializer.Serialize(new EchoMessage { Text = "same" });
-        Assert.Equal(viaStatic, viaAdapter);
+        var hardened = MessagePackSerializerOptions.Standard.WithSecurity(MessagePackSecurity.UntrustedData);
+        var direct = MessagePackSerializer.Serialize(new EchoMessage { Text = "same" }, hardened);
+        Assert.Equal(direct, viaAdapter);
     }
 }
 

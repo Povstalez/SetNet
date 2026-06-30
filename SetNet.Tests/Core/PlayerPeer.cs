@@ -1,6 +1,6 @@
-using MessagePack;
 using SetNet.Config;
 using SetNet.Core;
+using SetNet.Messaging;
 using SetNet.Tests.Data;
 
 namespace SetNet.Tests;
@@ -43,7 +43,7 @@ public class PlayerPeer : BasePeer
 
     private async Task OnPositionChanged(byte[] obj)
     {
-        var message = MessagePackSerializer.Deserialize<TestMessage>(obj);
+        var message = SetNetSerializer.Deserialize<TestMessage>(obj);
         Console.WriteLine($"Received message on server. Message: {message.Message}");
     }
 }

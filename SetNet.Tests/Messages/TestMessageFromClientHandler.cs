@@ -1,6 +1,7 @@
 using SetNet.Core;
 using SetNet.Data;
 using SetNet.Data.Attributes;
+using SetNet.Messaging;
 using SetNet.Tests.Data;
 
 namespace SetNet.Tests.Messages;
@@ -12,7 +13,7 @@ public class TestMessageFromClientHandler : IServerMessageHandler
     {
         var player = (PlayerPeer)peer;
         
-        var message = MessagePack.MessagePackSerializer.Deserialize<TestMessage>(data);
+        var message = SetNetSerializer.Deserialize<TestMessage>(data);
         Console.WriteLine($"Received from client: {message.Message}");
 
         player.TestSend();

@@ -23,7 +23,7 @@ public class JoinHandler : IServerMessageHandler
     /// <returns>A task that completes once the join notice has been broadcast.</returns>
     public async Task HandleAsync(BasePeer peer, byte[] data)
     {
-        var message = MessagePackSerializer.Deserialize<JoinMessage>(data);
+        var message = SetNetSerializer.Deserialize<JoinMessage>(data);
         var chatPeer = (ChatPeer)peer;
         chatPeer.Username = string.IsNullOrWhiteSpace(message.Username) ? "anon" : message.Username.Trim();
 
