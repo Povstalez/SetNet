@@ -140,12 +140,11 @@ public class TestClient : BaseClient
 
 /// <summary>Server-side echo handler: records the text and echoes it back to the sender (type 901).</summary>
 [MessageHandler(900)]
-public class EchoServerHandler : IServerMessageHandler
+public class EchoServerHandler : IServerMessageHandler<EchoMessage>
 {
     /// <inheritdoc/>
-    public async Task HandleAsync(BasePeer peer, byte[] data)
+    public async Task HandleAsync(BasePeer peer, EchoMessage message)
     {
-        var message = SetNet.Messaging.SetNetSerializer.Deserialize<EchoMessage>(data);
         TestInbox.ServerReceived.Enqueue(message.Text);
         await ((TestPeer)peer).SendMessageAsync((ushort)901, new EchoMessage { Text = message.Text });
     }
@@ -153,12 +152,11 @@ public class EchoServerHandler : IServerMessageHandler
 
 /// <summary>Client-side echo handler: records the text echoed back by the server (type 901).</summary>
 [MessageHandler(901)]
-public class EchoClientHandler : IClientMessageHandler
+public class EchoClientHandler : IClientMessageHandler<EchoMessage>
 {
     /// <inheritdoc/>
-    public Task HandleAsync(byte[] data)
+    public Task HandleAsync(EchoMessage message)
     {
-        var message = SetNet.Messaging.SetNetSerializer.Deserialize<EchoMessage>(data);
         TestInbox.ClientReceived.Enqueue(message.Text);
         return Task.CompletedTask;
     }

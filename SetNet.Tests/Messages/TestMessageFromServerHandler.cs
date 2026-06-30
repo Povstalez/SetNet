@@ -6,11 +6,10 @@ using SetNet.Tests.Data;
 namespace SetNet.Tests.Messages;
 
 [MessageHandler(0)]
-public class TestMessageFromServerHandler : IClientMessageHandler
+public class TestMessageFromServerHandler : IClientMessageHandler<TestMessage>
 {
-    public Task HandleAsync(byte[] data)
+    public Task HandleAsync(TestMessage message)
     {
-        var message = SetNetSerializer.Deserialize<TestMessage>(data);
         Console.WriteLine("Message from server: " + message.Message);
         return Task.CompletedTask;
     }

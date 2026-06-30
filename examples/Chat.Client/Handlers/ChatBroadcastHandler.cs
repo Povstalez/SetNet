@@ -11,14 +11,13 @@ namespace Chat.Client.Handlers;
 /// <see cref="MessageHandlerAttribute"/> when the client starts.
 /// </summary>
 [MessageHandler((ushort)ChatMessageTypes.ChatBroadcast)]
-public class ChatBroadcastHandler : IClientMessageHandler
+public class ChatBroadcastHandler : IClientMessageHandler<ChatBroadcastMessage>
 {
-    /// <summary>Deserializes and prints the broadcast chat line to the console.</summary>
-    /// <param name="data">The MessagePack-serialized <see cref="ChatBroadcastMessage"/> payload.</param>
+    /// <summary>Prints the broadcast chat line to the console.</summary>
+    /// <param name="message">The deserialized <see cref="ChatBroadcastMessage"/>.</param>
     /// <returns>A completed task (rendering is synchronous).</returns>
-    public Task HandleAsync(byte[] data)
+    public Task HandleAsync(ChatBroadcastMessage message)
     {
-        var message = SetNetSerializer.Deserialize<ChatBroadcastMessage>(data);
         var time = DateTimeOffset.FromUnixTimeMilliseconds(message.UnixTimeMs).LocalDateTime.ToString("HH:mm:ss");
         Console.WriteLine($"[{time}] {message.Username}: {message.Text}");
         return Task.CompletedTask;

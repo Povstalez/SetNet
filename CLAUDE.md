@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 SetNet is a .NET networking library for client-server communication over **TCP, UDP, or both at once**. It provides a framework for building networked applications with automatic message handler registration, pluggable serialization (no serializer is bundled — MessagePack is available via the **SetNet.MessagePack** companion package, or supply your own `ISerializer`), and utilities for task scheduling.
 
-The transport is pluggable behind a thin abstraction in `SetNet/Core/Transport/`: `ITransportConnection` (a framed message channel to one peer), `ITransportConnector` (client dialer), and `ITransportListener` (server acceptor). `BaseSocket`/`BaseClient`/`BasePeer`/`BaseServer` are transport-agnostic; everything above the transport (`MessageProcessor`, `CommandExecutor`, handler interfaces, MessagePack, heartbeat, lifecycle hooks) is shared by all transports. Select the transport with `Configuration.TransportType` (`Tcp` | `Udp` | `Both`, default `Tcp`).
+The transport is pluggable behind a thin abstraction in `SetNet/Core/Transport/`: `ITransportConnection` (a framed message channel to one peer), `ITransportConnector` (client dialer), and `ITransportListener` (server acceptor). `BaseSocket`/`BaseClient`/`BasePeer`/`BaseServer` are transport-agnostic; everything above the transport (`MessageProcessor`, the command executors, handler interfaces, pluggable serialization, heartbeat, lifecycle hooks) is shared by all transports. Select the transport with `Configuration.TransportType` (`Tcp` | `Udp` | `Both`, default `Tcp`).
 
 ## Build and Test Commands
 
@@ -61,15 +61,15 @@ The flow: Server accepts connection → creates a BasePeer → peer receives mes
 
 ### 2. **Message Handling Framework** (`SetNet/Core/Commands/` + `SetNet/Data/`)
 
-- **CommandExecutor<T>**: Uses reflection to auto-discover and register message handlers at startup. Looks for classes implementing `IServerMessageHandler` or `IClientMessageHandler` that are decorated with `MessageHandlerAttribute`.
+- **ServerCommandExecutor / ClientCommandExecutor**: Use reflection to auto-discover and register message handlers at startup. Look for classes implementing `IServerMessageHandler<T>` or `IClientMessageHandler<T>` decorated with `MessageHandlerAttribute`, instantiate each, and wrap it in an internal invoker (`ServerHandlerInvoker<T>`/`ClientHandlerInvoker<T>`, in `HandlerInvoker.cs`) that deserializes the payload via `SetNetSerializer` and calls the typed handler. Discovery is cached per handler interface in `HandlerDiscovery`.
   
-- **MessageHandlerAttribute**: Marks a handler class and specifies its message type (ushort). Used by CommandExecutor for reflection-based registration.
+- **MessageHandlerAttribute**: Marks a handler class and specifies its message type (ushort). Used by the executors for reflection-based registration.
   
-- **IServerMessageHandler**: Interface for handlers that process messages on the server side. Signature: `Task HandleAsync(BasePeer peer, byte[] data)`.
+- **IServerMessageHandler\<TMessage\>**: Interface for handlers that process messages on the server side. Signature: `Task HandleAsync(BasePeer peer, TMessage message)` — the library deserializes the payload into `TMessage` before calling.
   
-- **IClientMessageHandler**: Interface for handlers that process messages on the client side. Signature: `Task HandleAsync(byte[] data)`.
+- **IClientMessageHandler\<TMessage\>**: Interface for handlers that process messages on the client side. Signature: `Task HandleAsync(TMessage message)`.
 
-Message handlers are discovered and instantiated automatically via reflection in the CommandExecutor constructor.
+Message handlers are **strongly typed** (no manual deserialization) and are discovered and instantiated automatically via reflection when the executor is constructed.
 
 ### 3. **Serialization** (`SetNet/Messaging/`)
 
@@ -119,12 +119,11 @@ Message handlers are discovered and instantiated automatically via reflection in
    **Server-side handler:**
    ```csharp
    [MessageHandler((ushort)MessageTypes.PlayerMove)]
-   public class PlayerMoveHandler : IServerMessageHandler
+   public class PlayerMoveHandler : IServerMessageHandler<PlayerMoveMessage>
    {
-       public async Task HandleAsync(BasePeer peer, byte[] data)
+       public async Task HandleAsync(BasePeer peer, PlayerMoveMessage message)
        {
-           var message = SetNetSerializer.Deserialize<PlayerMoveMessage>(data);
-           // Process and respond
+           // Process and respond (message is already deserialized)
        }
    }
    ```
@@ -132,11 +131,10 @@ Message handlers are discovered and instantiated automatically via reflection in
    **Client-side handler:**
    ```csharp
    [MessageHandler((ushort)MessageTypes.UpdateState)]
-   public class UpdateStateHandler : IClientMessageHandler
+   public class UpdateStateHandler : IClientMessageHandler<StateUpdateMessage>
    {
-       public async Task HandleAsync(byte[] data)
+       public async Task HandleAsync(StateUpdateMessage message)
        {
-           var message = SetNetSerializer.Deserialize<StateUpdateMessage>(data);
            // Update client state
        }
    }
@@ -343,9 +341,9 @@ public class GameServerPeer : BasePeer
 ## Debugging Tips
 
 - Message handlers are auto-registered via reflection. If a handler isn't being called, verify:
-  1. The class implements `IServerMessageHandler` or `IClientMessageHandler`
+  1. The class implements `IServerMessageHandler<T>` or `IClientMessageHandler<T>`
   2. It's decorated with `MessageHandlerAttribute` with the correct message type
-  3. The message type (ushort) matches what's being sent
+  3. Both the message type (ushort) and the generic `T` match what's being sent
   4. The handler is in an assembly loaded by the AppDomain
 
 - Connection issues often stem from Configuration mismatches (host/port). Verify both client and server use the same values.

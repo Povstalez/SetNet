@@ -124,21 +124,20 @@ await client.MoveAsync(10, 20);
 
 ## 4. Повідомлення та хендлери
 
-Хендлери знаходяться рефлексією при старті — клас із `[MessageHandler]`, що реалізує потрібний інтерфейс.
+Хендлери знаходяться рефлексією при старті — клас із `[MessageHandler]`, що реалізує `IServerMessageHandler<T>` чи `IClientMessageHandler<T>`. Хендлер **типізований**: бібліотека сама десеріалізує payload і віддає готовий `T` — вручну десеріалізувати не треба.
 
 ### Серверний хендлер
 
 ```csharp
+using SetNet.Core;
 using SetNet.Data;
 using SetNet.Data.Attributes;
-using SetNet.Messaging;
 
 [MessageHandler((ushort)MessageTypes.PlayerMove)]
-public class PlayerMoveHandler : IServerMessageHandler
+public class PlayerMoveHandler : IServerMessageHandler<PlayerMoveMessage>
 {
-    public async Task HandleAsync(BasePeer peer, byte[] data)
+    public async Task HandleAsync(BasePeer peer, PlayerMoveMessage msg)
     {
-        var msg = SetNetSerializer.Deserialize<PlayerMoveMessage>(data);
         // обробка; за потреби відповідь:
         await ((GamePeer)peer).PushAsync((ushort)MessageTypes.PlayerMove, msg);
     }
@@ -149,18 +148,17 @@ public class PlayerMoveHandler : IServerMessageHandler
 
 ```csharp
 [MessageHandler((ushort)MessageTypes.ChatMessage)]
-public class ChatHandler : IClientMessageHandler
+public class ChatHandler : IClientMessageHandler<ChatMessage>
 {
-    public Task HandleAsync(byte[] data)
+    public Task HandleAsync(ChatMessage msg)
     {
-        var msg = SetNetSerializer.Deserialize<ChatMessage>(data);
         Console.WriteLine(msg.Text);
         return Task.CompletedTask;
     }
 }
 ```
 
-**Якщо хендлер не викликається** — перевірте: (1) реалізує `IServerMessageHandler`/`IClientMessageHandler`; (2) має `[MessageHandler]` з правильним `ushort`; (3) тип збігається з тим, що надсилається; (4) клас у завантаженому assembly.
+**Якщо хендлер не викликається** — перевірте: (1) реалізує `IServerMessageHandler<T>`/`IClientMessageHandler<T>`; (2) має `[MessageHandler]` з правильним `ushort`; (3) тип `T` та `ushort` збігаються з тим, що надсилається; (4) клас у завантаженому assembly.
 
 > ℹ️ Хендлери створюються через `Activator.CreateInstance` (потрібен публічний конструктор без параметрів) і **переюзаються як singleton** для всіх повідомлень цього типу. **DI у конструктор немає** — резолвіть сервіси через статичний service-locator чи власний механізм.
 
@@ -203,8 +201,8 @@ SetNetSerializer.Default = new MyJsonSerializer();
 ```
 
 **Правила:**
-- Серіалізатор **один на застосунок** — глобальний `SetNetSerializer.Default`. Через нього проходить **усе**: і надсилання всередині бібліотеки, і фасад у хендлерах. Жодного per-connection налаштування немає — одне місце.
-- У хендлерах десеріалізуйте через фасад `SetNetSerializer.Deserialize<T>(data)` — він не прив'язує код до конкретного формату.
+- Серіалізатор **один на застосунок** — глобальний `SetNetSerializer.Default`. Через нього проходить **усе**: і надсилання, і десеріалізація вхідних повідомлень перед викликом хендлера. Жодного per-connection налаштування немає — одне місце.
+- Хендлери **типізовані** — отримують готовий `T`, десеріалізувати вручну не треба (бібліотека робить це сама). Для ad-hoc випадків доступні `SetNetSerializer.Serialize/Deserialize`.
 - **Обидва боки** з'єднання мають використовувати один формат.
 - Вимоги до DTO диктує обраний серіалізатор: для MessagePack — `[MessagePackObject]`/`[Key]` (див. вище); System.Text.Json працює зі звичайними публічними властивостями.
 

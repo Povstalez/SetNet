@@ -12,18 +12,17 @@ namespace Chat.Server.Handlers;
 /// <see cref="ChatBroadcastMessage"/>. Auto-discovered via the <see cref="MessageHandlerAttribute"/>.
 /// </summary>
 [MessageHandler((ushort)ChatMessageTypes.ChatText)]
-public class ChatTextHandler : IServerMessageHandler
+public class ChatTextHandler : IServerMessageHandler<ChatTextMessage>
 {
     /// <summary>
-    /// Deserializes the chat line, attributes it to the sender's username, stamps it with the server time,
-    /// and broadcasts it to all peers.
+    /// Attributes the chat line to the sender's username, stamps it with the server time, and broadcasts it
+    /// to all peers.
     /// </summary>
     /// <param name="peer">The peer that sent the chat line (a <see cref="ChatPeer"/>).</param>
-    /// <param name="data">The MessagePack-serialized <see cref="ChatTextMessage"/> payload.</param>
+    /// <param name="message">The deserialized <see cref="ChatTextMessage"/>.</param>
     /// <returns>A task that completes once the line has been broadcast.</returns>
-    public async Task HandleAsync(BasePeer peer, byte[] data)
+    public async Task HandleAsync(BasePeer peer, ChatTextMessage message)
     {
-        var message = SetNetSerializer.Deserialize<ChatTextMessage>(data);
         var chatPeer = (ChatPeer)peer;
         var username = chatPeer.Username ?? "anon";
 

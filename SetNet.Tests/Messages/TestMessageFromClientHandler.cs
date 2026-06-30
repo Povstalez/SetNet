@@ -7,13 +7,12 @@ using SetNet.Tests.Data;
 namespace SetNet.Tests.Messages;
 
 [MessageHandler(0)]
-public class TestMessageFromClientHandler : IServerMessageHandler
+public class TestMessageFromClientHandler : IServerMessageHandler<TestMessage>
 {
-    public Task HandleAsync(BasePeer peer, byte[] data)
+    public Task HandleAsync(BasePeer peer, TestMessage message)
     {
         var player = (PlayerPeer)peer;
-        
-        var message = SetNetSerializer.Deserialize<TestMessage>(data);
+
         Console.WriteLine($"Received from client: {message.Message}");
 
         player.TestSend();

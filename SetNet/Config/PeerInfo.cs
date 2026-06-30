@@ -30,7 +30,7 @@ namespace SetNet.Config
         private BaseServer _server;
 
         /// <summary>The command executor that routes this peer's inbound messages to their registered server-side handlers.</summary>
-        public readonly CommandExecutor<IServerMessageHandler> CommandExecutor;
+        public readonly ServerCommandExecutor CommandExecutor;
 
         /// <summary>0 while the peer is live, 1 once <see cref="Disconnect"/> has been requested.</summary>
         private int _disconnected;
@@ -46,7 +46,7 @@ namespace SetNet.Config
         /// <param name="config">The shared configuration governing this peer's behaviour.</param>
         /// <param name="server">The server that owns this peer, used to remove it on disconnect.</param>
         /// <param name="commandExecutor">The executor that dispatches the peer's inbound messages to handlers.</param>
-        public PeerInfo(ITransportConnection connection, Configuration config, BaseServer server, CommandExecutor<IServerMessageHandler> commandExecutor)
+        public PeerInfo(ITransportConnection connection, Configuration config, BaseServer server, ServerCommandExecutor commandExecutor)
         {
             Connection = connection;
             Config = config;

@@ -26,7 +26,7 @@ namespace SetNet.Core
         private readonly ITransportConnector _connector;
 
         /// <summary>Reflection-discovered registry of client-side message handlers, keyed by wire type id.</summary>
-        private CommandExecutor<IClientMessageHandler> _commandExecutor;
+        private ClientCommandExecutor _commandExecutor;
 
         /// <summary>Drives cancellation of the receive and heartbeat loops; replaced on each (re)connect. Guarded by <see cref="_lifecycleLock"/> for swaps/reads. Null before the first connect and after dispose.</summary>
         private CancellationTokenSource? _cancellationTokenSource;
@@ -77,7 +77,7 @@ namespace SetNet.Core
         protected BaseClient(Configuration config) : base()
         {
             _config = config;
-            _commandExecutor = new CommandExecutor<IClientMessageHandler>();
+            _commandExecutor = new ClientCommandExecutor();
             _connector = TransportFactory.CreateConnector(config);
             InitDispatchGate(config.MaxInFlightMessages, config.SequentialDispatch);
         }
@@ -475,7 +475,7 @@ namespace SetNet.Core
 
         /// <summary>
         /// Binds every reflection-discovered client handler to its wire type id on the message processor.
-        /// Called on connect so inbound frames are dispatched to the correct <see cref="IClientMessageHandler"/>.
+        /// Called on connect so inbound frames are dispatched to the correct <see cref="IClientMessageHandler{TMessage}"/>.
         /// </summary>
         /// <remarks>Virtual so subclasses can extend or replace the default registration behavior.</remarks>
         protected virtual void RegisterDataHandlers()
@@ -492,7 +492,7 @@ namespace SetNet.Core
         /// <returns>A delegate that asynchronously routes payload bytes to the matching client handler.</returns>
         private Func<byte[], Task> CreateHandlerDelegate(ushort messageType)
         {
-            return async data => await _commandExecutor.Handlers[messageType].HandleAsync(data).ConfigureAwait(false);
+            return data => _commandExecutor.DispatchAsync(messageType, data);
         }
 
         /// <summary>

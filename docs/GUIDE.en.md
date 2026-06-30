@@ -124,21 +124,20 @@ await client.MoveAsync(10, 20);
 
 ## 4. Messages and handlers
 
-Handlers are discovered via reflection at startup — a class with `[MessageHandler]` that implements the appropriate interface.
+Handlers are discovered via reflection at startup — a class with `[MessageHandler]` that implements `IServerMessageHandler<T>` or `IClientMessageHandler<T>`. Handlers are **strongly typed**: the library deserializes the payload and hands you the ready `T` — no manual deserialization.
 
 ### Server-side handler
 
 ```csharp
+using SetNet.Core;
 using SetNet.Data;
 using SetNet.Data.Attributes;
-using SetNet.Messaging;
 
 [MessageHandler((ushort)MessageTypes.PlayerMove)]
-public class PlayerMoveHandler : IServerMessageHandler
+public class PlayerMoveHandler : IServerMessageHandler<PlayerMoveMessage>
 {
-    public async Task HandleAsync(BasePeer peer, byte[] data)
+    public async Task HandleAsync(BasePeer peer, PlayerMoveMessage msg)
     {
-        var msg = SetNetSerializer.Deserialize<PlayerMoveMessage>(data);
         // process; reply if needed:
         await ((GamePeer)peer).PushAsync((ushort)MessageTypes.PlayerMove, msg);
     }
@@ -149,18 +148,17 @@ public class PlayerMoveHandler : IServerMessageHandler
 
 ```csharp
 [MessageHandler((ushort)MessageTypes.ChatMessage)]
-public class ChatHandler : IClientMessageHandler
+public class ChatHandler : IClientMessageHandler<ChatMessage>
 {
-    public Task HandleAsync(byte[] data)
+    public Task HandleAsync(ChatMessage msg)
     {
-        var msg = SetNetSerializer.Deserialize<ChatMessage>(data);
         Console.WriteLine(msg.Text);
         return Task.CompletedTask;
     }
 }
 ```
 
-**If a handler isn't being called** — check: (1) it implements `IServerMessageHandler`/`IClientMessageHandler`; (2) it has `[MessageHandler]` with the correct `ushort`; (3) the type matches what is being sent; (4) the class is in a loaded assembly.
+**If a handler isn't being called** — check: (1) it implements `IServerMessageHandler<T>`/`IClientMessageHandler<T>`; (2) it has `[MessageHandler]` with the correct `ushort`; (3) both `T` and the `ushort` match what is being sent; (4) the class is in a loaded assembly.
 
 > ℹ️ Handlers are created via `Activator.CreateInstance` (a public parameterless constructor is required) and **reused as a singleton** for all messages of that type. **There is no constructor DI** — resolve services through a static service locator or your own mechanism.
 
@@ -203,8 +201,8 @@ SetNetSerializer.Default = new MyJsonSerializer();
 ```
 
 **Rules:**
-- The serializer is **one per application** — the global `SetNetSerializer.Default`. **Everything** goes through it: both the library's send path and the facade in handlers. There is no per-connection setting — a single place.
-- In handlers, deserialize through the `SetNetSerializer.Deserialize<T>(data)` facade — it does not tie your code to a specific format.
+- The serializer is **one per application** — the global `SetNetSerializer.Default`. **Everything** goes through it: both the send path and the deserialization of incoming messages before the handler is called. There is no per-connection setting — a single place.
+- Handlers are **strongly typed** — they receive the ready `T`; no manual deserialization (the library does it). `SetNetSerializer.Serialize/Deserialize` remain available for ad-hoc needs.
 - **Both ends** of a connection must use the same format.
 - DTO requirements are dictated by the chosen serializer: for MessagePack — `[MessagePackObject]`/`[Key]` (see above); System.Text.Json works with ordinary public properties.
 

@@ -11,10 +11,10 @@ The numbers below are from the built-in benchmark (`dotnet run -c Release --proj
 | Configuration | Throughput (1 connection) | Latency | When to use |
 |---|---|---|---|
 | **Default** (`TcpNoDelay = true`, no batching) | ~230k msgs/sec | lowest (each message goes out immediately) | realtime, small infrequent messages, latency-sensitive |
-| **Batching** (`SendBatching = true`) | **~1.8M msgs/sec** | low (one write per flush) | game-tick, high message rate |
+| **Batching** (`SendBatching = true`) | **~1.6M msgs/sec** | low (one write per flush) | game-tick, high message rate |
 | Nagle on (`TcpNoDelay = false`) | ~620k msgs/sec | up to ~40 ms (Nagle+delayed-ACK) | bulk stream of small messages with no latency requirements |
 
-**Key point:** the default `TcpNoDelay = true` optimizes for **latency** — every small message is sent immediately (no Nagle coalescing), so a "raw" stream of un-batched messages is slower. For **high throughput, enable `SendBatching`**: it coalesces a tick's messages into a single socket write, giving both high throughput and low latency (1.8M/sec). This is the recommended path for high message rates.
+**Key point:** the default `TcpNoDelay = true` optimizes for **latency** — every small message is sent immediately (no Nagle coalescing), so a "raw" stream of un-batched messages is slower. For **high throughput, enable `SendBatching`**: it coalesces a tick's messages into a single socket write, giving both high throughput and low latency (~1.6M/sec). This is the recommended path for high message rates.
 
 ```csharp
 // High rate (game-tick): batch per tick, flush once
@@ -25,7 +25,7 @@ await FlushAsync(); // one socket write
 ```
 
 ### Memory
-~4 KB per endpoint (in-process, both ends); 2000 connections are established in ~110 ms.
+~10 KB per endpoint (in-process, both ends); 2000 connections are established in ~110 ms. The throughput figures include serialization — the library deserializes each inbound message into the handler's typed `T`.
 
 ### Hot paths (where nothing extra is allocated)
 - **Sending:** the frame is written into a buffer from `ArrayPool`; `SendTimeoutMs` arms its timer **lazily** — only if `WriteAsync` did not complete synchronously (a rare case under back-pressure), so a typical send allocates no timer.

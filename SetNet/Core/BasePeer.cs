@@ -344,7 +344,7 @@ namespace SetNet.Core
 
         /// <summary>
         /// Binds every reflection-discovered server handler to its wire type id on the message processor, so
-        /// inbound frames from this client are dispatched to the correct <see cref="SetNet.Data.IServerMessageHandler"/>.
+        /// inbound frames from this client are dispatched to the correct <see cref="SetNet.Data.IServerMessageHandler{TMessage}"/>.
         /// </summary>
         /// <remarks>Virtual so subclasses can extend or replace the default registration behavior.</remarks>
         protected virtual void RegisterDataHandlers()
@@ -385,7 +385,7 @@ namespace SetNet.Core
         /// <returns>A delegate that asynchronously routes payload bytes (with this peer) to the matching server handler.</returns>
         private Func<byte[], Task> CreateHandlerDelegate(ushort messageType)
         {
-            return async data => await CurrentPeerInfo.CommandExecutor.Handlers[messageType].HandleAsync(this, data).ConfigureAwait(false);
+            return data => CurrentPeerInfo.CommandExecutor.DispatchAsync(messageType, this, data);
         }
     }
 }

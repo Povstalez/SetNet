@@ -27,7 +27,7 @@ namespace SetNet.Core
         private readonly Configuration _config;
 
         /// <summary>Reflection-discovered registry of server-side message handlers, shared with every peer for dispatch.</summary>
-        private readonly CommandExecutor<IServerMessageHandler> _commandExecutor;
+        private readonly ServerCommandExecutor _commandExecutor;
 
         /// <summary>The primary (TCP or UDP) listener accepting incoming connections; null until started.</summary>
         private ITransportListener? _listener;
@@ -55,7 +55,7 @@ namespace SetNet.Core
         protected BaseServer(Configuration config)
         {
             _config = config;
-            _commandExecutor = new CommandExecutor<IServerMessageHandler>();
+            _commandExecutor = new ServerCommandExecutor();
             _rateLimiter = new RateLimiter(config.MaxConnectionsPerIpPerSecond);
         }
 

@@ -7,23 +7,30 @@ using Xunit;
 
 namespace SetNet.UnitTests;
 
-/// <summary>Unit tests for reflection-based handler discovery in <see cref="CommandExecutor{T}"/>.</summary>
+/// <summary>Unit tests for reflection-based discovery of typed handlers in <see cref="ServerCommandExecutor"/>.</summary>
 public class CommandExecutorTests
 {
     [Fact]
-    public void Discovers_DecoratedHandlerInThisAssembly()
+    public void Discovers_DecoratedTypedHandlerInThisAssembly()
     {
-        var executor = new CommandExecutor<IServerMessageHandler>();
+        var executor = new ServerCommandExecutor();
 
+        // The probe handler implements IServerMessageHandler<DiscoveryProbeMessage> and is decorated with
+        // [MessageHandler(700)], so discovery must register it under that wire type id.
         Assert.Contains((ushort)700, executor.Keys);
-        Assert.IsType<DiscoveryProbeHandler>(executor.Handlers[700]);
     }
+}
+
+/// <summary>A throwaway message used only by the discovery probe handler.</summary>
+public class DiscoveryProbeMessage
+{
+    public int Value { get; set; }
 }
 
 /// <summary>A throwaway handler that exists solely so <see cref="CommandExecutorTests"/> can verify discovery.</summary>
 [MessageHandler(700)]
-public class DiscoveryProbeHandler : IServerMessageHandler
+public class DiscoveryProbeHandler : IServerMessageHandler<DiscoveryProbeMessage>
 {
     /// <summary>No-op handler body; discovery, not behavior, is what the test checks.</summary>
-    public Task HandleAsync(BasePeer peer, byte[] data) => Task.CompletedTask;
+    public Task HandleAsync(BasePeer peer, DiscoveryProbeMessage message) => Task.CompletedTask;
 }

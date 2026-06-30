@@ -26,9 +26,9 @@ public static class BenchStats
 
 /// <summary>Server-side pure sink handler (no echo) used to measure ingest throughput.</summary>
 [MessageHandler(800)]
-public class BenchSinkHandler : IServerMessageHandler
+public class BenchSinkHandler : IServerMessageHandler<BenchMessage>
 {
-    public System.Threading.Tasks.Task HandleAsync(BasePeer peer, byte[] data)
+    public System.Threading.Tasks.Task HandleAsync(BasePeer peer, BenchMessage message)
     {
         BenchStats.Increment();
         return System.Threading.Tasks.Task.CompletedTask;

@@ -95,15 +95,14 @@ await client.ConnectAsync();
 await client.SayAsync("hello");
 ```
 
-**4. Handle messages** (auto-discovered):
+**4. Handle messages** (auto-discovered, strongly typed — the library deserializes for you):
 
 ```csharp
 [MessageHandler((ushort)MsgType.Chat)]
-public class ChatHandler : IServerMessageHandler
+public class ChatHandler : IServerMessageHandler<ChatMessage>
 {
-    public Task HandleAsync(BasePeer peer, byte[] data)
+    public Task HandleAsync(BasePeer peer, ChatMessage msg)
     {
-        var msg = SetNetSerializer.Deserialize<ChatMessage>(data);
         Console.WriteLine(msg.Text);
         return Task.CompletedTask;
     }
@@ -135,7 +134,7 @@ public sealed class JsonSerializer : ISerializer
 SetNetSerializer.Default = new JsonSerializer();             // once, at startup
 ```
 
-The whole library — both the send path and the handler-side facade `SetNetSerializer.Deserialize<T>(data)` — goes through this one `SetNetSerializer.Default`. Both ends of a connection must use the same serializer. (Until one is set, the serialize/deserialize calls throw a clear "configure a serializer" error.)
+Handlers are **strongly typed** — they receive the deserialized message directly (`IServerMessageHandler<ChatMessage>` → `HandleAsync(peer, ChatMessage msg)`); the library serializes on send and deserializes on receive through this one `SetNetSerializer.Default`. Both ends of a connection must use the same serializer. (Until one is set, send/receive throws a clear "configure a serializer" error.)
 
 ## Transport selection
 
@@ -195,10 +194,10 @@ In-process benchmark (`dotnet run -c Release --project SetNet.Tests -- bench`, S
 
 | Mode | Throughput (1 connection) | Optimized for |
 |---|---|---|
-| Batched (`SendBatching = true`) | **~1.8M msgs/sec** | throughput |
-| Default (`TcpNoDelay = true`) | ~240k msgs/sec | latency |
+| Batched (`SendBatching = true`) | **~1.6M msgs/sec** | throughput |
+| Default (`TcpNoDelay = true`) | ~230k msgs/sec | latency |
 
-~4 KB per endpoint; 2,000 connections established in ~110 ms. The default favors latency (every small message sent immediately); enable `SendBatching` for high message rates. Full model, scaling limits and roadmap: [docs/PERFORMANCE.md](docs/PERFORMANCE.md).
+~10 KB per endpoint; 2,000 connections established in ~110 ms. The default favors latency (every small message sent immediately); enable `SendBatching` for high message rates. These numbers include serialization cost — the library deserializes each inbound message into the handler's typed `T`. Full model, scaling limits and roadmap: [docs/PERFORMANCE.en.md](docs/PERFORMANCE.en.md).
 
 ## Documentation
 
