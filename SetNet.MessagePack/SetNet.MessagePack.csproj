@@ -14,13 +14,18 @@
         <AssemblyVersion>1.0.0.0</AssemblyVersion>
         <FileVersion>1.0.0.0</FileVersion>
         <Authors>Artem Lemeshev</Authors>
-        <Description>MessagePack serializer for SetNet. Provides MessagePackNetSerializer (an ISerializer) hardened with the MessagePack UntrustedData security profile. Register it once at startup: SetNetSerializer.Default = new MessagePackNetSerializer();</Description>
+        <Description>MessagePack serializer for SetNet. Provides MessagePackNetSerializer (an ISerializer) hardened with the MessagePack UntrustedData security profile. Register it once at startup: SetNetSerializer.Use(new MessagePackNetSerializer());</Description>
         <PackageTags>networking;serialization;messagepack;setnet</PackageTags>
         <PackageLicenseExpression>MIT</PackageLicenseExpression>
         <RepositoryUrl>https://github.com/Povstalez/SetNet.git</RepositoryUrl>
         <RepositoryType>git</RepositoryType>
         <PackageProjectUrl>https://github.com/Povstalez/SetNet</PackageProjectUrl>
+        <PackageReadmeFile>README.md</PackageReadmeFile>
     </PropertyGroup>
+
+    <ItemGroup>
+      <None Include="README.md" Pack="true" PackagePath="\" />
+    </ItemGroup>
 
     <ItemGroup>
       <PackageReference Include="MessagePack" Version="3.1.7" />
