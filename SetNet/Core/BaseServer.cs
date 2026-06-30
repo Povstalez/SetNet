@@ -127,19 +127,33 @@ namespace SetNet.Core
                 try
                 {
                     peer = OnNewClient(peerInfo);
-                    peer.StartReceive(); // idempotent: ensures the receive loop runs even if OnNewClient didn't start it
                 }
                 catch (Exception ex)
                 {
-                    // A failing OnNewClient/StartReceive must not kill the accept loop.
+                    // A failing OnNewClient must not kill the accept loop.
                     _config.Logger.Log($"OnNewClient failed for {peerInfo.Id}: {ex.Message}", global::SetNet.Logging.LogLevel.Error);
                     accepted.Connection.Close();
                     continue;
                 }
 
-                lock (_clients)
+                if (!TryRegisterPeer(peerInfo, peer))
                 {
-                    _clients[peerInfo.Id] = peer;
+                    accepted.Connection.Close();
+                    continue;
+                }
+
+                try
+                {
+                    peer.StartReceive(); // idempotent: ensures the receive loop runs even if OnNewClient didn't start it
+                }
+                catch (Exception ex)
+                {
+                    // A failing StartReceive must not kill the accept loop or leave a registered dead peer.
+                    _config.Logger.Log($"StartReceive failed for {peerInfo.Id}: {ex.Message}", global::SetNet.Logging.LogLevel.Error);
+                    peer.Close();
+                    accepted.Connection.Close();
+                    RemoveClient(peerInfo);
+                    continue;
                 }
 
                 _config.Metrics.IncrementConnectionsAccepted();
@@ -231,7 +245,6 @@ namespace SetNet.Core
                 {
                     await accepted.Connection.SendAsync(SystemMessageTypes.UdpBindToken, token.ToByteArray(), DeliveryMethod.Reliable).ConfigureAwait(false);
                     peer = OnNewClient(peerInfo);
-                    peer.StartReceive(); // idempotent: ensures the receive loop runs even if OnNewClient didn't start it
                 }
                 catch (Exception ex)
                 {
@@ -246,15 +259,50 @@ namespace SetNet.Core
                     continue;
                 }
 
+                if (!TryRegisterPeer(peerInfo, peer))
+                {
+                    udp.UnregisterExpectedToken(token);
+                    binding.Abandon();
+                    accepted.Connection.Close();
+                    continue;
+                }
+
                 binding.SetPeer(peer);
 
-                lock (_clients)
+                try
                 {
-                    _clients[peerInfo.Id] = peer;
+                    peer.StartReceive(); // idempotent: ensures the receive loop runs even if OnNewClient didn't start it
+                }
+                catch (Exception ex)
+                {
+                    udp.UnregisterExpectedToken(token);
+                    binding.Abandon();
+                    _config.Logger.Log($"StartReceive failed for {peerInfo.Id}: {ex.Message}", global::SetNet.Logging.LogLevel.Error);
+                    peer.Close();
+                    accepted.Connection.Close();
+                    RemoveClient(peerInfo);
+                    continue;
                 }
 
                 _config.Metrics.IncrementConnectionsAccepted();
                 _config.Logger.Log($"Client connected: {peerInfo.Id}", global::SetNet.Logging.LogLevel.Info);
+            }
+        }
+
+        /// <summary>
+        /// Registers a peer in the live pool only if it has not already disconnected during application setup.
+        /// This closes the race where user code starts receive inside OnNewClient and the peer closes before the
+        /// accept loop reaches the dictionary add.
+        /// </summary>
+        private bool TryRegisterPeer(PeerInfo peerInfo, BasePeer peer)
+        {
+            lock (_clients)
+            {
+                if (peer.IsClosed || peerInfo.IsDisconnected || !peerInfo.Connection.IsConnected)
+                    return false;
+
+                _clients[peerInfo.Id] = peer;
+                return true;
             }
         }
 

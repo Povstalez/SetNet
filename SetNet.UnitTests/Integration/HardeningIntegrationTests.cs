@@ -6,6 +6,7 @@ using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
 using System.Threading.Tasks;
 using SetNet.Config;
+using SetNet.Core;
 using SetNet.Core.Transport;
 using Xunit;
 
@@ -239,6 +240,61 @@ public class HardeningIntegrationTests
     }
 
     [Fact]
+    public async Task PeerClosedDuringOnNewClient_IsNotRegistered()
+    {
+        var server = new ClosingDuringOnNewClientServer(new Configuration { Host = "127.0.0.1", Port = 5845 });
+        _ = server.StartAsync();
+        await Task.Delay(200);
+
+        var client = new TestClient(new Configuration { Host = "127.0.0.1", Port = 5845 });
+        await client.ConnectAsync();
+
+        Assert.True(await WaitUntil(() => server.ActiveConnections == 0),
+            "closed peer was registered in ActiveConnections");
+
+        client.Disconnect();
+        await server.StopAsync();
+    }
+
+    [Fact]
+    public async Task ClientLifecycleHookThrow_DoesNotEscapeDisconnect()
+    {
+        var server = new TestServer(new Configuration { Host = "127.0.0.1", Port = 5846 });
+        _ = server.StartAsync();
+        await Task.Delay(200);
+
+        var client = new ThrowingDisconnectedClient(new Configuration { Host = "127.0.0.1", Port = 5846 });
+        await client.ConnectAsync();
+
+        var ex = Record.Exception(() => client.Disconnect());
+
+        Assert.Null(ex);
+        Assert.Equal(ConnectionState.Disconnected, client.State);
+        Assert.Equal(1, client.DisconnectedCalls);
+
+        await server.StopAsync();
+    }
+
+    [Fact]
+    public async Task PeerLifecycleHookThrow_StillRemovesClient()
+    {
+        var server = new ThrowingPeerServer(new Configuration { Host = "127.0.0.1", Port = 5847 });
+        _ = server.StartAsync();
+        await Task.Delay(200);
+
+        var client = new TestClient(new Configuration { Host = "127.0.0.1", Port = 5847 });
+        await client.ConnectAsync();
+        Assert.True(await WaitUntil(() => server.ActiveConnections == 1));
+
+        client.Disconnect();
+
+        Assert.True(await WaitUntil(() => server.ActiveConnections == 0),
+            "throwing peer hook prevented server-pool cleanup");
+
+        await server.StopAsync();
+    }
+
+    [Fact]
     public async Task IntentionalDisconnect_FiresOnDisconnectedExactlyOnce()
     {
         // Regression (#11/#5): an explicit Disconnect() — even called twice — must fire OnDisconnected once and
@@ -333,5 +389,58 @@ public class HardeningIntegrationTests
         // Round-trip through PKCS#12 so SslStream has a persisted, usable private key on all platforms.
         var pfx = ephemeral.Export(X509ContentType.Pfx);
         return new X509Certificate2(pfx, (string?)null, X509KeyStorageFlags.Exportable);
+    }
+
+    private sealed class ClosingDuringOnNewClientServer : BaseServer
+    {
+        public ClosingDuringOnNewClientServer(Configuration config) : base(config) { }
+
+        protected override BasePeer OnNewClient(PeerInfo peerInfo)
+        {
+            var peer = new ClosingPeer(peerInfo);
+            peer.Close();
+            return peer;
+        }
+    }
+
+    private sealed class ClosingPeer : BasePeer
+    {
+        public ClosingPeer(PeerInfo currentPeerInfo) : base(currentPeerInfo) { }
+
+        protected override void OnDisconnected() { }
+    }
+
+    private sealed class ThrowingDisconnectedClient : BaseClient
+    {
+        public int DisconnectedCalls;
+
+        public ThrowingDisconnectedClient(Configuration config) : base(config) { }
+
+        protected override void OnConnected() { }
+
+        protected override void OnDisconnected()
+        {
+            DisconnectedCalls++;
+            throw new InvalidOperationException("client hook boom");
+        }
+
+        protected override void OnError(string error) { }
+    }
+
+    private sealed class ThrowingPeerServer : BaseServer
+    {
+        public ThrowingPeerServer(Configuration config) : base(config) { }
+
+        protected override BasePeer OnNewClient(PeerInfo peerInfo) => new ThrowingPeer(peerInfo);
+    }
+
+    private sealed class ThrowingPeer : BasePeer
+    {
+        public ThrowingPeer(PeerInfo currentPeerInfo) : base(currentPeerInfo) { }
+
+        protected override void OnDisconnected()
+        {
+            throw new InvalidOperationException("peer hook boom");
+        }
     }
 }

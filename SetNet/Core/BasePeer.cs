@@ -40,6 +40,9 @@ namespace SetNet.Core
         /// <summary>0 until the peer is closed, then 1. Set via <see cref="Interlocked"/> so <see cref="Close"/> — and thus <see cref="OnDisconnected"/> — runs exactly once no matter how many paths request it.</summary>
         private int _closed;
 
+        /// <summary>True once this peer has begun terminal close/cleanup.</summary>
+        internal bool IsClosed => Volatile.Read(ref _closed) != 0;
+
         /// <summary>
         /// Initializes the peer from the accepted connection's <see cref="PeerInfo"/> and adopts its
         /// connection as the primary transport. The receive loop is not started until
@@ -142,7 +145,7 @@ namespace SetNet.Core
             {
                 hadError = true;
                 if (!_isIntentionalClose && !_isHeartbeatTimeoutClose)
-                    OnError($"Client {CurrentPeerInfo.Id} error: {ex.Message}");
+                    SafeLifecycleHook(nameof(OnError), () => OnError($"Client {CurrentPeerInfo.Id} error: {ex.Message}"));
             }
             finally
             {
@@ -153,7 +156,7 @@ namespace SetNet.Core
                     _isIntentionalClose = false;
                 else if (hadError || wasHeartbeat)
                 {
-                    OnUnexpectedDisconnect();
+                    SafeLifecycleHook(nameof(OnUnexpectedDisconnect), OnUnexpectedDisconnect);
                     Close();
                 }
                 else
@@ -220,7 +223,7 @@ namespace SetNet.Core
             if (elapsed > CurrentPeerInfo.Config.HeartbeatTimeoutMs)
             {
                 _isHeartbeatTimeoutClose = true;
-                OnError($"Client {CurrentPeerInfo.Id} heartbeat timeout.");
+                SafeLifecycleHook(nameof(OnError), () => OnError($"Client {CurrentPeerInfo.Id} heartbeat timeout."));
                 Connection?.Close();
                 TimerScheduler.Shared.Unschedule(_heartbeatTickId);
             }
@@ -318,7 +321,25 @@ namespace SetNet.Core
             if (_heartbeatScheduled) TimerScheduler.Shared.Unschedule(_heartbeatTickId);
             ShutdownDispatch();
             CurrentPeerInfo.Disconnect();
-            OnDisconnected();
+            SafeLifecycleHook(nameof(OnDisconnected), OnDisconnected);
+        }
+
+        /// <summary>Runs an application lifecycle hook without letting user code interrupt peer cleanup.</summary>
+        private void SafeLifecycleHook(string hookName, Action hook)
+        {
+            try { hook(); }
+            catch (Exception ex)
+            {
+                SafeLog($"{hookName} hook failed for peer {CurrentPeerInfo.Id}: {ex.Message}",
+                    global::SetNet.Logging.LogLevel.Error);
+            }
+        }
+
+        /// <summary>Logs best-effort; a throwing application logger must not escape lifecycle cleanup.</summary>
+        private void SafeLog(string message, global::SetNet.Logging.LogLevel level)
+        {
+            try { CurrentPeerInfo.Config.Logger.Log(message, level); }
+            catch { }
         }
 
         /// <summary>

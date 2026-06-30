@@ -137,8 +137,37 @@ namespace SetNet.Core
             }
 
             _ = ReceiveLoopAsync(Connection, ct);
-            SetState(ConnectionState.Connected);
-            OnConnected();
+            if (!TryCommitConnected(out var prev))
+            {
+                // A Disconnect()/Dispose() raced the connect tail and already ran the terminal teardown. Do NOT
+                // resurrect State to Connected or fire OnConnected after OnDisconnected; just ensure the socket is
+                // closed (idempotent) and return.
+                Connection?.Close();
+                return;
+            }
+            SafeLifecycleHook(nameof(OnStateChanged), () => OnStateChanged(prev, ConnectionState.Connected));
+            SafeLifecycleHook(nameof(OnConnected), OnConnected);
+        }
+
+        /// <summary>
+        /// Atomically commits the Connected transition under <see cref="_lifecycleLock"/>, but only if no
+        /// Disconnect/Dispose intervened during the (awaited) connect. Returns <c>false</c> when an intentional
+        /// teardown already ran, so the caller abandons the connection instead of firing a spurious OnConnected
+        /// after OnDisconnected and leaving the client falsely Connected over a dead transport.
+        /// </summary>
+        /// <param name="previous">The state being transitioned from (for <see cref="OnStateChanged"/>), valid only when this returns true.</param>
+        /// <returns><c>true</c> if the Connected state was committed; <c>false</c> if a teardown intervened.</returns>
+        private bool TryCommitConnected(out ConnectionState previous)
+        {
+            lock (_lifecycleLock)
+            {
+                previous = _state;
+                if (_disposed || _isIntentionalDisconnect ||
+                    previous == ConnectionState.Disconnecting || previous == ConnectionState.Disconnected)
+                    return false;
+                _state = ConnectionState.Connected;
+                return true;
+            }
         }
 
         /// <summary>
@@ -165,7 +194,7 @@ namespace SetNet.Core
                 cts = _cancellationTokenSource;
             }
 
-            OnStateChanged(old, ConnectionState.Disconnecting);
+            SafeLifecycleHook(nameof(OnStateChanged), () => OnStateChanged(old, ConnectionState.Disconnecting));
             try { cts?.Cancel(); } catch (ObjectDisposedException) { /* reconnect disposed it; nothing to cancel */ }
             Connection?.Close();
             ShutdownDispatch();
@@ -186,7 +215,7 @@ namespace SetNet.Core
                 _terminalFired = true;
             }
             SetState(ConnectionState.Disconnected);
-            OnDisconnected();
+            SafeLifecycleHook(nameof(OnDisconnected), OnDisconnected);
         }
 
         /// <summary>
@@ -228,7 +257,7 @@ namespace SetNet.Core
             {
                 hadError = true;
                 if (!_isIntentionalDisconnect && !_isHeartbeatTimeout)
-                    OnError($"Connection lost: {ex.Message}");
+                    SafeLifecycleHook(nameof(OnError), () => OnError($"Connection lost: {ex.Message}"));
             }
             finally
             {
@@ -251,7 +280,7 @@ namespace SetNet.Core
                 {
                     Connection?.Close();
                     ShutdownDispatch();
-                    OnUnexpectedDisconnect();
+                    SafeLifecycleHook(nameof(OnUnexpectedDisconnect), OnUnexpectedDisconnect);
 
                     if (_config.AutoReconnect)
                         _ = ReconnectAsync();
@@ -281,7 +310,7 @@ namespace SetNet.Core
             if (elapsed > _config.HeartbeatTimeoutMs)
             {
                 _isHeartbeatTimeout = true;
-                OnError("Heartbeat timeout - no response from server.");
+                SafeLifecycleHook(nameof(OnError), () => OnError("Heartbeat timeout - no response from server."));
                 Connection?.Close();
                 return;
             }
@@ -314,7 +343,7 @@ namespace SetNet.Core
                 // retrying — or reconnect — a connection the application explicitly tore down.
                 if (_disposed || _isIntentionalDisconnect) { FireTerminalDisconnect(); return; }
 
-                OnReconnecting(attempt, _config.MaxReconnectAttempts);
+                SafeLifecycleHook(nameof(OnReconnecting), () => OnReconnecting(attempt, _config.MaxReconnectAttempts));
                 await Task.Delay(_config.ReconnectDelayMs).ConfigureAwait(false);
 
                 if (_disposed || _isIntentionalDisconnect) { FireTerminalDisconnect(); return; }
@@ -357,8 +386,15 @@ namespace SetNet.Core
                     lock (_lifecycleLock) { _terminalFired = false; } // new generation: re-arm the terminal guard
                     ResetDispatch(); // re-arm the dispatch gate; the prior teardown cancelled the old generation's token
                     _ = ReceiveLoopAsync(Connection, ct);
-                    SetState(ConnectionState.Connected);
-                    OnReconnected();
+                    if (!TryCommitConnected(out var prev))
+                    {
+                        // A Disconnect()/Dispose() raced the reconnect tail; it already ran teardown. Don't fire a
+                        // spurious OnReconnected or resurrect Connected over a dead transport.
+                        Connection?.Close();
+                        return;
+                    }
+                    SafeLifecycleHook(nameof(OnStateChanged), () => OnStateChanged(prev, ConnectionState.Connected));
+                    SafeLifecycleHook(nameof(OnReconnected), OnReconnected);
                     return;
                 }
                 catch (Exception ex)
@@ -369,7 +405,7 @@ namespace SetNet.Core
                 }
             }
 
-            OnReconnectFailed();
+            SafeLifecycleHook(nameof(OnReconnectFailed), OnReconnectFailed);
             FireTerminalDisconnect();
         }
 
@@ -470,7 +506,24 @@ namespace SetNet.Core
             var old = _state;
             if (old == newState) return;
             _state = newState;
-            OnStateChanged(old, newState);
+            SafeLifecycleHook(nameof(OnStateChanged), () => OnStateChanged(old, newState));
+        }
+
+        /// <summary>Runs an application lifecycle hook without letting user code interrupt connection cleanup.</summary>
+        private void SafeLifecycleHook(string hookName, Action hook)
+        {
+            try { hook(); }
+            catch (Exception ex)
+            {
+                SafeLog($"{hookName} hook failed: {ex.Message}", global::SetNet.Logging.LogLevel.Error);
+            }
+        }
+
+        /// <summary>Logs best-effort; a throwing application logger must not escape lifecycle cleanup.</summary>
+        private void SafeLog(string message, global::SetNet.Logging.LogLevel level)
+        {
+            try { _config.Logger.Log(message, level); }
+            catch { }
         }
 
         /// <summary>

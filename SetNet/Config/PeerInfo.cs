@@ -1,4 +1,5 @@
 using System;
+using System.Threading;
 using SetNet.Core;
 using SetNet.Core.Commands;
 using SetNet.Core.Transport;
@@ -31,6 +32,12 @@ namespace SetNet.Config
         /// <summary>The command executor that routes this peer's inbound messages to their registered server-side handlers.</summary>
         public readonly CommandExecutor<IServerMessageHandler> CommandExecutor;
 
+        /// <summary>0 while the peer is live, 1 once <see cref="Disconnect"/> has been requested.</summary>
+        private int _disconnected;
+
+        /// <summary>True once this peer has disconnected, even if the server had not registered it in the pool yet.</summary>
+        internal bool IsDisconnected => Volatile.Read(ref _disconnected) != 0;
+
         /// <summary>
         /// Creates a peer record for a newly accepted client, capturing its transport, shared configuration, owning
         /// server, and message dispatcher, and assigning it a fresh unique <see cref="Id"/>.
@@ -54,6 +61,7 @@ namespace SetNet.Config
         /// </summary>
         public void Disconnect()
         {
+            Interlocked.Exchange(ref _disconnected, 1);
             Connection.Close();
             UdpConnection?.Close();
             _server?.RemoveClient(this);

@@ -129,8 +129,16 @@ namespace SetNet.Messaging
         /// <param name="ex">The handler exception to report.</param>
         private void ReportError(ushort type, Exception ex)
         {
-            try { OnHandlerError?.Invoke(type, ex); }
+            try { OnHandlerError?.Invoke(type, UnwrapException(ex)); }
             catch { /* a throwing error sink (e.g. faulty logger) must never escape and crash the process */ }
+        }
+
+        /// <summary>Normalizes faulted-task AggregateExceptions so observers see the original handler error.</summary>
+        private static Exception UnwrapException(Exception ex)
+        {
+            if (ex is AggregateException aggregate && aggregate.InnerExceptions.Count == 1)
+                return aggregate.InnerExceptions[0];
+            return ex;
         }
 
         /// <summary>
