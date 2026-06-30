@@ -187,7 +187,7 @@ Server-side, `BasePeer` mirrors this: `Close()` (kick) → only `OnDisconnected`
   - `Core/Transport/`: transport abstraction + enums (`TransportType`, `DeliveryMethod`); `Tcp/`, `Udp/` (handshake, demux, `ReliabilityChannel`/`ReliabilityChannelSet`), `Both/` implementations; `TransportFactory`
   - `Config/`: Configuration, PeerInfo
   - `Data/`: Handler interfaces, MessageHandlerAttribute
-  - `Messaging/`: MessageProcessor, MessagePackSerializer, IMessagePackFactory
+  - `Messaging/`: MessageProcessor, MessagePackSerializer, ISerializer + MessagePackNetSerializer + SetNetSerializer (pluggable serialization, default MessagePack)
   - `Events/`: EventManager
   - `Logging/`: ILogger, ConsoleLogger, NoOpLogger
   - `Diagnostics/`: NetworkMetrics

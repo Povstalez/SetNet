@@ -4,6 +4,7 @@ using System.Security.Cryptography.X509Certificates;
 using SetNet.Core.Transport;
 using SetNet.Diagnostics;
 using SetNet.Logging;
+using SetNet.Messaging;
 
 namespace SetNet.Config
 {
@@ -81,6 +82,21 @@ namespace SetNet.Config
 
         /// <summary>Gets or sets the logging sink used throughout the library. Defaults to a <see cref="ConsoleLogger"/>; set to a custom <see cref="ILogger"/> to redirect diagnostics.</summary>
         public ILogger Logger { get; set; } = new ConsoleLogger();
+
+        /// <summary>Backing field for <see cref="Serializer"/>; null means "use the process-wide <see cref="SetNetSerializer.Default"/>".</summary>
+        private ISerializer? _serializer;
+
+        /// <summary>
+        /// Serializer used to encode/decode message payloads for this connection. When not set explicitly, it
+        /// falls back to the process-wide <see cref="SetNetSerializer.Default"/> (MessagePack by default), so you
+        /// can switch the whole app's format with one line at startup, or override it per connection here. Both
+        /// ends of a connection must use the same serializer.
+        /// </summary>
+        public ISerializer Serializer
+        {
+            get => _serializer ?? SetNetSerializer.Default;
+            set => _serializer = value;
+        }
 
         /// <summary>
         /// Live traffic/health counters the library increments (messages, connections, retransmits, drops).

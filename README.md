@@ -3,7 +3,7 @@
 **A lightweight, high-throughput .NET networking library for client–server games and real-time apps — over TCP, UDP, or both at once.**
 
 ![.NET Standard 2.1](https://img.shields.io/badge/.NET%20Standard-2.1-512BD4)
-![Serialization](https://img.shields.io/badge/serialization-MessagePack-blue)
+![Serialization](https://img.shields.io/badge/serialization-MessagePack%20(pluggable)-blue)
 ![Transports](https://img.shields.io/badge/transport-TCP%20%7C%20UDP%20%7C%20Both-success)
 ![License](https://img.shields.io/badge/license-MIT-green)
 
@@ -23,7 +23,8 @@ await SendAsync(MsgType.Position, position, DeliveryMethod.Unreliable);
 - 🔄 **Lifecycle done right** — intentional vs unexpected disconnects, auto-reconnect hooks, heartbeat liveness; `OnDisconnected` fires exactly once.
 - ⚡ **Fast** — ~**1.8M msgs/sec** on one connection with send batching, ~4 KB per endpoint; allocation-light hot paths.
 - 🔒 **Production-hardened** — TLS over TCP, connection/UDP-peer caps, per-IP rate limiting, frame-size cap, back-pressure, bounded inbound queues (OOM protection), a resilient accept loop, and live `NetworkMetrics`.
-- 🧩 **Auto handler registration** — mark a class `[MessageHandler(type)]`; reflection wires it up. MessagePack serialization.
+- 🧩 **Auto handler registration** — mark a class `[MessageHandler(type)]`; reflection wires it up.
+- 📦 **Pluggable serialization** — MessagePack by default, byte-identical out of the box; swap in JSON or any format via `ISerializer` (globally with `SetNetSerializer.Default`, or per-connection with `Configuration.Serializer`).
 
 ## Install
 
@@ -92,7 +93,7 @@ public class ChatHandler : IServerMessageHandler
 {
     public Task HandleAsync(BasePeer peer, byte[] data)
     {
-        var msg = MessagePackSerializer.Deserialize<ChatMessage>(data);
+        var msg = SetNetSerializer.Deserialize<ChatMessage>(data);
         Console.WriteLine(msg.Text);
         return Task.CompletedTask;
     }

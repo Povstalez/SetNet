@@ -461,7 +461,7 @@ namespace SetNet.Core
             if (State != ConnectionState.Connected || conn == null)
                 throw new InvalidOperationException($"Cannot send: state is '{State}'.");
 
-            var data = MessagePackSerializer.Serialize(message);
+            var data = _config.Serializer.Serialize(message);
             _config.Metrics.IncrementMessagesSent();
             await conn.SendAsync(type, data, delivery, channel).ConfigureAwait(false);
         }

@@ -43,7 +43,7 @@ dotnet add reference ../SetNet/SetNet.csproj
 | `Configuration` | Усі налаштування (хост, порт, транспорт, ліміти, TLS…). |
 | `[MessageHandler(type)]` | Атрибут на класі-хендлері; реєстрація через рефлексію. |
 
-**Потік повідомлення:** `SendAsync<T>` → MessagePack → фреймінг → транспорт → реасемблінг → десеріалізація → хендлер.
+**Потік повідомлення:** `SendAsync<T>` → серіалізація (MessagePack за замовч., [змінна](#4-повідомлення-та-хендлери)) → фреймінг → транспорт → реасемблінг → десеріалізація → хендлер.
 
 > ⚠️ **Порядок обробки за замовчуванням не гарантований** навіть на TCP (хендлери — fire-and-forget). Див. [розділ 8](#8-продуктивність-і-порядок-обробки).
 
@@ -134,7 +134,7 @@ public class PlayerMoveHandler : IServerMessageHandler
 {
     public async Task HandleAsync(BasePeer peer, byte[] data)
     {
-        var msg = MessagePackSerializer.Deserialize<PlayerMoveMessage>(data);
+        var msg = SetNetSerializer.Deserialize<PlayerMoveMessage>(data);
         // обробка; за потреби відповідь:
         await ((GamePeer)peer).PushAsync((ushort)MessageTypes.PlayerMove, msg);
     }
@@ -149,7 +149,7 @@ public class ChatHandler : IClientMessageHandler
 {
     public Task HandleAsync(byte[] data)
     {
-        var msg = MessagePackSerializer.Deserialize<ChatMessage>(data);
+        var msg = SetNetSerializer.Deserialize<ChatMessage>(data);
         Console.WriteLine(msg.Text);
         return Task.CompletedTask;
     }
@@ -159,6 +159,50 @@ public class ChatHandler : IClientMessageHandler
 **Якщо хендлер не викликається** — перевірте: (1) реалізує `IServerMessageHandler`/`IClientMessageHandler`; (2) має `[MessageHandler]` з правильним `ushort`; (3) тип збігається з тим, що надсилається; (4) клас у завантаженому assembly.
 
 > ℹ️ Хендлери створюються через `Activator.CreateInstance` (потрібен публічний конструктор без параметрів) і **переюзаються як singleton** для всіх повідомлень цього типу. **DI у конструктор немає** — резолвіть сервіси через статичний service-locator чи власний механізм.
+
+### Серіалізація — за замовчуванням MessagePack, але змінна
+
+Бібліотека серіалізує/десеріалізує через інтерфейс `ISerializer` (`SetNet.Messaging`):
+
+```csharp
+public interface ISerializer
+{
+    byte[] Serialize<T>(T value);
+    T      Deserialize<T>(byte[] data);
+}
+```
+
+За замовчуванням активний `MessagePackNetSerializer` (байт-у-байт ідентичний попередній статичній MessagePack-поведінці — нічого міняти не треба). Щоб перевести **весь застосунок** на інший формат, призначте власний серіалізатор **один раз на старті**, до підключення:
+
+```csharp
+// Глобально: торкається всіх з'єднань і статичних хелперів SetNetSerializer.Serialize/Deserialize
+SetNetSerializer.Default = new MyJsonSerializer();
+```
+
+Приклад власного серіалізатора (System.Text.Json):
+
+```csharp
+using SetNet.Messaging;
+using System.Text.Json;
+
+public sealed class MyJsonSerializer : ISerializer
+{
+    public byte[] Serialize<T>(T value) => JsonSerializer.SerializeToUtf8Bytes(value);
+    public T Deserialize<T>(byte[] data) => JsonSerializer.Deserialize<T>(data)!;
+}
+```
+
+Або **на конкретне з'єднання** через конфіг (зручно, коли різні сервери/клієнти мають різний формат):
+
+```csharp
+var config = new Configuration { /* ... */ Serializer = new MyJsonSerializer() };
+```
+
+**Правила:**
+- У хендлерах десеріалізуйте через фасад `SetNetSerializer.Deserialize<T>(data)` — він поважає `SetNetSerializer.Default` і не прив'язує код до конкретного формату. (Хендлер не має посилання на з'єднання, тож per-connection серіалізатор він не бачить.) На сервері, якщо ви використовуєте **per-connection** серіалізатор, десеріалізуйте через `peer.CurrentPeerInfo.Config.Serializer.Deserialize<T>(data)`.
+- `Configuration.Serializer` без явного значення повертається до `SetNetSerializer.Default`.
+- **Обидва боки** з'єднання мають використовувати один формат.
+- Якщо лишаєте MessagePack — ваші DTO мають бути `[MessagePackObject]`/`[Key]` (див. вище). Для JSON/інших форматів вимоги диктує вже ваш серіалізатор (System.Text.Json працює зі звичайними публічними властивостями).
 
 ---
 

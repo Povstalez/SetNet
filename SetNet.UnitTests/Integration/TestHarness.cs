@@ -145,7 +145,7 @@ public class EchoServerHandler : IServerMessageHandler
     /// <inheritdoc/>
     public async Task HandleAsync(BasePeer peer, byte[] data)
     {
-        var message = SetNet.Messaging.MessagePackSerializer.Deserialize<EchoMessage>(data);
+        var message = SetNet.Messaging.SetNetSerializer.Deserialize<EchoMessage>(data);
         TestInbox.ServerReceived.Enqueue(message.Text);
         await ((TestPeer)peer).SendMessageAsync((ushort)901, new EchoMessage { Text = message.Text });
     }
@@ -158,7 +158,7 @@ public class EchoClientHandler : IClientMessageHandler
     /// <inheritdoc/>
     public Task HandleAsync(byte[] data)
     {
-        var message = SetNet.Messaging.MessagePackSerializer.Deserialize<EchoMessage>(data);
+        var message = SetNet.Messaging.SetNetSerializer.Deserialize<EchoMessage>(data);
         TestInbox.ClientReceived.Enqueue(message.Text);
         return Task.CompletedTask;
     }

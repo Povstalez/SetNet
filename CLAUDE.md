@@ -320,7 +320,7 @@ public class GameServerPeer : BasePeer
   - `Core/Transport/`: transport abstraction + enums (`TransportType`, `DeliveryMethod`); `Tcp/`, `Udp/` (handshake, demux, `ReliabilityChannel`), `Both/` implementations; `TransportFactory`
   - `Config/`: Configuration, PeerInfo
   - `Data/`: Handler interfaces, MessageHandlerAttribute
-  - `Messaging/`: MessageProcessor, MessagePackSerializer, IMessagePackFactory
+  - `Messaging/`: MessageProcessor, MessagePackSerializer, ISerializer + MessagePackNetSerializer + SetNetSerializer (pluggable serialization, default MessagePack)
   - `Events/`: EventManager
   - `Logging/`: ILogger, ConsoleLogger, NoOpLogger
   - `Utils/`: GameLoopScheduler, UpdateScheduler
