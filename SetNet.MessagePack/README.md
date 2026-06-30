@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="https://raw.githubusercontent.com/Povstalez/SetNet/master/assets/icon.png" alt="SetNet" width="96">
+</p>
+
 # SetNet.MessagePack
 
 **MessagePack serializer for [SetNet](https://www.nuget.org/packages/SetNet).**

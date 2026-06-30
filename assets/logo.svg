@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <g fill="none" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M352 305 L272 385 L352 465" stroke="#1C7DDE" stroke-width="40"/>
+    <path d="M672 305 L752 385 L672 465" stroke="#2D3238" stroke-width="40"/>
+  </g>
+  <circle cx="442" cy="385" r="22" fill="#1C7DDE"/>
+  <circle cx="512" cy="385" r="22" fill="#244769"/>
+  <circle cx="582" cy="385" r="22" fill="#2D3238"/>
+  <text x="512" y="760" text-anchor="middle" dominant-baseline="middle" font-family="DejaVu Sans, Arial, sans-serif" font-weight="700" font-size="138">
+    <tspan fill="#26303E">Set</tspan><tspan fill="#1C7DDE">Net</tspan>
+  </text>
+</svg>

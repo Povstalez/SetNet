@@ -1,4 +1,8 @@
-# SetNet 🌐
+<p align="center">
+  <img src="assets/logo.png" alt="SetNet" width="320">
+</p>
+
+# SetNet
 
 **A lightweight, high-throughput .NET networking library for client–server games and real-time apps — over TCP, UDP, or both at once.**
 
