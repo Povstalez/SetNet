@@ -454,16 +454,40 @@ namespace SetNet.Core
         /// <returns>A task that completes once the message has been handed to the transport.</returns>
         /// <exception cref="ObjectDisposedException">Thrown if the client has been disposed.</exception>
         /// <exception cref="InvalidOperationException">Thrown if the client is not currently in the Connected state.</exception>
-        protected async Task SendAsync<T>(ushort type, T message, DeliveryMethod delivery, byte channel)
+        protected Task SendAsync<T>(ushort type, T message, DeliveryMethod delivery, byte channel)
+            => SendRawAsync(type, SetNetSerializer.Serialize(message), delivery, channel);
+
+        /// <summary>
+        /// Sends an already-serialized payload to the server using the configured default delivery, <b>without
+        /// serializing</b>. The escape hatch for forwarding raw bytes received in <see cref="BaseSocket.OnRawFrame"/>
+        /// (relay/proxy scenarios), avoiding a needless deserialize-then-reserialize round trip.
+        /// </summary>
+        /// <param name="type">The wire type id to frame the payload under.</param>
+        /// <param name="payload">The raw, already-serialized message body.</param>
+        /// <returns>A task that completes once the frame has been handed to the transport.</returns>
+        protected Task SendRawAsync(ushort type, byte[] payload)
+            => SendRawAsync(type, payload, _config.DefaultDelivery, 0);
+
+        /// <summary>
+        /// Sends an already-serialized payload with an explicit delivery method and reliable-UDP channel, without
+        /// serializing. See <see cref="SendRawAsync(ushort, byte[])"/>.
+        /// </summary>
+        /// <param name="type">The wire type id to frame the payload under.</param>
+        /// <param name="payload">The raw, already-serialized message body.</param>
+        /// <param name="delivery">The delivery guarantee for this send.</param>
+        /// <param name="channel">Reliable-UDP channel id (ignored for TCP/unreliable).</param>
+        /// <returns>A task that completes once the frame has been handed to the transport.</returns>
+        /// <exception cref="ObjectDisposedException">Thrown if the client has been disposed.</exception>
+        /// <exception cref="InvalidOperationException">Thrown if the client is not currently in the Connected state.</exception>
+        protected async Task SendRawAsync(ushort type, byte[] payload, DeliveryMethod delivery, byte channel = 0)
         {
             if (_disposed) throw new ObjectDisposedException(nameof(BaseClient));
             var conn = Connection;
             if (State != ConnectionState.Connected || conn == null)
                 throw new InvalidOperationException($"Cannot send: state is '{State}'.");
 
-            var data = SetNetSerializer.Serialize(message);
             _config.Metrics.IncrementMessagesSent();
-            await conn.SendAsync(type, data, delivery, channel).ConfigureAwait(false);
+            await conn.SendAsync(type, payload, delivery, channel).ConfigureAwait(false);
         }
 
         /// <summary>

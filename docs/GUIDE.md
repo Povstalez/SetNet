@@ -206,6 +206,45 @@ SetNetSerializer.Default = new MyJsonSerializer();
 - **Обидва боки** з'єднання мають використовувати один формат.
 - Вимоги до DTO диктує обраний серіалізатор: для MessagePack — `[MessagePackObject]`/`[Key]` (див. вище); System.Text.Json працює зі звичайними публічними властивостями.
 
+### Сирий доступ до кадрів — relay/proxy (`OnRawFrame` + `SendRawAsync`)
+
+Іноді кадр треба **переслати, не дивлячись усередину** — наприклад relay-сервер у стилі Among Us переганяє ігровий трафік між гравцями лоббі. Десеріалізувати+знову серіалізувати тут марно. Для цього є два примітиви на `BaseClient`/`BasePeer`:
+
+```csharp
+// override на BaseSocket: викликається на КОЖЕН прикладний кадр (системні Ping/Pong/BindToken відсікаються)
+// ДО типізованого диспетчингу. true = «спожито», типізований хендлер пропускається.
+protected virtual bool OnRawFrame(ushort type, byte[] data);
+
+// надіслати вже серіалізовані байти БЕЗ серіалізації
+protected Task SendRawAsync(ushort type, byte[] payload, DeliveryMethod? delivery = null);
+```
+
+Relay-peer переганяє сирі байти й споживає кадр (нуль десеріалізації):
+
+```csharp
+public class RelayPeer : BasePeer
+{
+    private readonly RelayServer _server;
+    public RelayPeer(PeerInfo info, RelayServer server) : base(info) { _server = server; }
+
+    // публічна обгортка, щоб broadcast-цикл сервера міг переганяти сюди
+    public Task ForwardAsync(ushort type, byte[] data) => SendRawAsync(type, data, DeliveryMethod.Unreliable);
+
+    protected override bool OnRawFrame(ushort type, byte[] data)
+    {
+        _server.BroadcastRawToLobby(LobbyId, type, data, except: CurrentPeerInfo.Id);  // ваша політика
+        return true;  // не передавати у типізований хендлер
+    }
+}
+// BroadcastRawToLobby ітерує peer'ів лоббі й кличе peer.ForwardAsync(type, data)
+```
+
+**Правила:**
+- `return false` (дефолт) → кадр іде далі у типізований хендлер. Звичайний код `OnRawFrame` не чіпає й **нічого не платить** (порожній віртуальний виклик).
+- `return true` → типізований диспетчинг пропускається. Десеріалізації **не відбувається** взагалі.
+- Можна й гібрид: контрольні повідомлення (join/ready/kick) — типізовані хендлери, ігрові — `OnRawFrame` + `SendRawAsync`. Перевіряйте `type` всередині.
+- `OnRawFrame` виконується синхронно на receive-шляху — форвардьте fire-and-forget (`_ = SendRawAsync(...)`) або батчіть, не блокуйте.
+
 ---
 
 ## 5. Транспорти: TCP / UDP / Both

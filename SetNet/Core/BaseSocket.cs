@@ -100,6 +100,12 @@ namespace SetNet.Core
         /// <returns>A task that completes once the message has been admitted for handling (or, in sequential mode, once the handler finishes).</returns>
         protected async Task DispatchAsync(ushort type, byte[] data)
         {
+            // Give the raw-frame interceptor first refusal on application frames (system frames are excluded).
+            // If it consumes the frame (e.g. a relay forwards the raw bytes), skip typed dispatch entirely —
+            // no deserialization happens. Defaults to a no-op pass-through.
+            if (!SystemMessageTypes.IsSystem(type) && OnRawFrame(type, data))
+                return;
+
             if (_sequentialDispatch)
             {
                 // Await completion so the next frame is not read until this handler finishes — strict ordering.
@@ -144,6 +150,25 @@ namespace SetNet.Core
         {
             _messageProcessor = new MessageProcessor { OnHandlerError = HandleProcessingError };
         }
+
+        /// <summary>
+        /// Raw inbound-frame interception hook, called for every <b>application</b> frame (reserved system frames
+        /// such as heartbeat/bind-token are excluded) <b>before</b> it is dispatched to a typed handler. Override
+        /// it to inspect or forward the raw, still-serialized payload <b>without deserializing</b> — for example a
+        /// relay/proxy that re-sends frames to other peers via <c>SendRawAsync</c>.
+        /// </summary>
+        /// <param name="type">The wire type id of the frame.</param>
+        /// <param name="data">The raw, still-serialized payload (a fresh per-message array; safe to keep or forward).</param>
+        /// <returns>
+        /// <see langword="true"/> to mark the frame consumed and <b>skip</b> typed handler dispatch (relay case);
+        /// <see langword="false"/> (the default) to let it continue to its registered handler (normal case, or
+        /// observe-and-pass-through such as logging/metrics).
+        /// </returns>
+        /// <remarks>
+        /// Runs synchronously on the receive path; do any forwarding fire-and-forget (or batch it) rather than
+        /// blocking. The base implementation returns <see langword="false"/>, so normal endpoints pay nothing.
+        /// </remarks>
+        protected virtual bool OnRawFrame(ushort type, byte[] data) => false;
 
         /// <summary>Called when a message handler throws. Overridden by client/peer to log via the configured logger.</summary>
         /// <param name="type">The wire type id of the message whose handler threw.</param>

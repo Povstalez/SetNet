@@ -23,7 +23,8 @@ await SendAsync(MsgType.Position, position, DeliveryMethod.Unreliable);
 - 🔄 **Lifecycle done right** — intentional vs unexpected disconnects, auto-reconnect hooks, heartbeat liveness; `OnDisconnected` fires exactly once.
 - ⚡ **Fast** — ~**1.8M msgs/sec** on one connection with send batching, ~4 KB per endpoint; allocation-light hot paths.
 - 🔒 **Production-hardened** — TLS over TCP, connection/UDP-peer caps, per-IP rate limiting, frame-size cap, back-pressure, bounded inbound queues (OOM protection), a resilient accept loop, and live `NetworkMetrics`.
-- 🧩 **Auto handler registration** — mark a class `[MessageHandler(type)]`; reflection wires it up.
+- 🧩 **Auto handler registration** — mark a class `[MessageHandler(type)]`; reflection wires it up. Handlers are **strongly typed** — `IServerMessageHandler<T>`/`IClientMessageHandler<T>` receive the deserialized message; the library (de)serializes for you.
+- 🔀 **Raw relay escape hatch** — override `OnRawFrame(type, data)` to intercept frames and `SendRawAsync` to forward bytes **without (de)serializing** — build an Among Us-style relay/proxy with zero overhead, while normal handlers stay typed.
 - 📦 **Pluggable serialization** — the core bundles no serializer. Pick a format via `ISerializer`: drop in the `SetNet.MessagePack` package (hardened MessagePack), or supply your own JSON/Protobuf/custom adapter, and register it once with `SetNetSerializer.Default`.
 
 ## Install

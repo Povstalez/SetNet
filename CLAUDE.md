@@ -71,6 +71,8 @@ The flow: Server accepts connection → creates a BasePeer → peer receives mes
 
 Message handlers are **strongly typed** (no manual deserialization) and are discovered and instantiated automatically via reflection when the executor is constructed.
 
+- **Raw frame escape hatch**: `BaseSocket.OnRawFrame(ushort type, byte[] data)` (virtual, default no-op) is called for every application frame (system types excluded via `SystemMessageTypes.IsSystem`) before typed dispatch; returning `true` consumes the frame and skips typed handling. Paired with `BaseClient`/`BasePeer.SendRawAsync(type, payload, delivery?)` which sends already-serialized bytes without re-serializing. Together they enable relay/proxy peers that forward traffic with zero (de)serialization while normal handlers stay typed.
+
 ### 3. **Serialization** (`SetNet/Messaging/`)
 
 - **ISerializer / SetNetSerializer**: Pluggable serialization seam. The core bundles **no** serializer; the single process-wide `SetNetSerializer.Default` (settable once at startup) is what the library uses everywhere — both the send path and the `SetNetSerializer.Serialize/Deserialize` facade used in handlers. The MessagePack adapter (`MessagePackNetSerializer`, `UntrustedData`-hardened) lives in the separate **SetNet.MessagePack** project/package. Until a serializer is registered, the facade throws a clear error.

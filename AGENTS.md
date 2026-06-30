@@ -69,7 +69,9 @@ The flow: Server accepts connection → creates a BasePeer → peer receives mes
 
 - **IClientMessageHandler\<TMessage\>**: Interface for handlers that process messages on the client side. Signature: `Task HandleAsync(TMessage message)`.
 
-Message handlers are **strongly typed** (no manual deserialization) and are discovered and instantiated automatically via reflection when the executor is constructed. **Dispatch ordering is not guaranteed by default** (handlers run fire-and-forget); set `Configuration.SequentialDispatch = true` for strict in-order, non-overlapping handler execution on a single connection.
+Message handlers are **strongly typed** (no manual deserialization) and are discovered and instantiated automatically via reflection when the executor is constructed.
+
+- **Raw frame escape hatch**: `BaseSocket.OnRawFrame(ushort type, byte[] data)` (virtual, default no-op) is called for every application frame (system types excluded via `SystemMessageTypes.IsSystem`) before typed dispatch; returning `true` consumes the frame and skips typed handling. Paired with `BaseClient`/`BasePeer.SendRawAsync(type, payload, delivery?)` which sends already-serialized bytes without re-serializing. Together they enable relay/proxy peers that forward traffic with zero (de)serialization while normal handlers stay typed. **Dispatch ordering is not guaranteed by default** (handlers run fire-and-forget); set `Configuration.SequentialDispatch = true` for strict in-order, non-overlapping handler execution on a single connection.
 
 ### 3. **Serialization** (`SetNet/Messaging/`)
 

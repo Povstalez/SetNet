@@ -206,6 +206,45 @@ SetNetSerializer.Default = new MyJsonSerializer();
 - **Both ends** of a connection must use the same format.
 - DTO requirements are dictated by the chosen serializer: for MessagePack — `[MessagePackObject]`/`[Key]` (see above); System.Text.Json works with ordinary public properties.
 
+### Raw frame access — relay/proxy (`OnRawFrame` + `SendRawAsync`)
+
+Sometimes a frame should be **forwarded without looking inside** — e.g. an Among Us-style relay server that shuttles game traffic between players in a lobby. Deserializing then re-serializing there is pure waste. Two primitives on `BaseClient`/`BasePeer` cover this:
+
+```csharp
+// override on BaseSocket: called for EVERY application frame (system Ping/Pong/BindToken are excluded),
+// BEFORE typed dispatch. Return true = "consumed", the typed handler is skipped.
+protected virtual bool OnRawFrame(ushort type, byte[] data);
+
+// send already-serialized bytes WITHOUT serializing
+protected Task SendRawAsync(ushort type, byte[] payload, DeliveryMethod? delivery = null);
+```
+
+A relay peer forwards the raw bytes and consumes the frame (zero deserialization):
+
+```csharp
+public class RelayPeer : BasePeer
+{
+    private readonly RelayServer _server;
+    public RelayPeer(PeerInfo info, RelayServer server) : base(info) { _server = server; }
+
+    // public wrapper so the server's broadcast loop can forward into this peer
+    public Task ForwardAsync(ushort type, byte[] data) => SendRawAsync(type, data, DeliveryMethod.Unreliable);
+
+    protected override bool OnRawFrame(ushort type, byte[] data)
+    {
+        _server.BroadcastRawToLobby(LobbyId, type, data, except: CurrentPeerInfo.Id);  // your policy
+        return true;  // do not pass to a typed handler
+    }
+}
+// BroadcastRawToLobby iterates the lobby's peers and calls peer.ForwardAsync(type, data)
+```
+
+**Rules:**
+- `return false` (the default) → the frame continues to its typed handler. Normal code doesn't override `OnRawFrame` and **pays nothing** (an empty virtual call).
+- `return true` → typed dispatch is skipped. **No deserialization** happens at all.
+- Hybrid is fine: control messages (join/ready/kick) via typed handlers, game traffic via `OnRawFrame` + `SendRawAsync`. Branch on `type` inside.
+- `OnRawFrame` runs synchronously on the receive path — forward fire-and-forget (`_ = SendRawAsync(...)`) or batch; don't block.
+
 ---
 
 ## 5. Transports: TCP / UDP / Both

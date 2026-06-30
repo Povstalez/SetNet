@@ -15,5 +15,14 @@ namespace SetNet.Core
 
         /// <summary>Both mode: TCP-side message carrying the UDP bind token (server → client).</summary>
         internal const ushort UdpBindToken = ushort.MaxValue - 2;  // 65533
+
+        /// <summary>
+        /// True if <paramref name="type"/> is a reserved transport/system message rather than an application
+        /// message. Used to keep system frames (heartbeat, bind token) out of application-facing hooks such as
+        /// the raw-frame interceptor.
+        /// </summary>
+        /// <param name="type">The wire type id to test.</param>
+        /// <returns><see langword="true"/> for a reserved system type; otherwise <see langword="false"/>.</returns>
+        internal static bool IsSystem(ushort type) => type == Ping || type == Pong || type == UdpBindToken;
     }
 }

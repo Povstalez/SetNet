@@ -264,14 +264,38 @@ namespace SetNet.Core
         /// <param name="channel">Reliable-UDP channel id (ignored for TCP/unreliable).</param>
         /// <returns>A task that completes once the message has been handed to the transport.</returns>
         /// <exception cref="InvalidOperationException">Thrown if the peer is closing or its connection is no longer connected.</exception>
-        protected async Task SendAsync<T>(ushort type, T message, DeliveryMethod delivery, byte channel)
+        protected Task SendAsync<T>(ushort type, T message, DeliveryMethod delivery, byte channel)
+            => SendRawAsync(type, SetNetSerializer.Serialize(message), delivery, channel);
+
+        /// <summary>
+        /// Sends an already-serialized payload to this client using the configured default delivery, <b>without
+        /// serializing</b>. The escape hatch for forwarding raw bytes received in <see cref="BaseSocket.OnRawFrame"/>
+        /// (relay/proxy scenarios), avoiding a needless deserialize-then-reserialize round trip. Expose a public wrapper
+        /// on your peer subclass if you need to forward to it from outside (e.g. a server-side broadcast loop).
+        /// </summary>
+        /// <param name="type">The wire type id to frame the payload under.</param>
+        /// <param name="payload">The raw, already-serialized message body.</param>
+        /// <returns>A task that completes once the frame has been handed to the transport.</returns>
+        protected Task SendRawAsync(ushort type, byte[] payload)
+            => SendRawAsync(type, payload, CurrentPeerInfo.Config.DefaultDelivery, 0);
+
+        /// <summary>
+        /// Sends an already-serialized payload with an explicit delivery method and reliable-UDP channel, without
+        /// serializing. See <see cref="SendRawAsync(ushort, byte[])"/>.
+        /// </summary>
+        /// <param name="type">The wire type id to frame the payload under.</param>
+        /// <param name="payload">The raw, already-serialized message body.</param>
+        /// <param name="delivery">The delivery guarantee for this send.</param>
+        /// <param name="channel">Reliable-UDP channel id (ignored for TCP/unreliable).</param>
+        /// <returns>A task that completes once the frame has been handed to the transport.</returns>
+        /// <exception cref="InvalidOperationException">Thrown if the peer is closing or its connection is no longer connected.</exception>
+        protected async Task SendRawAsync(ushort type, byte[] payload, DeliveryMethod delivery, byte channel = 0)
         {
             if (_isIntentionalClose || Connection == null || !Connection.IsConnected)
                 throw new InvalidOperationException($"Cannot send: peer {CurrentPeerInfo.Id} is not connected.");
 
-            var data = SetNetSerializer.Serialize(message);
             CurrentPeerInfo.Config.Metrics.IncrementMessagesSent();
-            await RouteSendAsync(type, data, delivery, channel).ConfigureAwait(false);
+            await RouteSendAsync(type, payload, delivery, channel).ConfigureAwait(false);
         }
 
         /// <summary>
