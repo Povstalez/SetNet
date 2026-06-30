@@ -125,6 +125,10 @@ public class TestClient : BaseClient
     public Task SendEchoAsync(string text, DeliveryMethod delivery, byte channel)
         => SendAsync((ushort)900, new EchoMessage { Text = text }, delivery, channel);
 
+    /// <summary>Sends an <see cref="EchoMessage"/> under an arbitrary wire type (for raw-frame/relay tests).</summary>
+    public Task SendAsTypeAsync(ushort type, string text, DeliveryMethod delivery)
+        => SendAsync(type, new EchoMessage { Text = text }, delivery);
+
     /// <summary>Exposes the protected batch flush for tests.</summary>
     public Task FlushManuallyAsync() => FlushAsync();
 

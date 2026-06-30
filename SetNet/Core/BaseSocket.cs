@@ -102,9 +102,15 @@ namespace SetNet.Core
         {
             // Give the raw-frame interceptor first refusal on application frames (system frames are excluded).
             // If it consumes the frame (e.g. a relay forwards the raw bytes), skip typed dispatch entirely —
-            // no deserialization happens. Defaults to a no-op pass-through.
-            if (!SystemMessageTypes.IsSystem(type) && OnRawFrame(type, data))
-                return;
+            // no deserialization happens. Defaults to a no-op pass-through. A throwing hook is isolated exactly
+            // like a faulty handler (reported, frame dropped) so it cannot tear down the receive loop.
+            if (!SystemMessageTypes.IsSystem(type))
+            {
+                bool consumed;
+                try { consumed = OnRawFrame(type, data); }
+                catch (Exception ex) { HandleProcessingError(type, ex); return; }
+                if (consumed) return;
+            }
 
             if (_sequentialDispatch)
             {

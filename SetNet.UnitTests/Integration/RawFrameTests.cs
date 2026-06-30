@@ -102,6 +102,38 @@ public class RelayTestServer : BaseServer
     }
 }
 
+/// <summary>
+/// A peer whose <see cref="BaseSocket.OnRawFrame"/> throws for type 952 (to verify the hook is isolated and a
+/// throw cannot tear down the receive loop). Extends <see cref="TestPeer"/> so the echo handler's cast works.
+/// </summary>
+public class ThrowingRawPeer : TestPeer
+{
+    /// <summary>Creates the throwing peer.</summary>
+    public ThrowingRawPeer(PeerInfo info) : base(info) { }
+
+    /// <inheritdoc/>
+    protected override bool OnRawFrame(ushort type, byte[] data)
+    {
+        if (type == 952) throw new InvalidOperationException("boom from OnRawFrame");
+        return false; // let other types (e.g. echo 900) dispatch normally
+    }
+}
+
+/// <summary>Server that creates <see cref="ThrowingRawPeer"/>s.</summary>
+public class ThrowingRawServer : BaseServer
+{
+    /// <summary>Creates the server.</summary>
+    public ThrowingRawServer(Configuration config) : base(config) { }
+
+    /// <inheritdoc/>
+    protected override BasePeer OnNewClient(PeerInfo peerInfo)
+    {
+        var peer = new ThrowingRawPeer(peerInfo);
+        peer.StartReceive();
+        return peer;
+    }
+}
+
 /// <summary>Client that sends a type-950 frame the server is expected to relay back as 951.</summary>
 public class RelayTestClient : BaseClient
 {
@@ -157,6 +189,34 @@ public class RawFrameTests
         // The intercepted bytes are exactly what the client serialized — relay never deserialized them.
         var expected = SetNetSerializer.Serialize(new EchoMessage { Text = "relayed" });
         Assert.Equal(expected, RelayProbe.InterceptedRaw);
+
+        client.Disconnect();
+        await server.StopAsync();
+    }
+
+    [Fact]
+    public async Task Throwing_OnRawFrame_Is_Isolated_And_Connection_Survives()
+    {
+        TestInbox.Reset();
+        var config = new Configuration { Host = "127.0.0.1", Port = 5862, TransportType = TransportType.Tcp };
+        var server = new ThrowingRawServer(config);
+        _ = server.StartAsync();
+        await Task.Delay(200);
+
+        var client = new TestClient(new Configuration
+        {
+            Host = "127.0.0.1",
+            Port = 5862,
+            TransportType = TransportType.Tcp
+        });
+        await client.ConnectAsync();
+
+        // This frame makes the server's OnRawFrame throw — it must be isolated, not tear down the connection.
+        await client.SendAsTypeAsync(952, "boom", DeliveryMethod.Reliable);
+        // A normal echo afterwards must still round-trip, proving the connection survived the throwing hook.
+        await client.SendEchoAsync("alive", DeliveryMethod.Reliable);
+
+        Assert.True(await WaitUntil(() => TestInbox.ClientReceived.Contains("alive")));
 
         client.Disconnect();
         await server.StopAsync();
