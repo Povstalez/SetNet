@@ -14,10 +14,9 @@ namespace SetNet.Messaging
     /// <code>SetNetSerializer.Default = new MessagePackNetSerializer();</code>
     /// or any custom implementation (JSON, Protobuf, …). Until one is set, <see cref="Serialize{T}"/> and
     /// <see cref="Deserialize{T}"/> throw an <see cref="InvalidOperationException"/> explaining what to do.
-    /// Use <see cref="Serialize{T}"/>/<see cref="Deserialize{T}"/> inside message handlers (which have no
-    /// connection reference) to stay serializer-agnostic. For a per-connection serializer, set
-    /// <c>Configuration.Serializer</c> instead, and deserialize on the server via
-    /// <c>peer.CurrentPeerInfo.Config.Serializer</c>. Both ends of a connection must use the same serializer.
+    /// This single process-wide instance is what the library uses everywhere — both the send path and the
+    /// <see cref="Serialize{T}"/>/<see cref="Deserialize{T}"/> facade used inside message handlers. Both ends of
+    /// a connection must use the same serializer.
     /// </remarks>
     public static class SetNetSerializer
     {

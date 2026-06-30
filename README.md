@@ -24,7 +24,7 @@ await SendAsync(MsgType.Position, position, DeliveryMethod.Unreliable);
 - ⚡ **Fast** — ~**1.8M msgs/sec** on one connection with send batching, ~4 KB per endpoint; allocation-light hot paths.
 - 🔒 **Production-hardened** — TLS over TCP, connection/UDP-peer caps, per-IP rate limiting, frame-size cap, back-pressure, bounded inbound queues (OOM protection), a resilient accept loop, and live `NetworkMetrics`.
 - 🧩 **Auto handler registration** — mark a class `[MessageHandler(type)]`; reflection wires it up.
-- 📦 **Pluggable serialization** — the core bundles no serializer. Pick a format via `ISerializer`: drop in the `SetNet.MessagePack` package (hardened MessagePack), or supply your own JSON/Protobuf/custom adapter — globally with `SetNetSerializer.Default`, or per-connection with `Configuration.Serializer`.
+- 📦 **Pluggable serialization** — the core bundles no serializer. Pick a format via `ISerializer`: drop in the `SetNet.MessagePack` package (hardened MessagePack), or supply your own JSON/Protobuf/custom adapter, and register it once with `SetNetSerializer.Default`.
 
 ## Install
 
@@ -132,11 +132,10 @@ public sealed class JsonSerializer : ISerializer
     public T Deserialize<T>(byte[] data) => System.Text.Json.JsonSerializer.Deserialize<T>(data)!;
 }
 
-SetNetSerializer.Default = new JsonSerializer();             // global
-var config = new Configuration { /* ... */ Serializer = new JsonSerializer() };  // or per-connection
+SetNetSerializer.Default = new JsonSerializer();             // once, at startup
 ```
 
-In handlers, decode via the facade so the code stays format-agnostic: `SetNetSerializer.Deserialize<T>(data)`. Both ends of a connection must use the same serializer. (Until one is set, the serialize/deserialize calls throw a clear "configure a serializer" error.)
+The whole library — both the send path and the handler-side facade `SetNetSerializer.Deserialize<T>(data)` — goes through this one `SetNetSerializer.Default`. Both ends of a connection must use the same serializer. (Until one is set, the serialize/deserialize calls throw a clear "configure a serializer" error.)
 
 ## Transport selection
 

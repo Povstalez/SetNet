@@ -37,23 +37,6 @@ public class SerializerUnitTests
     }
 
     [Fact]
-    public void Configuration_FallsBackToGlobalDefault()
-    {
-        // A fresh Configuration with no explicit serializer reports the global default.
-        var config = new Configuration();
-        Assert.Same(SetNetSerializer.Default, config.Serializer);
-    }
-
-    [Fact]
-    public void Configuration_PerConnectionOverride_Wins()
-    {
-        var custom = new JsonNetSerializer();
-        var config = new Configuration { Serializer = custom };
-        Assert.Same(custom, config.Serializer);
-        Assert.NotSame(SetNetSerializer.Default, config.Serializer);
-    }
-
-    [Fact]
     public void Json_Serializer_RoundTrips()
     {
         ISerializer json = new JsonNetSerializer();

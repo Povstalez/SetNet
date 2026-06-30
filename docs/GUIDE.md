@@ -202,15 +202,9 @@ public sealed class MyJsonSerializer : ISerializer
 SetNetSerializer.Default = new MyJsonSerializer();
 ```
 
-Або **на конкретне з'єднання** через конфіг (зручно, коли різні сервери/клієнти мають різний формат):
-
-```csharp
-var config = new Configuration { /* ... */ Serializer = new MessagePackNetSerializer() };
-```
-
 **Правила:**
-- У хендлерах десеріалізуйте через фасад `SetNetSerializer.Deserialize<T>(data)` — він поважає `SetNetSerializer.Default` і не прив'язує код до конкретного формату. (Хендлер не має посилання на з'єднання, тож per-connection серіалізатор він не бачить.) На сервері, якщо ви використовуєте **per-connection** серіалізатор, десеріалізуйте через `peer.CurrentPeerInfo.Config.Serializer.Deserialize<T>(data)`.
-- `Configuration.Serializer` без явного значення повертається до `SetNetSerializer.Default`.
+- Серіалізатор **один на застосунок** — глобальний `SetNetSerializer.Default`. Через нього проходить **усе**: і надсилання всередині бібліотеки, і фасад у хендлерах. Жодного per-connection налаштування немає — одне місце.
+- У хендлерах десеріалізуйте через фасад `SetNetSerializer.Deserialize<T>(data)` — він не прив'язує код до конкретного формату.
 - **Обидва боки** з'єднання мають використовувати один формат.
 - Вимоги до DTO диктує обраний серіалізатор: для MessagePack — `[MessagePackObject]`/`[Key]` (див. вище); System.Text.Json працює зі звичайними публічними властивостями.
 

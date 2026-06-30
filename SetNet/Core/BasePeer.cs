@@ -269,7 +269,7 @@ namespace SetNet.Core
             if (_isIntentionalClose || Connection == null || !Connection.IsConnected)
                 throw new InvalidOperationException($"Cannot send: peer {CurrentPeerInfo.Id} is not connected.");
 
-            var data = CurrentPeerInfo.Config.Serializer.Serialize(message);
+            var data = SetNetSerializer.Serialize(message);
             CurrentPeerInfo.Config.Metrics.IncrementMessagesSent();
             await RouteSendAsync(type, data, delivery, channel).ConfigureAwait(false);
         }

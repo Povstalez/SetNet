@@ -202,15 +202,9 @@ public sealed class MyJsonSerializer : ISerializer
 SetNetSerializer.Default = new MyJsonSerializer();
 ```
 
-Or **per connection** via config (handy when different servers/clients use different formats):
-
-```csharp
-var config = new Configuration { /* ... */ Serializer = new MessagePackNetSerializer() };
-```
-
 **Rules:**
-- In handlers, deserialize through the `SetNetSerializer.Deserialize<T>(data)` facade — it honors `SetNetSerializer.Default` and does not tie your code to a specific format. (A handler has no reference to the connection, so it cannot see the per-connection serializer.) On the server, if you use a **per-connection** serializer, deserialize through `peer.CurrentPeerInfo.Config.Serializer.Deserialize<T>(data)`.
-- `Configuration.Serializer` with no explicit value falls back to `SetNetSerializer.Default`.
+- The serializer is **one per application** — the global `SetNetSerializer.Default`. **Everything** goes through it: both the library's send path and the facade in handlers. There is no per-connection setting — a single place.
+- In handlers, deserialize through the `SetNetSerializer.Deserialize<T>(data)` facade — it does not tie your code to a specific format.
 - **Both ends** of a connection must use the same format.
 - DTO requirements are dictated by the chosen serializer: for MessagePack — `[MessagePackObject]`/`[Key]` (see above); System.Text.Json works with ordinary public properties.
 
