@@ -88,10 +88,26 @@ namespace SetNet.Core
         /// Stores the UDP channel on <see cref="CurrentPeerInfo"/> (so unreliable sends can be routed to it)
         /// and starts a secondary, fire-and-forget UDP receive loop. Invoked by the server's
         /// <c>PeerBinding</c>; not part of the public API.
+        /// <para>
+        /// Guards against a late bind: the TCP lifeline can tear the peer down (heartbeat timeout, IO error, kick)
+        /// before the UDP handshake binds. If the peer is already closed we close the incoming connection instead
+        /// of attaching it — otherwise it would be owned by a dead peer and never reaped (Both mode runs no UDP
+        /// idle sweep). The post-store re-check closes the small window where <see cref="Close"/> ran after the
+        /// guard but observed <see cref="PeerInfo.UdpConnection"/> still null.
+        /// </para>
         /// </remarks>
         internal void AttachUdp(ITransportConnection udp)
         {
+            if (Volatile.Read(ref _closed) != 0) { udp.Close(); return; }
+
             CurrentPeerInfo.UdpConnection = udp;
+
+            if (Volatile.Read(ref _closed) != 0)
+            {
+                udp.Close(); // Close() raced in after our guard but before the store saw it; don't leak the channel.
+                return;
+            }
+
             _ = HandleUdpAsync(udp);
         }
 
