@@ -35,6 +35,8 @@ Requires **.NET Standard 2.1** (consumable from .NET Core 3.0+/.NET 5–8, Unity
 dotnet add reference path/to/SetNet/SetNet.csproj
 ```
 
+> **Unity:** works on desktop/mobile standalone (Unity 2021+, netstandard2.1). Two things to know: message handlers run on **background threads**, so marshal to the main thread before touching the Unity API (e.g. queue and drain in `Update()`); and on **IL2CPP/AOT** builds, MessagePack needs pre-generated formatters (or swap in an AOT-friendly serializer — see [Serialization](#serialization)). **WebGL is not supported** (no threads/sockets).
+
 ## Quick start
 
 **1. Define messages** (MessagePack DTOs):
@@ -101,6 +103,26 @@ public class ChatHandler : IServerMessageHandler
 ```
 
 A full runnable chat (separate server + client processes) is in [`examples/`](examples).
+
+## Serialization
+
+MessagePack is the default and is **byte-identical out of the box** — existing code needs no change. The format is pluggable behind `ISerializer`, so you can swap in JSON, Protobuf, MemoryPack, or anything custom:
+
+```csharp
+public sealed class JsonSerializer : ISerializer
+{
+    public byte[] Serialize<T>(T value) => System.Text.Json.JsonSerializer.SerializeToUtf8Bytes(value);
+    public T Deserialize<T>(byte[] data) => System.Text.Json.JsonSerializer.Deserialize<T>(data)!;
+}
+
+// process-wide, once at startup (before connecting):
+SetNetSerializer.Default = new JsonSerializer();
+
+// or per-connection:
+var config = new Configuration { /* ... */ Serializer = new JsonSerializer() };
+```
+
+In handlers, decode via the facade so the code stays format-agnostic: `SetNetSerializer.Deserialize<T>(data)`. Both ends of a connection must use the same serializer.
 
 ## Transport selection
 
@@ -175,7 +197,7 @@ In-process benchmark (`dotnet run -c Release --project SetNet.Tests -- bench`, S
 
 ```bash
 dotnet build                                              # build (library targets netstandard2.1)
-dotnet test SetNet.UnitTests/SetNet.UnitTests.csproj      # 72 unit + integration tests
+dotnet test SetNet.UnitTests/SetNet.UnitTests.csproj      # 78 unit + integration tests
 dotnet run --project SetNet.Tests -- <frag|tcp|udp|loss|both|idle|deadlock>   # in-process transport scenarios
 dotnet run --project SetNet.Tests -- bench                # throughput / connection benchmark
 
