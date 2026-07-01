@@ -1,0 +1,35 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+    <PropertyGroup>
+        <TargetFramework>netstandard2.1</TargetFramework>
+        <ImplicitUsings>false</ImplicitUsings>
+        <Nullable>enable</Nullable>
+        <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    </PropertyGroup>
+
+    <PropertyGroup>
+        <PackageId>SetNet.StateSync</PackageId>
+        <Version>1.1.0</Version>
+        <AssemblyVersion>1.1.0.0</AssemblyVersion>
+        <FileVersion>1.1.0.0</FileVersion>
+        <Authors>Artem Lemeshev</Authors>
+        <Description>Server-authoritative entity replication for SetNet: fixed-rate, delta-compressed world snapshots over the unreliable channel with reliable spawns/despawns, client-side interpolation, interest management, and an input channel for client prediction. Engine-agnostic core (headless dedicated server + any .NET client); the Unity binding (SetNet.StateSync.Unity) adds NetworkObject/NetworkTransform/NetworkAnimator/NetworkRigidbody. Composition, no base class. Depends only on SetNet.</Description>
+        <PackageTags>networking;replication;state-sync;snapshot;interpolation;games;unity;setnet</PackageTags>
+        <PackageLicenseExpression>MIT</PackageLicenseExpression>
+        <RepositoryUrl>https://github.com/Povstalez/SetNet.git</RepositoryUrl>
+        <RepositoryType>git</RepositoryType>
+        <PackageProjectUrl>https://github.com/Povstalez/SetNet</PackageProjectUrl>
+        <PackageReadmeFile>README.md</PackageReadmeFile>
+        <PackageIcon>icon.png</PackageIcon>
+    </PropertyGroup>
+
+    <ItemGroup>
+      <None Include="README.md" Pack="true" PackagePath="\" />
+      <None Include="../assets/icon.png" Pack="true" PackagePath="\" Visible="false" />
+    </ItemGroup>
+
+    <ItemGroup>
+      <ProjectReference Include="../SetNet/SetNet.csproj" />
+    </ItemGroup>
+
+</Project>

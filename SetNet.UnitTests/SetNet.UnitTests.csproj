@@ -26,6 +26,7 @@
         <ProjectReference Include="..\SetNet.Unity\SetNet.Unity.csproj" />
         <ProjectReference Include="..\SetNet.InMemory\SetNet.InMemory.csproj" />
         <ProjectReference Include="..\SetNet.Matchmaking\SetNet.Matchmaking.csproj" />
+        <ProjectReference Include="..\SetNet.StateSync\SetNet.StateSync.csproj" />
     </ItemGroup>
 
 </Project>

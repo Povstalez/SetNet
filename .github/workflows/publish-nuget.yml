@@ -48,6 +48,8 @@ jobs:
             -c Release -p:Version=${{ steps.version.outputs.value }} -o ./artifacts
           dotnet pack SetNet.Matchmaking/SetNet.Matchmaking.csproj \
             -c Release -p:Version=${{ steps.version.outputs.value }} -o ./artifacts
+          dotnet pack SetNet.StateSync/SetNet.StateSync.csproj \
+            -c Release -p:Version=${{ steps.version.outputs.value }} -o ./artifacts
 
       - name: Push to NuGet
         # SetNet first so the companions' dependency on it resolves; --skip-duplicate
@@ -84,5 +86,8 @@ jobs:
             --api-key "${{ secrets.NUGET_API_KEY }}" \
             --source https://api.nuget.org/v3/index.json --skip-duplicate
           dotnet nuget push "./artifacts/SetNet.Matchmaking.${{ steps.version.outputs.value }}.nupkg" \
+            --api-key "${{ secrets.NUGET_API_KEY }}" \
+            --source https://api.nuget.org/v3/index.json --skip-duplicate
+          dotnet nuget push "./artifacts/SetNet.StateSync.${{ steps.version.outputs.value }}.nupkg" \
             --api-key "${{ secrets.NUGET_API_KEY }}" \
             --source https://api.nuget.org/v3/index.json --skip-duplicate

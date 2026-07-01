@@ -34,6 +34,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SetNet.InMemory", "SetNet.I
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SetNet.Matchmaking", "SetNet.Matchmaking\SetNet.Matchmaking.csproj", "{A00C202D-A58E-4CAF-A8A9-DB4DBA51B52B}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SetNet.StateSync", "SetNet.StateSync\SetNet.StateSync.csproj", "{279E1B13-4DDF-44EA-9EA4-84BD581F03C3}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -236,6 +238,18 @@ Global
 		{A00C202D-A58E-4CAF-A8A9-DB4DBA51B52B}.Release|x64.Build.0 = Release|Any CPU
 		{A00C202D-A58E-4CAF-A8A9-DB4DBA51B52B}.Release|x86.ActiveCfg = Release|Any CPU
 		{A00C202D-A58E-4CAF-A8A9-DB4DBA51B52B}.Release|x86.Build.0 = Release|Any CPU
+		{279E1B13-4DDF-44EA-9EA4-84BD581F03C3}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{279E1B13-4DDF-44EA-9EA4-84BD581F03C3}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{279E1B13-4DDF-44EA-9EA4-84BD581F03C3}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{279E1B13-4DDF-44EA-9EA4-84BD581F03C3}.Debug|x64.Build.0 = Debug|Any CPU
+		{279E1B13-4DDF-44EA-9EA4-84BD581F03C3}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{279E1B13-4DDF-44EA-9EA4-84BD581F03C3}.Debug|x86.Build.0 = Debug|Any CPU
+		{279E1B13-4DDF-44EA-9EA4-84BD581F03C3}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{279E1B13-4DDF-44EA-9EA4-84BD581F03C3}.Release|Any CPU.Build.0 = Release|Any CPU
+		{279E1B13-4DDF-44EA-9EA4-84BD581F03C3}.Release|x64.ActiveCfg = Release|Any CPU
+		{279E1B13-4DDF-44EA-9EA4-84BD581F03C3}.Release|x64.Build.0 = Release|Any CPU
+		{279E1B13-4DDF-44EA-9EA4-84BD581F03C3}.Release|x86.ActiveCfg = Release|Any CPU
+		{279E1B13-4DDF-44EA-9EA4-84BD581F03C3}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

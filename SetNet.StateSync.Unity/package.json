@@ -1,0 +1,10 @@
+{
+  "name": "com.setnet.statesync.unity",
+  "version": "1.1.0",
+  "displayName": "SetNet StateSync for Unity",
+  "description": "Unity components for SetNet state replication: NetworkObject, NetworkTransform, NetworkAnimator, NetworkRigidbody, NetworkBehaviour, and a NetworkManager that spawns/despawns networked prefabs and drives interpolation. Requires the SetNet, SetNet.StateSync and SetNet.Unity assemblies (add via NuGetForUnity or as DLLs).",
+  "unity": "2021.3",
+  "keywords": [ "networking", "replication", "multiplayer", "state-sync", "setnet" ],
+  "author": { "name": "Artem Lemeshev", "url": "https://github.com/Povstalez/SetNet" },
+  "license": "MIT"
+}

@@ -17,6 +17,7 @@
 [![NuGet — SetNet.Logging.Serilog](https://img.shields.io/nuget/v/SetNet.Logging.Serilog?logo=nuget&label=SetNet.Logging.Serilog)](https://www.nuget.org/packages/SetNet.Logging.Serilog)
 [![NuGet — SetNet.InMemory](https://img.shields.io/nuget/v/SetNet.InMemory?logo=nuget&label=SetNet.InMemory)](https://www.nuget.org/packages/SetNet.InMemory)
 [![NuGet — SetNet.Matchmaking](https://img.shields.io/nuget/v/SetNet.Matchmaking?logo=nuget&label=SetNet.Matchmaking)](https://www.nuget.org/packages/SetNet.Matchmaking)
+[![NuGet — SetNet.StateSync](https://img.shields.io/nuget/v/SetNet.StateSync?logo=nuget&label=SetNet.StateSync)](https://www.nuget.org/packages/SetNet.StateSync)
 [![Downloads](https://img.shields.io/nuget/dt/SetNet?logo=nuget&label=downloads)](https://www.nuget.org/packages/SetNet)
 ![.NET Standard 2.1](https://img.shields.io/badge/.NET%20Standard-2.1-512BD4)
 ![Transports](https://img.shields.io/badge/transport-TCP%20%7C%20UDP%20%7C%20Both-success)
@@ -45,6 +46,7 @@ await SendAsync(MsgType.Position, position, DeliveryMethod.Unreliable);
 - 🔐 **Optional Auth + sessions** — add [`SetNet.Auth`](https://www.nuget.org/packages/SetNet.Auth): an enforced gate drops a peer's traffic until it authenticates (you validate the token via `IAuthenticator`), plus session store, multi-session policy, and automatic reconnect-resume. Composition, over TLS.
 - 🏠 **Optional Rooms/Lobbies** — add [`SetNet.Rooms`](https://www.nuget.org/packages/SetNet.Rooms): create/join rooms by code, broadcast within a room, player-joined/left events, auto-leave on disconnect. Dedicated-server (no relay needed), pluggable room store.
 - 🎯 **Optional Matchmaking** — add [`SetNet.Matchmaking`](https://www.nuget.org/packages/SetNet.Matchmaking): queue players into FIFO or skill-based matches with a widening acceptance window, then drop each match into a room to join. Built on top of Rooms.
+- 🎞️ **Optional state replication** — add [`SetNet.StateSync`](https://www.nuget.org/packages/SetNet.StateSync): server-authoritative entity replication with delta-compressed snapshots, client interpolation, interest management, and an input channel — engine-agnostic core plus a Unity layer (NetworkObject/NetworkTransform/NetworkAnimator/NetworkRigidbody).
 - 🧪 **Optional in-memory transport** — add [`SetNet.InMemory`](https://www.nuget.org/packages/SetNet.InMemory): run a client and server in one process with no sockets (`config.UseInMemory()`) for fast, deterministic integration tests and co-hosting.
 - 🌐 **Optional WebSocket transport** — add [`SetNet.WebSockets`](https://www.nuget.org/packages/SetNet.WebSockets): run everything over `ws://` (HTTP-friendly, proxy/firewall-traversable) with one `config.UseWebSockets()` call; handlers/RPC/rooms/auth unchanged.
 - 🚏 **Optional per-peer rate limiting** — add [`SetNet.RateLimit`](https://www.nuget.org/packages/SetNet.RateLimit): a token-bucket inbound gate (`server.UseRateLimit(...)`) that drops a flooding peer's excess frames; composes with the Auth gate.
@@ -234,7 +236,7 @@ In-process benchmark (`dotnet run -c Release --project SetNet.Tests -- bench`, S
 
 ```bash
 dotnet build                                              # build (library targets netstandard2.1)
-dotnet test SetNet.UnitTests/SetNet.UnitTests.csproj      # 99 unit + integration tests
+dotnet test SetNet.UnitTests/SetNet.UnitTests.csproj      # 103 unit + integration tests
 dotnet run --project SetNet.Tests -- <frag|tcp|udp|loss|both|idle|deadlock>   # in-process transport scenarios
 dotnet run --project SetNet.Tests -- bench                # throughput / connection benchmark
 
@@ -252,6 +254,8 @@ SetNet.Rpc/         optional request/response RPC (await client.CallAsync<TReq,T
 SetNet.Auth/        optional auth + sessions (enforced gate, reconnect-resume) — companion package
 SetNet.Rooms/       optional rooms/lobbies (join-by-code, broadcast, events) — companion package
 SetNet.Matchmaking/ optional matchmaking (FIFO/skill queues) on top of Rooms — companion package
+SetNet.StateSync/   optional entity replication (snapshots, interpolation, interest) — companion package
+SetNet.StateSync.Unity/  Unity components for StateSync (UPM source: NetworkObject/Transform/Animator/Rigidbody)
 SetNet.WebSockets/  optional WebSocket transport (config.UseWebSockets()) — companion package
 SetNet.InMemory/    optional in-process loopback transport (config.UseInMemory()) — companion package
 SetNet.RateLimit/   optional per-peer token-bucket inbound gate — companion package

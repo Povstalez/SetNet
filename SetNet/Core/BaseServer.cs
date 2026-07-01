@@ -45,6 +45,22 @@ namespace SetNet.Core
         /// </summary>
         public event Action<BasePeer>? PeerDisconnected;
 
+        /// <summary>
+        /// Fires when a peer has been accepted, registered, and its receive loop started — exactly once per peer, before
+        /// any application data flows. Companion packages subscribe to react immediately (e.g. state replication begins
+        /// observing the peer). Subscriber exceptions are isolated. Pairs with <see cref="PeerDisconnected"/>.
+        /// </summary>
+        public event Action<BasePeer>? PeerConnected;
+
+        /// <summary>Fires <see cref="PeerConnected"/> for a freshly started peer, isolating subscriber exceptions.</summary>
+        private void RaisePeerConnected(BasePeer peer)
+        {
+            var handler = PeerConnected;
+            if (handler == null) return;
+            try { handler(peer); }
+            catch (Exception ex) { _config.Logger.Log($"PeerConnected handler threw: {ex.Message}", Logging.LogLevel.Error); }
+        }
+
         /// <summary>The primary (TCP or UDP) listener accepting incoming connections; null until started.</summary>
         private ITransportListener? _listener;
 
@@ -177,6 +193,7 @@ namespace SetNet.Core
 
                 _config.Metrics.IncrementConnectionsAccepted();
                 _config.Logger.Log($"Client connected: {peerInfo.Id}", global::SetNet.Logging.LogLevel.Info);
+                RaisePeerConnected(peer);
             }
         }
 
@@ -305,6 +322,7 @@ namespace SetNet.Core
 
                 _config.Metrics.IncrementConnectionsAccepted();
                 _config.Logger.Log($"Client connected: {peerInfo.Id}", global::SetNet.Logging.LogLevel.Info);
+                RaisePeerConnected(peer);
             }
         }
 

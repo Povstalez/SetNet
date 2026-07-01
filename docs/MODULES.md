@@ -18,6 +18,8 @@ so the core stays lean and users pull only what they need.
 | **SetNet.Logging.Serilog** | `SerilogLogger : ILogger` routing diagnostics into Serilog | `config.Logger = new SerilogLogger(...)` |
 | **SetNet.InMemory** | in-process loopback transport via `config.UseInMemory()` (no sockets) | uses the custom-transport hook; great for tests |
 | **SetNet.Matchmaking** | FIFO/skill queues with a widening window → creates a room to join | on top of Rooms; `server.UseMatchmaking(store, opts)` |
+| **SetNet.StateSync** | server-authoritative entity replication: delta snapshots, interpolation, interest, input | engine-agnostic core; uses the `PeerConnected` hook |
+| **SetNet.StateSync.Unity** | Unity components: NetworkObject/Transform/Animator/Rigidbody/Behaviour + NetworkManager | UPM source package (references UnityEngine), not NuGet |
 
 ### Core extension points already in place (for composition packages)
 - `SetNetSerializer.Use/Serialize/Deserialize` — pluggable serialization.
@@ -25,7 +27,7 @@ so the core stays lean and users pull only what they need.
 - `BaseClient/BasePeer.SendAsync<T>` and `SendRawAsync` — **public**.
 - `BaseSocket.OnRawFrame` (intercept/consume) + `SendRawAsync` — relay/proxy primitive.
 - `BaseServer.InboundAuthorizer` + `BaseSocket.AllowInbound` — per-frame inbound gate.
-- `BaseClient.Connected` event (after connect+reconnect), `BaseServer.PeerDisconnected` event (once per peer).
+- `BaseClient.Connected` event (after connect+reconnect), `BaseServer.PeerDisconnected` + `BaseServer.PeerConnected` events (once per peer).
 - Public `BasePeer.CurrentPeerInfo` + `PeerInfo.Server`.
 - **Custom transport registration** — `TransportType.Custom` + `Configuration.CustomTransport : ITransportProvider`,
   resolved in `TransportFactory`. Lets an external package supply `ITransportConnector`/`ITransportListener` without

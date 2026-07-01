@@ -5,6 +5,7 @@ using SetNet.Messaging;
 using SetNet.MessagePack;
 using SetNet.Rooms;
 using SetNet.Rpc;
+using SetNet.StateSync;
 
 namespace SetNet.UnitTests;
 
@@ -23,5 +24,6 @@ internal static class TestModuleInit
         AuthRuntime.Enable();
         RoomsRuntime.Enable();
         MatchmakingRuntime.Enable();
+        StateSyncRuntime.Enable();
     }
 }
