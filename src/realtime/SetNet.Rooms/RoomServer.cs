@@ -9,10 +9,27 @@ using SetNet.Data.Attributes;
 
 namespace SetNet.Rooms
 {
+    /// <summary>
+    /// Public server-side room lifecycle events, retrieved via <see cref="RoomServer.RoomHooks"/>. Companion packages
+    /// (e.g. host migration) subscribe to react when a peer joins or leaves a specific room on this node.
+    /// </summary>
+    public sealed class RoomServerHooks
+    {
+        /// <summary>Raised when a peer joins a room (args: room code, peer).</summary>
+        public event Action<string, BasePeer>? PeerJoinedRoom;
+
+        /// <summary>Raised when a peer leaves a room (args: room code, the peer that left, the members that remain).</summary>
+        public event Action<string, BasePeer, IReadOnlyList<BasePeer>>? PeerLeftRoom;
+
+        internal void RaiseJoined(string code, BasePeer peer) { try { PeerJoinedRoom?.Invoke(code, peer); } catch { /* isolate */ } }
+        internal void RaiseLeft(string code, BasePeer peer, IReadOnlyList<BasePeer> remaining) { try { PeerLeftRoom?.Invoke(code, peer, remaining); } catch { /* isolate */ } }
+    }
+
     /// <summary>Per-server rooms state: the room store and a peer→room index (a peer is in at most one room in v1).</summary>
     internal sealed class RoomServerState
     {
         public IRoomStore Store = null!;
+        public RoomServerHooks? Hooks;
         public readonly ConcurrentDictionary<Guid, Room> MemberRoom = new ConcurrentDictionary<Guid, Room>();
 
         public static string PlayerId(BasePeer peer) => peer.CurrentPeerInfo.Id.ToString("N");
@@ -21,6 +38,7 @@ namespace SetNet.Rooms
         {
             room.Members[peer.CurrentPeerInfo.Id] = peer;
             MemberRoom[peer.CurrentPeerInfo.Id] = room;
+            Hooks?.RaiseJoined(room.Code, peer);
         }
 
         /// <summary>Removes the peer from its room (if any), notifies the remaining members, and drops the room if empty.</summary>
@@ -28,7 +46,9 @@ namespace SetNet.Rooms
         {
             if (!MemberRoom.TryRemove(peer.CurrentPeerInfo.Id, out var room)) return;
             room.Members.TryRemove(peer.CurrentPeerInfo.Id, out _);
+            var remaining = new List<BasePeer>(room.Members.Values);
             await NotifyOthersAsync(room, peer, new RoomEvent(room.Code, RoomEventType.PlayerLeft, PlayerId(peer), Array.Empty<byte>())).ConfigureAwait(false);
+            Hooks?.RaiseLeft(room.Code, peer, remaining);
             if (room.Count == 0) await Store.RemoveAsync(room).ConfigureAwait(false);
         }
 
@@ -61,14 +81,23 @@ namespace SetNet.Rooms
     {
         private static readonly ConcurrentDictionary<BaseServer, RoomServerState> _servers
             = new ConcurrentDictionary<BaseServer, RoomServerState>();
+        private static readonly ConcurrentDictionary<BaseServer, RoomServerHooks> _hooks
+            = new ConcurrentDictionary<BaseServer, RoomServerHooks>();
 
         /// <summary>Enables rooms on a server. Supply a custom <see cref="IRoomStore"/> or use the default in-memory one.</summary>
         public static void UseRooms(this BaseServer server, IRoomStore? store = null)
         {
             if (server == null) throw new ArgumentNullException(nameof(server));
-            var state = new RoomServerState { Store = store ?? new MemoryRoomStore() };
+            var state = new RoomServerState { Store = store ?? new MemoryRoomStore(), Hooks = RoomHooks(server) };
             _servers[server] = state;
             server.PeerDisconnected += peer => _ = SafeLeave(state, peer);
+        }
+
+        /// <summary>Gets the server-side room lifecycle events for this server (peer joined/left a room). Used by companion packages such as host migration.</summary>
+        public static RoomServerHooks RoomHooks(this BaseServer server)
+        {
+            if (server == null) throw new ArgumentNullException(nameof(server));
+            return _hooks.GetOrAdd(server, _ => new RoomServerHooks());
         }
 
         private static async Task SafeLeave(RoomServerState state, BasePeer peer)

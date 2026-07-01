@@ -1,7 +1,11 @@
 using System.Runtime.CompilerServices;
 using SetNet.Auth;
+using SetNet.Chat;
 using SetNet.Fragmentation;
+using SetNet.Lockstep;
 using SetNet.Matchmaking;
+using SetNet.Party;
+using SetNet.Rooms.HostMigration;
 using SetNet.Messaging;
 using SetNet.MessagePack;
 using SetNet.Rooms;
@@ -29,5 +33,9 @@ internal static class TestModuleInit
         StateSyncRuntime.Enable();
         FragmentationRuntime.Enable();
         StateSyncRpcRuntime.Enable();
+        ChatRuntime.Enable();
+        PartyRuntime.Enable();
+        LockstepRuntime.Enable();
+        HostMigrationRuntime.Enable();
     }
 }
