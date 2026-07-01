@@ -23,6 +23,13 @@ namespace SetNet.Config
         /// <summary>Server-assigned unique identifier for this peer, generated when the record is created.</summary>
         public Guid Id;
 
+        /// <summary>
+        /// The remote endpoint (IP + port) this peer connected from, when the transport exposes it (TCP and UDP do; an
+        /// in-memory transport may not). Exposed for companion packages that key on address — ban lists, DDoS guards,
+        /// diagnostics dashboards, gateways. May be <c>null</c>.
+        /// </summary>
+        public System.Net.IPEndPoint? RemoteEndPoint;
+
         /// <summary>The configuration shared with the owning server, used for buffering, transport, and timing settings.</summary>
         public Configuration Config;
 
@@ -49,12 +56,14 @@ namespace SetNet.Config
         /// <param name="config">The shared configuration governing this peer's behaviour.</param>
         /// <param name="server">The server that owns this peer, used to remove it on disconnect.</param>
         /// <param name="commandExecutor">The executor that dispatches the peer's inbound messages to handlers.</param>
-        public PeerInfo(ITransportConnection connection, Configuration config, BaseServer server, ServerCommandExecutor commandExecutor)
+        /// <param name="remoteEndPoint">The client's remote endpoint, if the transport exposes it; otherwise <c>null</c>.</param>
+        public PeerInfo(ITransportConnection connection, Configuration config, BaseServer server, ServerCommandExecutor commandExecutor, System.Net.IPEndPoint? remoteEndPoint = null)
         {
             Connection = connection;
             Config = config;
             _server = server;
             CommandExecutor = commandExecutor;
+            RemoteEndPoint = remoteEndPoint;
             Id = Guid.NewGuid();
         }
 

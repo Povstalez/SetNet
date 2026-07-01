@@ -29,6 +29,7 @@
         <ProjectReference Include="..\..\src\realtime\SetNet.StateSync\SetNet.StateSync.csproj" />
         <ProjectReference Include="..\..\src\serializers\SetNet.Json\SetNet.Json.csproj" />
         <ProjectReference Include="..\..\src\serializers\SetNet.Compression\SetNet.Compression.csproj" />
+        <ProjectReference Include="..\..\src\security\SetNet.BanList\SetNet.BanList.csproj" />
     </ItemGroup>
 
 </Project>

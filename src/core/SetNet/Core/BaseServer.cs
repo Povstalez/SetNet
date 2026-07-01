@@ -156,7 +156,7 @@ namespace SetNet.Core
                     continue;
                 }
 
-                var peerInfo = new PeerInfo(accepted.Connection, _config, this, _commandExecutor);
+                var peerInfo = new PeerInfo(accepted.Connection, _config, this, _commandExecutor, accepted.RemoteEndPoint);
 
                 BasePeer peer;
                 try
@@ -267,7 +267,7 @@ namespace SetNet.Core
                     continue;
                 }
 
-                var peerInfo = new PeerInfo(accepted.Connection, _config, this, _commandExecutor);
+                var peerInfo = new PeerInfo(accepted.Connection, _config, this, _commandExecutor, accepted.RemoteEndPoint);
 
                 // Send the bind token as the FIRST TCP frame (before OnNewClient, which may send app
                 // data) so the client never has to discard application frames while awaiting the token.

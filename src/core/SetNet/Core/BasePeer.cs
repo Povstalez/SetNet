@@ -19,6 +19,9 @@ namespace SetNet.Core
         /// <summary>Connection handle and metadata (id, config, owning server, handler registry) for this client. Public so composition packages (e.g. auth) can reach the peer's server and identity without subclassing.</summary>
         public readonly PeerInfo CurrentPeerInfo;
 
+        /// <summary>The remote endpoint (IP + port) this peer connected from, or <c>null</c> if the transport doesn't expose it.</summary>
+        public System.Net.IPEndPoint? RemoteEndPoint => CurrentPeerInfo.RemoteEndPoint;
+
         /// <summary>True while a server-initiated <see cref="Close"/> is in progress, so the receive loop treats the teardown as intentional and skips the unexpected-disconnect path.</summary>
         private volatile bool _isIntentionalClose;
 
