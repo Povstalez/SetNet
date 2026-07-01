@@ -10,6 +10,7 @@
 [![NuGet — SetNet.MessagePack](https://img.shields.io/nuget/v/SetNet.MessagePack?logo=nuget&label=SetNet.MessagePack)](https://www.nuget.org/packages/SetNet.MessagePack)
 [![NuGet — SetNet.Rpc](https://img.shields.io/nuget/v/SetNet.Rpc?logo=nuget&label=SetNet.Rpc)](https://www.nuget.org/packages/SetNet.Rpc)
 [![NuGet — SetNet.Auth](https://img.shields.io/nuget/v/SetNet.Auth?logo=nuget&label=SetNet.Auth)](https://www.nuget.org/packages/SetNet.Auth)
+[![NuGet — SetNet.Rooms](https://img.shields.io/nuget/v/SetNet.Rooms?logo=nuget&label=SetNet.Rooms)](https://www.nuget.org/packages/SetNet.Rooms)
 [![Downloads](https://img.shields.io/nuget/dt/SetNet?logo=nuget&label=downloads)](https://www.nuget.org/packages/SetNet)
 ![.NET Standard 2.1](https://img.shields.io/badge/.NET%20Standard-2.1-512BD4)
 ![Transports](https://img.shields.io/badge/transport-TCP%20%7C%20UDP%20%7C%20Both-success)
@@ -36,6 +37,7 @@ await SendAsync(MsgType.Position, position, DeliveryMethod.Unreliable);
 - 📦 **Pluggable serialization** — the core bundles no serializer. Pick a format via `ISerializer`: drop in the `SetNet.MessagePack` package (hardened MessagePack), or supply your own JSON/Protobuf/custom adapter, and register it once with `SetNetSerializer.Use(...)`.
 - 📞 **Optional RPC** — add the [`SetNet.Rpc`](https://www.nuget.org/packages/SetNet.Rpc) package for request/response: `await client.CallAsync<TReq, TResp>(...)` + `[RpcMethod]` handlers. Added by composition (no base class), coexists with one-way messages.
 - 🔐 **Optional Auth + sessions** — add [`SetNet.Auth`](https://www.nuget.org/packages/SetNet.Auth): an enforced gate drops a peer's traffic until it authenticates (you validate the token via `IAuthenticator`), plus session store, multi-session policy, and automatic reconnect-resume. Composition, over TLS.
+- 🏠 **Optional Rooms/Lobbies** — add [`SetNet.Rooms`](https://www.nuget.org/packages/SetNet.Rooms): create/join rooms by code, broadcast within a room, player-joined/left events, auto-leave on disconnect. Dedicated-server (no relay needed), pluggable room store.
 
 ## Install
 
@@ -213,6 +215,7 @@ In-process benchmark (`dotnet run -c Release --project SetNet.Tests -- bench`, S
 
 - 📖 **[User guide (docs/GUIDE.en.md)](docs/GUIDE.en.md)** — full usage manual: handlers, transports, reliable channels, reconnect, batching, hardening, the complete `Configuration` reference, and a production checklist. *(Українською: [docs/GUIDE.ua.md](docs/GUIDE.ua.md))*
 - ⚙️ **[Performance (docs/PERFORMANCE.en.md)](docs/PERFORMANCE.en.md)** — performance model, scaling limits, structural roadmap. *(Українською: [docs/PERFORMANCE.ua.md](docs/PERFORMANCE.ua.md))*
+- 🧩 **[docs/MODULES.md](docs/MODULES.md)** — companion packages (shipped & planned: RateLimit, Serilog, Unity, WebSockets) and the core extension points.
 - 🏗️ **[CLAUDE.md](CLAUDE.md)** / **[AGENTS.md](AGENTS.md)** — architecture overview for contributors and coding agents.
 
 ## Build & test
@@ -235,6 +238,7 @@ SetNet/             core library (transport abstraction, reliability, hardening)
 SetNet.MessagePack/ MessagePack ISerializer adapter (companion package)
 SetNet.Rpc/         optional request/response RPC (await client.CallAsync<TReq,TResp>) — companion package
 SetNet.Auth/        optional auth + sessions (enforced gate, reconnect-resume) — companion package
+SetNet.Rooms/       optional rooms/lobbies (join-by-code, broadcast, events) — companion package
 SetNet.Tests/       in-process scenario harness + benchmark
 SetNet.UnitTests/   xUnit unit + integration tests
 examples/           runnable chat (Chat.Shared / Chat.Server / Chat.Client)

@@ -37,6 +37,14 @@ namespace SetNet.Core
         /// </summary>
         public Func<BasePeer, ushort, bool>? InboundAuthorizer { get; set; }
 
+        /// <summary>
+        /// Fires when a peer is removed from the server (disconnect, kick, or graceful close), exactly once per
+        /// peer. Companion packages (rooms, presence, auth eviction) subscribe to react immediately — e.g. drop the
+        /// peer from its room and notify others. Subscriber exceptions are isolated. Pairs with
+        /// <see cref="BaseClient.Connected"/>.
+        /// </summary>
+        public event Action<BasePeer>? PeerDisconnected;
+
         /// <summary>The primary (TCP or UDP) listener accepting incoming connections; null until started.</summary>
         private ITransportListener? _listener;
 
@@ -428,9 +436,21 @@ namespace SetNet.Core
         /// <remarks>Thread-safe via locking on the peer dictionary.</remarks>
         public void RemoveClient(PeerInfo peerInfo)
         {
+            BasePeer? removed;
             lock (_clients)
             {
+                _clients.TryGetValue(peerInfo.Id, out removed);
                 _clients.Remove(peerInfo.Id);
+            }
+            // Fire outside the lock, and only if this call actually removed a live peer (idempotent — no double fire).
+            if (removed != null)
+            {
+                var handler = PeerDisconnected;
+                if (handler != null)
+                {
+                    try { handler(removed); }
+                    catch (Exception ex) { _config.Logger.Log($"PeerDisconnected handler threw: {ex.Message}", Logging.LogLevel.Error); }
+                }
             }
         }
 

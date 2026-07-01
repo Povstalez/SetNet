@@ -20,6 +20,7 @@
         <ProjectReference Include="..\SetNet.MessagePack\SetNet.MessagePack.csproj" />
         <ProjectReference Include="..\SetNet.Rpc\SetNet.Rpc.csproj" />
         <ProjectReference Include="..\SetNet.Auth\SetNet.Auth.csproj" />
+        <ProjectReference Include="..\SetNet.Rooms\SetNet.Rooms.csproj" />
     </ItemGroup>
 
 </Project>

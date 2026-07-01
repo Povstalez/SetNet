@@ -2,6 +2,7 @@ using System.Runtime.CompilerServices;
 using SetNet.Auth;
 using SetNet.Messaging;
 using SetNet.MessagePack;
+using SetNet.Rooms;
 using SetNet.Rpc;
 
 namespace SetNet.UnitTests;
@@ -19,5 +20,6 @@ internal static class TestModuleInit
         SetNetSerializer.Use(new MessagePackNetSerializer());
         RpcRuntime.Enable();
         AuthRuntime.Enable();
+        RoomsRuntime.Enable();
     }
 }
