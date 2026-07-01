@@ -225,11 +225,10 @@ In-process benchmark (`dotnet run -c Release --project tests/SetNet.Tests -- ben
 
 ~10 KB per endpoint; 2,000 connections established in ~110 ms. The default favors latency (every small message sent immediately); enable `SendBatching` for high message rates. These numbers include serialization cost — the library deserializes each inbound message into the handler's typed `T`. Full model, scaling limits and roadmap: [docs/PERFORMANCE.en.md](docs/PERFORMANCE.en.md).
 
-## Documentation
-
+- 📚 **[Documentation home (docs/README.md)](docs/README.md)** — the docs hub: a "which package do I need?" guide, the serialization/payloads explainer, links to every module's README, and everything below.
 - 📖 **[User guide (docs/GUIDE.en.md)](docs/GUIDE.en.md)** — full usage manual: handlers, transports, reliable channels, reconnect, batching, hardening, the complete `Configuration` reference, and a production checklist. *(Українською: [docs/GUIDE.ua.md](docs/GUIDE.ua.md))*
 - ⚙️ **[Performance (docs/PERFORMANCE.en.md)](docs/PERFORMANCE.en.md)** — performance model, scaling limits, structural roadmap. *(Українською: [docs/PERFORMANCE.ua.md](docs/PERFORMANCE.ua.md))*
-- 🧩 **[docs/MODULES.md](docs/MODULES.md)** — companion packages (shipped & planned: RateLimit, Serilog, Unity, WebSockets) and the core extension points.
+- 🧩 **[docs/MODULES.md](docs/MODULES.md)** — the full companion-package catalog (grouped) + the core extension points.
 - 🏗️ **[CLAUDE.md](CLAUDE.md)** / **[AGENTS.md](AGENTS.md)** — architecture overview for contributors and coding agents.
 
 ## Build & test
