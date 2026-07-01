@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Concurrent;
 using System.Runtime.CompilerServices;
+using System.Threading;
 using System.Threading.Tasks;
 using SetNet.Core;
 using SetNet.Core.Transport;
@@ -32,6 +33,12 @@ namespace SetNet.Auth
     {
         private static readonly ConcurrentDictionary<BaseServer, AuthServerState> _servers
             = new ConcurrentDictionary<BaseServer, AuthServerState>();
+
+        // Process-wide background sweep: proactively evicts idle-past-TTL sessions from every store so dead
+        // sessions (dropped clients that never reconnect) don't accumulate. Runs for the process lifetime.
+        private static readonly Timer _sweepTimer = new Timer(
+            _ => { foreach (var state in _servers.Values) { try { state.Store.Sweep(); } catch { /* ignore */ } } },
+            null, TimeSpan.FromSeconds(30), TimeSpan.FromSeconds(30));
 
         /// <summary>
         /// Enables enforced authentication on a server: until a peer authenticates, all of its application frames

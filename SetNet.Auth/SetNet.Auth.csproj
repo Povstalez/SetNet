@@ -33,4 +33,11 @@
       <ProjectReference Include="../SetNet/SetNet.csproj" />
     </ItemGroup>
 
+    <ItemGroup>
+      <!-- Let the unit-test project exercise the internal session store (rotation, sweep). -->
+      <AssemblyAttribute Include="System.Runtime.CompilerServices.InternalsVisibleToAttribute">
+        <_Parameter1>SetNet.UnitTests</_Parameter1>
+      </AssemblyAttribute>
+    </ItemGroup>
+
 </Project>

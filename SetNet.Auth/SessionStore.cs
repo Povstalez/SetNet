@@ -11,7 +11,9 @@ namespace SetNet.Auth
     {
         public string SessionId { get; }
         public string AccountId { get; }
-        public string ReconnectToken { get; }
+
+        /// <summary>The current reconnect token. Rotated (single-use) on each resume, so a captured token is short-lived.</summary>
+        public string ReconnectToken { get; internal set; }
         public DateTime LastSeenUtc { get; set; }
 
         /// <summary>The connection currently backing this session, for policy kicks; may be stale after a drop (Disconnect is idempotent).</summary>
@@ -42,7 +44,7 @@ namespace SetNet.Auth
         private static string NewToken() => Guid.NewGuid().ToString("N");
 
         /// <summary>Creates and stores a fresh session for a just-authenticated account.</summary>
-        public Session Create(string accountId, PeerInfo peer)
+        public Session Create(string accountId, PeerInfo? peer)
         {
             var session = new Session(NewToken(), accountId, NewToken()) { LivePeer = peer };
             _byToken[session.ReconnectToken] = session;
@@ -50,8 +52,12 @@ namespace SetNet.Auth
             return session;
         }
 
-        /// <summary>Looks up a session by reconnect token, re-binding it to <paramref name="peer"/>. Returns null if unknown or expired (evicting the latter).</summary>
-        public Session? Resume(string reconnectToken, PeerInfo peer)
+        /// <summary>
+        /// Looks up a session by reconnect token, re-binding it to <paramref name="peer"/> and <b>rotating</b> the
+        /// token (the presented one becomes invalid; the returned session carries a fresh one). Returns null if the
+        /// token is unknown or the session has expired (evicting the latter).
+        /// </summary>
+        public Session? Resume(string reconnectToken, PeerInfo? peer)
         {
             if (string.IsNullOrEmpty(reconnectToken) || !_byToken.TryGetValue(reconnectToken, out var session))
                 return null;
@@ -60,9 +66,24 @@ namespace SetNet.Auth
                 Remove(session);
                 return null;
             }
+
+            // Rotate: retire the presented token and issue a new one, so a stolen reconnect token is single-use.
+            _byToken.TryRemove(session.ReconnectToken, out _);
+            session.ReconnectToken = NewToken();
+            _byToken[session.ReconnectToken] = session;
+
             session.LastSeenUtc = DateTime.UtcNow;
             session.LivePeer = peer;
             return session;
+        }
+
+        /// <summary>Removes every session idle longer than the TTL. Called periodically by the background sweep so dead sessions don't accumulate.</summary>
+        public void Sweep()
+        {
+            var now = DateTime.UtcNow;
+            foreach (var pair in _byToken)
+                if (now - pair.Value.LastSeenUtc > _ttl)
+                    Remove(pair.Value);
         }
 
         /// <summary>Refreshes a session's activity timestamp.</summary>
