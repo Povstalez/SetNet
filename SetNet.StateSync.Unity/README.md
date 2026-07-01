@@ -23,8 +23,43 @@ An object's schema is the **ordered concatenation** of its components' fields, b
 
 ## Install
 
-1. Add the SetNet assemblies to your Unity project (via [NuGetForUnity](https://github.com/GlitchEnzo/NuGetForUnity): `SetNet`, `SetNet.MessagePack` — or your serializer —, `SetNet.StateSync`, `SetNet.Unity`; plus any transport package like `SetNet.WebSockets`).
-2. Add this package via UPM (Package Manager → *Add package from git URL*) pointing at `…/SetNet.StateSync.Unity`, or copy its `Runtime/` folder into your project.
+Installation is **two parts**: the SetNet .NET assemblies (the networking itself) and this UPM package (the Unity components). Do them in order.
+
+### 1. Add the SetNet .NET assemblies
+
+The networking libraries are plain **netstandard2.1** DLLs, so bring them in first. Easiest via [NuGetForUnity](https://github.com/GlitchEnzo/NuGetForUnity) — install it, then add:
+
+- `SetNet` and `SetNet.StateSync` — the core + replication
+- `SetNet.Unity` — the main-thread dispatcher this package uses
+- a serializer, e.g. `SetNet.MessagePack` (or your own `ISerializer`)
+- a transport if you need one, e.g. `SetNet.WebSockets` (required for **WebGL**)
+
+(Or drop the equivalent `.dll` files into `Assets/Plugins/`.)
+
+### 2. Add this package via Git URL (UPM)
+
+**Window → Package Manager → + → Add package from git URL**, then paste:
+
+```
+https://github.com/Povstalez/SetNet.git?path=/SetNet.StateSync.Unity#v1.1.0
+```
+
+- `?path=/SetNet.StateSync.Unity` selects this package's subfolder in the repo.
+- `#v1.1.0` pins a released version — change it to another tag, a branch (e.g. `#master`), or a commit SHA.
+
+Or add it directly to `Packages/manifest.json`:
+
+```json
+{
+  "dependencies": {
+    "com.setnet.statesync.unity": "https://github.com/Povstalez/SetNet.git?path=/SetNet.StateSync.Unity#v1.1.0"
+  }
+}
+```
+
+Unity fetches, compiles, and the `SetNet.StateSync.Unity` components appear in **Add Component**. To update later, bump the `#tag` (or remove the lock entry in `Packages/packages-lock.json`).
+
+> The package auto-references precompiled assemblies, so it picks up the SetNet DLLs from step 1 automatically — just make sure step 1 is done first, or you'll get "type or namespace `SetNet` not found" errors.
 
 ## Setup
 
