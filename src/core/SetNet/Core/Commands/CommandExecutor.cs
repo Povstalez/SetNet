@@ -83,7 +83,7 @@ namespace SetNet.Core.Commands
         {
             foreach (var (messageType, handlerType, messageClrType) in HandlerDiscovery.Discover(typeof(IServerMessageHandler<>)))
             {
-                var handler = Activator.CreateInstance(handlerType);
+                var handler = HandlerActivator.Create(handlerType);
                 var invoker = (IServerHandlerInvoker)Activator.CreateInstance(
                     typeof(ServerHandlerInvoker<>).MakeGenericType(messageClrType), handler);
                 _handlers[messageType] = invoker;
@@ -115,7 +115,7 @@ namespace SetNet.Core.Commands
         {
             foreach (var (messageType, handlerType, messageClrType) in HandlerDiscovery.Discover(typeof(IClientMessageHandler<>)))
             {
-                var handler = Activator.CreateInstance(handlerType);
+                var handler = HandlerActivator.Create(handlerType);
                 var invoker = (IClientHandlerInvoker)Activator.CreateInstance(
                     typeof(ClientHandlerInvoker<>).MakeGenericType(messageClrType), handler);
                 _handlers[messageType] = invoker;
