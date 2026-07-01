@@ -1,5 +1,6 @@
 using System.Runtime.CompilerServices;
 using SetNet.Auth;
+using SetNet.Matchmaking;
 using SetNet.Messaging;
 using SetNet.MessagePack;
 using SetNet.Rooms;
@@ -21,5 +22,6 @@ internal static class TestModuleInit
         RpcRuntime.Enable();
         AuthRuntime.Enable();
         RoomsRuntime.Enable();
+        MatchmakingRuntime.Enable();
     }
 }

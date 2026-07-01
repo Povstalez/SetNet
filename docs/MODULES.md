@@ -16,6 +16,8 @@ so the core stays lean and users pull only what they need.
 | **SetNet.RateLimit** | per-peer token-bucket inbound gate (`server.UseRateLimit(...)`) | uses `InboundAuthorizer`, chains with Auth |
 | **SetNet.Unity** | `MainThreadDispatcher` to marshal handler callbacks onto Unity's main thread | WebGL unsupported |
 | **SetNet.Logging.Serilog** | `SerilogLogger : ILogger` routing diagnostics into Serilog | `config.Logger = new SerilogLogger(...)` |
+| **SetNet.InMemory** | in-process loopback transport via `config.UseInMemory()` (no sockets) | uses the custom-transport hook; great for tests |
+| **SetNet.Matchmaking** | FIFO/skill queues with a widening window → creates a room to join | on top of Rooms; `server.UseMatchmaking(store, opts)` |
 
 ### Core extension points already in place (for composition packages)
 - `SetNetSerializer.Use/Serialize/Deserialize` — pluggable serialization.
