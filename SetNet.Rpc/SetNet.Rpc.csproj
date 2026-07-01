@@ -14,7 +14,7 @@
         <AssemblyVersion>1.1.0.0</AssemblyVersion>
         <FileVersion>1.1.0.0</FileVersion>
         <Authors>Artem Lemeshev</Authors>
-        <Description>Request/response RPC for SetNet. Call typed methods with await client.CallAsync&lt;TReq,TResp&gt;(...) and implement [RpcMethod] handlers server-side — added by composition (no RpcClient/RpcPeer base class), so it coexists with regular message handlers. Just reference the package.</Description>
+        <Description>Request/response RPC for SetNet. Call typed methods with await client.CallAsync&lt;TReq,TResp&gt;(...) and implement [RpcMethod] handlers server-side — added by composition (no RpcClient/RpcPeer base class), so it coexists with regular message handlers. Serializer-agnostic (uses your SetNetSerializer, no MessagePack dependency). Just reference the package.</Description>
         <PackageTags>networking;rpc;request-response;setnet;games;realtime</PackageTags>
         <PackageLicenseExpression>MIT</PackageLicenseExpression>
         <RepositoryUrl>https://github.com/Povstalez/SetNet.git</RepositoryUrl>
@@ -30,12 +30,8 @@
     </ItemGroup>
 
     <ItemGroup>
-      <!-- MessagePack is used to (de)serialize the small RPC envelope's attributes; the message BODIES still go
-           through the app's configured SetNetSerializer (MessagePack, JSON, …). -->
-      <PackageReference Include="MessagePack" Version="3.1.7" />
-    </ItemGroup>
-
-    <ItemGroup>
+      <!-- Serializer-agnostic: the envelope is hand-framed as a byte[] (which any ISerializer handles without
+           attributes) and message bodies go through the app's configured SetNetSerializer. No MessagePack dep. -->
       <ProjectReference Include="../SetNet/SetNet.csproj" />
     </ItemGroup>
 

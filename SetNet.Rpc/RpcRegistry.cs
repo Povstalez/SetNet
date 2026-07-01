@@ -12,20 +12,20 @@ namespace SetNet.Rpc
     internal static class RpcRegistry
     {
         private static int _counter;
-        private static readonly ConcurrentDictionary<int, TaskCompletionSource<RpcEnvelope>> _pending
-            = new ConcurrentDictionary<int, TaskCompletionSource<RpcEnvelope>>();
+        private static readonly ConcurrentDictionary<int, TaskCompletionSource<RpcFrame>> _pending
+            = new ConcurrentDictionary<int, TaskCompletionSource<RpcFrame>>();
 
         /// <summary>Allocates the next process-unique correlation id.</summary>
         public static int NextId() => Interlocked.Increment(ref _counter);
 
         /// <summary>Registers the completion source awaiting the response for <paramref name="correlationId"/>.</summary>
-        public static void Register(int correlationId, TaskCompletionSource<RpcEnvelope> tcs) => _pending[correlationId] = tcs;
+        public static void Register(int correlationId, TaskCompletionSource<RpcFrame> tcs) => _pending[correlationId] = tcs;
 
         /// <summary>Removes a pending call (on completion, timeout, or cancellation).</summary>
         public static void Remove(int correlationId) => _pending.TryRemove(correlationId, out _);
 
         /// <summary>Completes the awaiting call for <paramref name="correlationId"/> with its response, if still pending.</summary>
-        public static void Complete(int correlationId, RpcEnvelope response)
+        public static void Complete(int correlationId, RpcFrame response)
         {
             if (_pending.TryGetValue(correlationId, out var tcs))
                 tcs.TrySetResult(response);

@@ -108,4 +108,24 @@ public class RpcTests
         }
         finally { client.Disconnect(); await server.StopAsync(); }
     }
+
+    [Fact]
+    public async Task Call_RoundTrips_With_NonMessagePack_Serializer()
+    {
+        // Proves RPC is serializer-agnostic: swap the whole app to JSON and the same call still round-trips
+        // (the hand-framed envelope rides over any ISerializer as a byte[]; the body is JSON).
+        var original = SetNet.Messaging.SetNetSerializer.Current;
+        SetNet.Messaging.SetNetSerializer.Use(new JsonNetSerializer());
+        try
+        {
+            var (server, client) = await ConnectAsync(5875);
+            try
+            {
+                var reply = await client.CallAsync<RpcMsg, RpcMsg>(1, new RpcMsg { Text = "json" });
+                Assert.Equal("JSON", reply.Text);
+            }
+            finally { client.Disconnect(); await server.StopAsync(); }
+        }
+        finally { SetNet.Messaging.SetNetSerializer.Use(original); }
+    }
 }

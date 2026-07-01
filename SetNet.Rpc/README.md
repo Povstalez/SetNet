@@ -64,8 +64,8 @@ var reply = await client.CallAsync<LoginRequest, LoginResponse>(
 
 ## Notes
 
+- **Serializer-agnostic, no MessagePack dependency** — `SetNet.Rpc` depends only on `SetNet`. The envelope is hand-framed as a `byte[]`, so RPC rides over whatever serializer you registered; the request/response **bodies** go through your `SetNetSerializer` (MessagePack, JSON, …).
 - Uses reserved wire type ids `65531`/`65532` for its envelopes — don't use those for your own messages.
-- The RPC **body** is serialized with your app's `SetNetSerializer` (MessagePack, JSON, …); only the thin envelope is fixed.
 - Both ends of a call must use the same serializer.
 
 ## Documentation & source

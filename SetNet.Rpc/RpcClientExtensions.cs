@@ -40,20 +40,14 @@ namespace SetNet.Rpc
             if (client == null) throw new ArgumentNullException(nameof(client));
 
             var correlationId = RpcRegistry.NextId();
-            var tcs = new TaskCompletionSource<RpcEnvelope>(TaskCreationOptions.RunContinuationsAsynchronously);
+            var tcs = new TaskCompletionSource<RpcFrame>(TaskCreationOptions.RunContinuationsAsynchronously);
             RpcRegistry.Register(correlationId, tcs);
             try
             {
-                var envelope = new RpcEnvelope
-                {
-                    CorrelationId = correlationId,
-                    MethodId = methodId,
-                    IsError = false,
-                    Body = SetNetSerializer.Serialize(request)
-                };
-                await client.SendAsync(RpcTypes.Request, envelope, DeliveryMethod.Reliable).ConfigureAwait(false);
+                var envelope = new RpcFrame(correlationId, methodId, isError: false, SetNetSerializer.Serialize(request));
+                await client.SendAsync(RpcTypes.Request, envelope.Encode(), DeliveryMethod.Reliable).ConfigureAwait(false);
 
-                RpcEnvelope response;
+                RpcFrame response;
                 if (timeoutMs <= 0 && !cancellationToken.CanBeCanceled)
                 {
                     response = await tcs.Task.ConfigureAwait(false);
