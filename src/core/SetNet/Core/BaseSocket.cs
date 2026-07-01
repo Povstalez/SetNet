@@ -201,6 +201,17 @@ namespace SetNet.Core
         protected virtual void HandleProcessingError(ushort type, Exception exception) { }
 
         /// <summary>
+        /// Feeds a frame into this socket's normal typed dispatch as if it had just been received. Used by layers that
+        /// reconstruct application frames locally — for example UDP fragmentation reassembly, where the wire carries
+        /// fragment frames and the reassembled original must be delivered to its real handler. Bypasses the raw-frame
+        /// interceptor and inbound gate (the bytes already passed those as their carrier frames). Public so companion
+        /// packages can re-inject without subclassing.
+        /// </summary>
+        /// <param name="type">The reconstructed application wire type id.</param>
+        /// <param name="data">The reconstructed payload bytes.</param>
+        public void InjectFrame(ushort type, byte[] data) => _messageProcessor.ProcessMessage(type, data);
+
+        /// <summary>
         /// Registers an asynchronous handler for messages of the given wire type. Used when handling a
         /// message requires awaiting (for example, sending a response or touching async state).
         /// </summary>

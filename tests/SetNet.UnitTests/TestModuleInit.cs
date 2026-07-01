@@ -1,5 +1,6 @@
 using System.Runtime.CompilerServices;
 using SetNet.Auth;
+using SetNet.Fragmentation;
 using SetNet.Matchmaking;
 using SetNet.Messaging;
 using SetNet.MessagePack;
@@ -25,5 +26,6 @@ internal static class TestModuleInit
         RoomsRuntime.Enable();
         MatchmakingRuntime.Enable();
         StateSyncRuntime.Enable();
+        FragmentationRuntime.Enable();
     }
 }
