@@ -36,6 +36,14 @@ jobs:
             -c Release -p:Version=${{ steps.version.outputs.value }} -o ./artifacts
           dotnet pack SetNet.Rooms/SetNet.Rooms.csproj \
             -c Release -p:Version=${{ steps.version.outputs.value }} -o ./artifacts
+          dotnet pack SetNet.RateLimit/SetNet.RateLimit.csproj \
+            -c Release -p:Version=${{ steps.version.outputs.value }} -o ./artifacts
+          dotnet pack SetNet.Logging.Serilog/SetNet.Logging.Serilog.csproj \
+            -c Release -p:Version=${{ steps.version.outputs.value }} -o ./artifacts
+          dotnet pack SetNet.Unity/SetNet.Unity.csproj \
+            -c Release -p:Version=${{ steps.version.outputs.value }} -o ./artifacts
+          dotnet pack SetNet.WebSockets/SetNet.WebSockets.csproj \
+            -c Release -p:Version=${{ steps.version.outputs.value }} -o ./artifacts
 
       - name: Push to NuGet
         # SetNet first so the companions' dependency on it resolves; --skip-duplicate

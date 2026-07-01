@@ -63,7 +63,10 @@ namespace SetNet.Auth
             _servers[server] = state;
 
             // Gate: only the auth request passes for an unauthenticated peer; everything else is dropped.
-            server.InboundAuthorizer = (peer, type) => type == AuthTypes.Request || state.IsAuthenticated(peer);
+            // Chain any existing authorizer (e.g. rate limiting) so gates compose: a frame must pass all of them.
+            var previous = server.InboundAuthorizer;
+            server.InboundAuthorizer = (peer, type) =>
+                (previous == null || previous(peer, type)) && (type == AuthTypes.Request || state.IsAuthenticated(peer));
         }
 
         internal static AuthServerState? Get(BaseServer? server)

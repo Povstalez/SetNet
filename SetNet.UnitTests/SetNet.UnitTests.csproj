@@ -21,6 +21,9 @@
         <ProjectReference Include="..\SetNet.Rpc\SetNet.Rpc.csproj" />
         <ProjectReference Include="..\SetNet.Auth\SetNet.Auth.csproj" />
         <ProjectReference Include="..\SetNet.Rooms\SetNet.Rooms.csproj" />
+        <ProjectReference Include="..\SetNet.RateLimit\SetNet.RateLimit.csproj" />
+        <ProjectReference Include="..\SetNet.WebSockets\SetNet.WebSockets.csproj" />
+        <ProjectReference Include="..\SetNet.Unity\SetNet.Unity.csproj" />
     </ItemGroup>
 
 </Project>

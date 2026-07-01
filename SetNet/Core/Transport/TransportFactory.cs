@@ -29,6 +29,8 @@ namespace SetNet.Core.Transport
                 case TransportType.Tcp: return new TcpConnector();
                 case TransportType.Udp: return new UdpClientConnector();
                 case TransportType.Both: return new BothConnector();
+                case TransportType.Custom:
+                    return (config.CustomTransport ?? throw new NotSupportedException("TransportType.Custom requires Configuration.CustomTransport to be set.")).CreateConnector(config);
                 default: throw new NotSupportedException($"Transport '{config.TransportType}' is not supported.");
             }
         }
@@ -50,6 +52,8 @@ namespace SetNet.Core.Transport
             {
                 case TransportType.Tcp: return new TcpListenerAdapter(config);
                 case TransportType.Udp: return new UdpServerListener(config);
+                case TransportType.Custom:
+                    return (config.CustomTransport ?? throw new NotSupportedException("TransportType.Custom requires Configuration.CustomTransport to be set.")).CreateListener(config);
                 default: throw new NotSupportedException($"Transport '{config.TransportType}' is not supported.");
             }
         }

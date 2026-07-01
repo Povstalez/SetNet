@@ -27,6 +27,13 @@ namespace SetNet.Core.Transport
         /// <see cref="DeliveryMethod.Unreliable"/> messages travel over UDP, letting callers pick the
         /// guarantee per message.
         /// </summary>
-        Both
+        Both,
+
+        /// <summary>
+        /// A transport supplied by the application via <see cref="SetNet.Config.Configuration.CustomTransport"/>
+        /// (an <see cref="ITransportProvider"/>) — e.g. the WebSocket transport in the SetNet.WebSockets package.
+        /// Lets external packages plug in new transports without changing the core.
+        /// </summary>
+        Custom
     }
 }

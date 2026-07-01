@@ -11,6 +11,10 @@
 [![NuGet — SetNet.Rpc](https://img.shields.io/nuget/v/SetNet.Rpc?logo=nuget&label=SetNet.Rpc)](https://www.nuget.org/packages/SetNet.Rpc)
 [![NuGet — SetNet.Auth](https://img.shields.io/nuget/v/SetNet.Auth?logo=nuget&label=SetNet.Auth)](https://www.nuget.org/packages/SetNet.Auth)
 [![NuGet — SetNet.Rooms](https://img.shields.io/nuget/v/SetNet.Rooms?logo=nuget&label=SetNet.Rooms)](https://www.nuget.org/packages/SetNet.Rooms)
+[![NuGet — SetNet.RateLimit](https://img.shields.io/nuget/v/SetNet.RateLimit?logo=nuget&label=SetNet.RateLimit)](https://www.nuget.org/packages/SetNet.RateLimit)
+[![NuGet — SetNet.WebSockets](https://img.shields.io/nuget/v/SetNet.WebSockets?logo=nuget&label=SetNet.WebSockets)](https://www.nuget.org/packages/SetNet.WebSockets)
+[![NuGet — SetNet.Unity](https://img.shields.io/nuget/v/SetNet.Unity?logo=nuget&label=SetNet.Unity)](https://www.nuget.org/packages/SetNet.Unity)
+[![NuGet — SetNet.Logging.Serilog](https://img.shields.io/nuget/v/SetNet.Logging.Serilog?logo=nuget&label=SetNet.Logging.Serilog)](https://www.nuget.org/packages/SetNet.Logging.Serilog)
 [![Downloads](https://img.shields.io/nuget/dt/SetNet?logo=nuget&label=downloads)](https://www.nuget.org/packages/SetNet)
 ![.NET Standard 2.1](https://img.shields.io/badge/.NET%20Standard-2.1-512BD4)
 ![Transports](https://img.shields.io/badge/transport-TCP%20%7C%20UDP%20%7C%20Both-success)
@@ -38,6 +42,10 @@ await SendAsync(MsgType.Position, position, DeliveryMethod.Unreliable);
 - 📞 **Optional RPC** — add the [`SetNet.Rpc`](https://www.nuget.org/packages/SetNet.Rpc) package for request/response: `await client.CallAsync<TReq, TResp>(...)` + `[RpcMethod]` handlers. Added by composition (no base class), coexists with one-way messages.
 - 🔐 **Optional Auth + sessions** — add [`SetNet.Auth`](https://www.nuget.org/packages/SetNet.Auth): an enforced gate drops a peer's traffic until it authenticates (you validate the token via `IAuthenticator`), plus session store, multi-session policy, and automatic reconnect-resume. Composition, over TLS.
 - 🏠 **Optional Rooms/Lobbies** — add [`SetNet.Rooms`](https://www.nuget.org/packages/SetNet.Rooms): create/join rooms by code, broadcast within a room, player-joined/left events, auto-leave on disconnect. Dedicated-server (no relay needed), pluggable room store.
+- 🌐 **Optional WebSocket transport** — add [`SetNet.WebSockets`](https://www.nuget.org/packages/SetNet.WebSockets): run everything over `ws://` (HTTP-friendly, proxy/firewall-traversable) with one `config.UseWebSockets()` call; handlers/RPC/rooms/auth unchanged.
+- 🚏 **Optional per-peer rate limiting** — add [`SetNet.RateLimit`](https://www.nuget.org/packages/SetNet.RateLimit): a token-bucket inbound gate (`server.UseRateLimit(...)`) that drops a flooding peer's excess frames; composes with the Auth gate.
+- 🎮 **Optional Unity helper** — add [`SetNet.Unity`](https://www.nuget.org/packages/SetNet.Unity): a `MainThreadDispatcher` to marshal handler callbacks onto Unity's main thread (drain in `Update()`).
+- 🪵 **Optional Serilog logging** — add [`SetNet.Logging.Serilog`](https://www.nuget.org/packages/SetNet.Logging.Serilog): route SetNet's `ILogger` into Serilog (`config.Logger = new SerilogLogger(...)`).
 
 ## Install
 
@@ -222,7 +230,7 @@ In-process benchmark (`dotnet run -c Release --project SetNet.Tests -- bench`, S
 
 ```bash
 dotnet build                                              # build (library targets netstandard2.1)
-dotnet test SetNet.UnitTests/SetNet.UnitTests.csproj      # 78 unit + integration tests
+dotnet test SetNet.UnitTests/SetNet.UnitTests.csproj      # 95 unit + integration tests
 dotnet run --project SetNet.Tests -- <frag|tcp|udp|loss|both|idle|deadlock>   # in-process transport scenarios
 dotnet run --project SetNet.Tests -- bench                # throughput / connection benchmark
 
@@ -239,6 +247,10 @@ SetNet.MessagePack/ MessagePack ISerializer adapter (companion package)
 SetNet.Rpc/         optional request/response RPC (await client.CallAsync<TReq,TResp>) — companion package
 SetNet.Auth/        optional auth + sessions (enforced gate, reconnect-resume) — companion package
 SetNet.Rooms/       optional rooms/lobbies (join-by-code, broadcast, events) — companion package
+SetNet.WebSockets/  optional WebSocket transport (config.UseWebSockets()) — companion package
+SetNet.RateLimit/   optional per-peer token-bucket inbound gate — companion package
+SetNet.Unity/       optional Unity main-thread dispatcher — companion package
+SetNet.Logging.Serilog/  optional Serilog ILogger adapter — companion package
 SetNet.Tests/       in-process scenario harness + benchmark
 SetNet.UnitTests/   xUnit unit + integration tests
 examples/           runnable chat (Chat.Shared / Chat.Server / Chat.Client)
@@ -249,7 +261,7 @@ docs/               GUIDE.{en,ua}.md, PERFORMANCE.{en,ua}.md
 
 SetNet has been through extensive adversarial auditing (multi-round correctness convergence + a performance pass) with a full unit/integration suite and in-process scenarios. It is well-suited as the **network layer for .NET ↔ .NET real-time systems** (multiplayer games, chat, collaborative apps).
 
-It is **not** a general-purpose RPC/HTTP framework: there is no request/response correlation, no DI/hosting integration, and no WebSocket/browser transport. Before production, implement authentication, set the hardening config, and run a soak/load test under realistic traffic.
+It is **not** a general-purpose HTTP framework, and there's no built-in DI/hosting integration. Optional companion packages fill common gaps — request/response ([`SetNet.Rpc`](https://www.nuget.org/packages/SetNet.Rpc)), auth ([`SetNet.Auth`](https://www.nuget.org/packages/SetNet.Auth)), rooms ([`SetNet.Rooms`](https://www.nuget.org/packages/SetNet.Rooms)), and a WebSocket transport ([`SetNet.WebSockets`](https://www.nuget.org/packages/SetNet.WebSockets)). Before production, enable authentication, set the hardening config, and run a soak/load test under realistic traffic.
 
 ## License
 

@@ -83,6 +83,12 @@ namespace SetNet.Config
         public ILogger Logger { get; set; } = new ConsoleLogger();
 
         /// <summary>
+        /// A custom transport provider, used when <see cref="TransportType"/> is <see cref="Core.Transport.TransportType.Custom"/>
+        /// (e.g. the WebSocket transport from SetNet.WebSockets). Ignored for the built-in TCP/UDP/Both transports.
+        /// </summary>
+        public Core.Transport.ITransportProvider? CustomTransport { get; set; }
+
+        /// <summary>
         /// Live traffic/health counters the library increments (messages, connections, retransmits, drops).
         /// Read or snapshot these to export to monitoring. Shared by the client/server using this configuration.
         /// </summary>
