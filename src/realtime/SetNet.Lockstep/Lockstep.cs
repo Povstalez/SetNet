@@ -10,6 +10,7 @@ using SetNet.Core;
 using SetNet.Core.Transport;
 using SetNet.Data;
 using SetNet.Data.Attributes;
+using SetNet.Messaging;
 
 namespace SetNet.Lockstep
 {
@@ -92,14 +93,22 @@ namespace SetNet.Lockstep
         public void Dispose() => _timer?.Dispose();
     }
 
-    /// <summary>Client-side lockstep driver: submit inputs and receive finalized turns.</summary>
-    public sealed class ClientLockstep
+    /// <summary>Non-generic sink so the (typeless) registry can deliver a decoded turn to a typed client driver.</summary>
+    internal interface ILockstepClientSink { void OnTurn(uint turn, Dictionary<string, byte[]> inputs); }
+
+    /// <summary>
+    /// Client-side lockstep driver over a **typed** per-turn input. Submit your input type directly and receive each
+    /// player's deserialized input — the driver (de)serializes via the registered <see cref="SetNetSerializer"/>, so you
+    /// never touch raw bytes. (The server relays inputs opaquely and stays serializer-agnostic.)
+    /// </summary>
+    /// <typeparam name="TInput">Your per-turn input type.</typeparam>
+    public sealed class ClientLockstep<TInput> : ILockstepClientSink
     {
         private readonly BaseClient _client;
         private uint _nextTurn;
 
-        /// <summary>Raised when a turn is finalized (args: turn number, map of player id → that player's input for the turn). Advance your deterministic simulation here.</summary>
-        public event Action<uint, IReadOnlyDictionary<string, byte[]>>? TurnReady;
+        /// <summary>Raised when a turn is finalized (args: turn number, map of player id → that player's deserialized input). Advance your deterministic simulation here.</summary>
+        public event Action<uint, IReadOnlyDictionary<string, TInput>>? TurnReady;
 
         internal ClientLockstep(BaseClient client)
         {
@@ -107,18 +116,22 @@ namespace SetNet.Lockstep
             LockstepRegistry.RegisterClient(this);
         }
 
-        /// <summary>Submits this client's input for the next turn. Returns the turn number it was tagged with.</summary>
-        public uint SubmitInput(byte[] payload)
+        /// <summary>Submits this client's input for the next turn (serialized via <see cref="SetNetSerializer"/>). Returns the turn number it was tagged with.</summary>
+        public uint SubmitInput(TInput input)
         {
             var turn = _nextTurn;
-            _ = SafeSend(LockstepWire.EncodeInput(turn, payload ?? Array.Empty<byte>()));
+            _ = SafeSend(LockstepWire.EncodeInput(turn, SetNetSerializer.Serialize(input)));
             return turn;
         }
 
-        internal void OnTurn(uint turn, IReadOnlyDictionary<string, byte[]> inputs)
+        void ILockstepClientSink.OnTurn(uint turn, Dictionary<string, byte[]> inputs)
         {
             if (turn >= _nextTurn) _nextTurn = turn + 1;
-            TurnReady?.Invoke(turn, inputs);
+            var handler = TurnReady;
+            if (handler == null) return;
+            var typed = new Dictionary<string, TInput>(inputs.Count);
+            foreach (var kv in inputs) typed[kv.Key] = SetNetSerializer.Deserialize<TInput>(kv.Value);
+            handler(turn, typed);
         }
 
         private async Task SafeSend(byte[] frame)
@@ -186,11 +199,11 @@ namespace SetNet.Lockstep
     internal static class LockstepRegistry
     {
         private static readonly ConcurrentDictionary<BaseServer, ServerLockstep> Servers = new ConcurrentDictionary<BaseServer, ServerLockstep>();
-        private static readonly ConcurrentDictionary<ClientLockstep, byte> Clients = new ConcurrentDictionary<ClientLockstep, byte>();
+        private static readonly ConcurrentDictionary<ILockstepClientSink, byte> Clients = new ConcurrentDictionary<ILockstepClientSink, byte>();
         public static void RegisterServer(BaseServer server, ServerLockstep engine) => Servers[server] = engine;
         public static ServerLockstep? GetServer(BaseServer? server) => server != null && Servers.TryGetValue(server, out var s) ? s : null;
-        public static void RegisterClient(ClientLockstep client) => Clients[client] = 0;
-        public static void ForEachClient(Action<ClientLockstep> action) { foreach (var c in Clients.Keys) action(c); }
+        public static void RegisterClient(ILockstepClientSink client) => Clients[client] = 0;
+        public static void ForEachClient(Action<ILockstepClientSink> action) { foreach (var c in Clients.Keys) action(c); }
     }
 
     /// <summary>Attaches the lockstep engine by composition — no base class.</summary>
@@ -205,11 +218,11 @@ namespace SetNet.Lockstep
             return engine;
         }
 
-        /// <summary>Enables the client-side lockstep driver (SubmitInput + TurnReady).</summary>
-        public static ClientLockstep UseLockstep(this BaseClient client)
+        /// <summary>Enables the client-side lockstep driver over a typed input (SubmitInput + TurnReady). Use <c>byte[]</c> as <typeparamref name="TInput"/> for a raw payload.</summary>
+        public static ClientLockstep<TInput> UseLockstep<TInput>(this BaseClient client)
         {
             if (client == null) throw new ArgumentNullException(nameof(client));
-            return new ClientLockstep(client);
+            return new ClientLockstep<TInput>(client);
         }
     }
 

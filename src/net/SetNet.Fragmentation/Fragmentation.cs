@@ -10,6 +10,7 @@ using SetNet.Core;
 using SetNet.Core.Transport;
 using SetNet.Data;
 using SetNet.Data.Attributes;
+using SetNet.Messaging;
 
 namespace SetNet.Fragmentation
 {
@@ -154,6 +155,14 @@ namespace SetNet.Fragmentation
                 sendFragment: frame => peer.SendAsync(FragmentTypes.Fragment, frame, delivery),
                 sendWhole: () => peer.SendRawAsync(type, payload ?? Array.Empty<byte>(), delivery),
                 type, payload, maxChunk);
+
+        /// <summary>Serializes a typed message (via <see cref="SetNetSerializer"/>) and sends it, fragmenting if oversize. It's delivered to the normal <c>IClientMessageHandler&lt;T&gt;</c> for <paramref name="type"/>.</summary>
+        public static Task SendFragmentedAsync<T>(this BaseClient client, ushort type, T message, DeliveryMethod delivery, int maxChunk = 1100)
+            => client.SendFragmentedAsync(type, SetNetSerializer.Serialize(message), delivery, maxChunk);
+
+        /// <summary>Serializes a typed message (via <see cref="SetNetSerializer"/>) and sends it, fragmenting if oversize. It's delivered to the normal <c>IServerMessageHandler&lt;T&gt;</c> for <paramref name="type"/>.</summary>
+        public static Task SendFragmentedAsync<T>(this BasePeer peer, ushort type, T message, DeliveryMethod delivery, int maxChunk = 1100)
+            => peer.SendFragmentedAsync(type, SetNetSerializer.Serialize(message), delivery, maxChunk);
 
         private static async Task SendFragmented(Func<byte[], Task> sendFragment, Func<Task> sendWhole, ushort type, byte[] payload, int maxChunk)
         {

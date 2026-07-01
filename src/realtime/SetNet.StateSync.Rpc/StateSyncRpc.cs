@@ -6,6 +6,7 @@ using SetNet.Core;
 using SetNet.Core.Transport;
 using SetNet.Data;
 using SetNet.Data.Attributes;
+using SetNet.Messaging;
 
 namespace SetNet.StateSync.Rpc
 {
@@ -55,6 +56,10 @@ namespace SetNet.StateSync.Rpc
         /// <summary>Sends an entity RPC to one client (e.g. the entity's owner or an observer).</summary>
         public Task SendAsync(BasePeer peer, uint netId, ushort methodId, byte[] payload, DeliveryMethod delivery = DeliveryMethod.Reliable)
             => peer.SendAsync(StateRpcTypes.Rpc, StateRpcWire.Encode(netId, methodId, payload), delivery);
+
+        /// <summary>Sends an entity RPC with a typed argument (serialized via <see cref="SetNetSerializer"/>). Read it back with <c>SetNetSerializer.Deserialize&lt;T&gt;(payload)</c> in <see cref="Received"/>.</summary>
+        public Task SendAsync<T>(BasePeer peer, uint netId, ushort methodId, T arg, DeliveryMethod delivery = DeliveryMethod.Reliable)
+            => SendAsync(peer, netId, methodId, SetNetSerializer.Serialize(arg), delivery);
     }
 
     /// <summary>Client-side entity RPC channel: invoke on an owned entity (client → server) and receive server → client calls.</summary>
@@ -76,6 +81,10 @@ namespace SetNet.StateSync.Rpc
         /// <summary>Sends an entity RPC to the server (typically for the entity you own).</summary>
         public Task SendAsync(uint netId, ushort methodId, byte[] payload, DeliveryMethod delivery = DeliveryMethod.Reliable)
             => _client.SendAsync(StateRpcTypes.Rpc, StateRpcWire.Encode(netId, methodId, payload), delivery);
+
+        /// <summary>Sends an entity RPC with a typed argument (serialized via <see cref="SetNetSerializer"/>). Read it back with <c>SetNetSerializer.Deserialize&lt;T&gt;(payload)</c> in <see cref="Received"/>.</summary>
+        public Task SendAsync<T>(uint netId, ushort methodId, T arg, DeliveryMethod delivery = DeliveryMethod.Reliable)
+            => SendAsync(netId, methodId, SetNetSerializer.Serialize(arg), delivery);
     }
 
     internal static class StateRpcRegistry
