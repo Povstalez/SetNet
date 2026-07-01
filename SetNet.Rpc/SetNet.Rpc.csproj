@@ -1,22 +1,21 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
 
     <PropertyGroup>
         <TargetFramework>netstandard2.1</TargetFramework>
         <ImplicitUsings>false</ImplicitUsings>
         <Nullable>enable</Nullable>
-        <!-- Emit the XML documentation file for IntelliSense; CS1591 then flags any undocumented public member. -->
         <GenerateDocumentationFile>true</GenerateDocumentationFile>
     </PropertyGroup>
 
     <!-- NuGet package metadata -->
     <PropertyGroup>
-        <PackageId>SetNet</PackageId>
+        <PackageId>SetNet.Rpc</PackageId>
         <Version>1.1.0</Version>
         <AssemblyVersion>1.1.0.0</AssemblyVersion>
         <FileVersion>1.1.0.0</FileVersion>
         <Authors>Artem Lemeshev</Authors>
-        <Description>A lightweight .NET client/server networking library over TCP, UDP, or both: a pluggable transport, an optional UDP reliability layer, optional TLS, automatic message-handler registration, pluggable serialization (no serializer bundled — add SetNet.MessagePack or your own ISerializer), and built-in metrics.</Description>
-        <PackageTags>networking;tcp;udp;sockets;game;realtime;reliable-udp</PackageTags>
+        <Description>Request/response RPC for SetNet. Call typed methods with await client.CallAsync&lt;TReq,TResp&gt;(...) and implement [RpcMethod] handlers server-side — added by composition (no RpcClient/RpcPeer base class), so it coexists with regular message handlers. Just reference the package.</Description>
+        <PackageTags>networking;rpc;request-response;setnet;games;realtime</PackageTags>
         <PackageLicenseExpression>MIT</PackageLicenseExpression>
         <RepositoryUrl>https://github.com/Povstalez/SetNet.git</RepositoryUrl>
         <RepositoryType>git</RepositoryType>
@@ -31,8 +30,13 @@
     </ItemGroup>
 
     <ItemGroup>
-      <!-- Allow the unit-test project to exercise internal types (UdpDatagram, ReliabilityChannel, etc.). -->
-      <InternalsVisibleTo Include="SetNet.UnitTests" />
+      <!-- MessagePack is used to (de)serialize the small RPC envelope's attributes; the message BODIES still go
+           through the app's configured SetNetSerializer (MessagePack, JSON, …). -->
+      <PackageReference Include="MessagePack" Version="3.1.7" />
+    </ItemGroup>
+
+    <ItemGroup>
+      <ProjectReference Include="../SetNet/SetNet.csproj" />
     </ItemGroup>
 
 </Project>

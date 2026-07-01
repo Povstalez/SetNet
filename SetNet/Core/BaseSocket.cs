@@ -206,16 +206,5 @@ namespace SetNet.Core
         {
             _messageProcessor.RegisterHandler(type, handler);
         }
-
-        /// <summary>
-        /// Dispatches a fully framed inbound message to its registered handler. Called by subclass receive
-        /// loops once the transport has reassembled a complete message from the wire.
-        /// </summary>
-        /// <param name="type">The wire type id used to select the handler.</param>
-        /// <param name="data">The deserialized message payload bytes passed to the handler.</param>
-        protected void HandleMessage(ushort type, byte[] data)
-        {
-            _messageProcessor.ProcessMessage(type, data);
-        }
     }
 }

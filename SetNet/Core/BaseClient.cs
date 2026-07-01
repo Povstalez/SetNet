@@ -427,7 +427,7 @@ namespace SetNet.Core
         /// <param name="type">The wire type id identifying the message.</param>
         /// <param name="message">The message instance to serialize and transmit.</param>
         /// <returns>A task that completes once the message has been handed to the transport.</returns>
-        protected Task SendAsync<T>(ushort type, T message)
+        public Task SendAsync<T>(ushort type, T message)
             => SendAsync(type, message, _config.DefaultDelivery);
 
         /// <summary>
@@ -439,7 +439,7 @@ namespace SetNet.Core
         /// <param name="message">The message instance to serialize and transmit.</param>
         /// <param name="delivery">The delivery guarantee (e.g. Reliable or Unreliable) to use for this send.</param>
         /// <returns>A task that completes once the message has been handed to the transport.</returns>
-        protected Task SendAsync<T>(ushort type, T message, DeliveryMethod delivery)
+        public Task SendAsync<T>(ushort type, T message, DeliveryMethod delivery)
             => SendAsync(type, message, delivery, 0);
 
         /// <summary>
@@ -454,7 +454,7 @@ namespace SetNet.Core
         /// <returns>A task that completes once the message has been handed to the transport.</returns>
         /// <exception cref="ObjectDisposedException">Thrown if the client has been disposed.</exception>
         /// <exception cref="InvalidOperationException">Thrown if the client is not currently in the Connected state.</exception>
-        protected Task SendAsync<T>(ushort type, T message, DeliveryMethod delivery, byte channel)
+        public Task SendAsync<T>(ushort type, T message, DeliveryMethod delivery, byte channel)
             => SendRawAsync(type, SetNetSerializer.Serialize(message), delivery, channel);
 
         /// <summary>
@@ -465,7 +465,7 @@ namespace SetNet.Core
         /// <param name="type">The wire type id to frame the payload under.</param>
         /// <param name="payload">The raw, already-serialized message body.</param>
         /// <returns>A task that completes once the frame has been handed to the transport.</returns>
-        protected Task SendRawAsync(ushort type, byte[] payload)
+        public Task SendRawAsync(ushort type, byte[] payload)
             => SendRawAsync(type, payload, _config.DefaultDelivery, 0);
 
         /// <summary>
@@ -479,7 +479,7 @@ namespace SetNet.Core
         /// <returns>A task that completes once the frame has been handed to the transport.</returns>
         /// <exception cref="ObjectDisposedException">Thrown if the client has been disposed.</exception>
         /// <exception cref="InvalidOperationException">Thrown if the client is not currently in the Connected state.</exception>
-        protected async Task SendRawAsync(ushort type, byte[] payload, DeliveryMethod delivery, byte channel = 0)
+        public async Task SendRawAsync(ushort type, byte[] payload, DeliveryMethod delivery, byte channel = 0)
         {
             if (_disposed) throw new ObjectDisposedException(nameof(BaseClient));
             var conn = Connection;

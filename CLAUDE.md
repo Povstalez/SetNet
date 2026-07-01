@@ -71,7 +71,9 @@ The flow: Server accepts connection → creates a BasePeer → peer receives mes
 
 Message handlers are **strongly typed** (no manual deserialization) and are discovered and instantiated automatically via reflection when the executor is constructed.
 
-- **Raw frame escape hatch**: `BaseSocket.OnRawFrame(ushort type, byte[] data)` (virtual, default no-op) is called for every application frame (system types excluded via `SystemMessageTypes.IsSystem`) before typed dispatch; returning `true` consumes the frame and skips typed handling. Paired with `BaseClient`/`BasePeer.SendRawAsync(type, payload, delivery?)` which sends already-serialized bytes without re-serializing. Together they enable relay/proxy peers that forward traffic with zero (de)serialization while normal handlers stay typed.
+- **Raw frame escape hatch**: `BaseSocket.OnRawFrame(ushort type, byte[] data)` (virtual, default no-op) is called for every application frame (system types excluded via `SystemMessageTypes.IsSystem`) before typed dispatch; returning `true` consumes the frame and skips typed handling. Paired with `BaseClient`/`BasePeer.SendRawAsync(type, payload, delivery?)` which sends already-serialized bytes without re-serializing. Together they enable relay/proxy peers that forward traffic with zero (de)serialization while normal handlers stay typed. `SendAsync`/`SendRawAsync` are **public** on `BaseClient`/`BasePeer` (not just protected) so companion packages/plugins can send without subclassing.
+
+- **RPC (optional, separate package `SetNet.Rpc`)**: request/response by **composition**, no base class. `await client.CallAsync<TReq,TResp>(methodId, req)` (extension) + `[RpcMethod]` `IRpcHandler<TReq,TResp>` server handlers. It ships auto-discovered `[MessageHandler]`s for reserved envelope type ids (65531/65532), completes calls via a static correlation-id registry (client handlers have no connection ref, but ids are process-unique), and relays server exceptions as `RpcException` / enforces per-call timeouts. Call `RpcRuntime.Enable()` once at startup so the package is loaded before handler discovery.
 
 ### 3. **Serialization** (`SetNet/Messaging/`)
 

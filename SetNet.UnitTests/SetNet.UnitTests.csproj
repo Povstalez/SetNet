@@ -18,6 +18,7 @@
     <ItemGroup>
         <ProjectReference Include="..\SetNet\SetNet.csproj" />
         <ProjectReference Include="..\SetNet.MessagePack\SetNet.MessagePack.csproj" />
+        <ProjectReference Include="..\SetNet.Rpc\SetNet.Rpc.csproj" />
     </ItemGroup>
 
 </Project>
