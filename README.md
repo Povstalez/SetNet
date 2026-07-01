@@ -10,6 +10,7 @@
 [![NuGet — SetNet.MessagePack](https://img.shields.io/nuget/v/SetNet.MessagePack?logo=nuget&label=SetNet.MessagePack)](https://www.nuget.org/packages/SetNet.MessagePack)
 [![Downloads](https://img.shields.io/nuget/dt/SetNet?logo=nuget&label=downloads)](https://www.nuget.org/packages/SetNet)
 ![.NET Standard 2.1](https://img.shields.io/badge/.NET%20Standard-2.1-512BD4)
+![Transports](https://img.shields.io/badge/transport-TCP%20%7C%20UDP%20%7C%20Both-success)
 ![License](https://img.shields.io/badge/license-MIT-green)
 
 SetNet gives you a persistent, message-oriented connection with automatic handler registration, a pluggable transport (reliable TCP, raw/reliable UDP, or both together), per-message delivery selection, and production-grade hardening — so you can focus on your game/app logic instead of sockets.
