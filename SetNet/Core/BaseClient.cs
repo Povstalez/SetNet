@@ -147,6 +147,23 @@ namespace SetNet.Core
             }
             SafeLifecycleHook(nameof(OnStateChanged), () => OnStateChanged(prev, ConnectionState.Connected));
             SafeLifecycleHook(nameof(OnConnected), OnConnected);
+            RaiseConnected();
+        }
+
+        /// <summary>
+        /// Fires after every successful connect <b>and</b> reconnect, once the transport is live and
+        /// <see cref="OnConnected"/>/<see cref="OnReconnected"/> have run. Companion packages (e.g. auth) subscribe
+        /// to it to run per-connection setup automatically, without subclassing. Subscriber exceptions are isolated.
+        /// </summary>
+        public event Action? Connected;
+
+        /// <summary>Raises <see cref="Connected"/>, swallowing subscriber exceptions so one bad handler can't break the connect path.</summary>
+        private void RaiseConnected()
+        {
+            var handler = Connected;
+            if (handler == null) return;
+            try { handler(); }
+            catch (Exception ex) { _config.Logger.Log($"Connected handler threw: {ex.Message}", Logging.LogLevel.Error); }
         }
 
         /// <summary>
@@ -395,6 +412,7 @@ namespace SetNet.Core
                     }
                     SafeLifecycleHook(nameof(OnStateChanged), () => OnStateChanged(prev, ConnectionState.Connected));
                     SafeLifecycleHook(nameof(OnReconnected), OnReconnected);
+                    RaiseConnected();
                     return;
                 }
                 catch (Exception ex)

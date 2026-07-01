@@ -9,6 +9,7 @@
 [![NuGet — SetNet](https://img.shields.io/nuget/v/SetNet?logo=nuget&label=SetNet)](https://www.nuget.org/packages/SetNet)
 [![NuGet — SetNet.MessagePack](https://img.shields.io/nuget/v/SetNet.MessagePack?logo=nuget&label=SetNet.MessagePack)](https://www.nuget.org/packages/SetNet.MessagePack)
 [![NuGet — SetNet.Rpc](https://img.shields.io/nuget/v/SetNet.Rpc?logo=nuget&label=SetNet.Rpc)](https://www.nuget.org/packages/SetNet.Rpc)
+[![NuGet — SetNet.Auth](https://img.shields.io/nuget/v/SetNet.Auth?logo=nuget&label=SetNet.Auth)](https://www.nuget.org/packages/SetNet.Auth)
 [![Downloads](https://img.shields.io/nuget/dt/SetNet?logo=nuget&label=downloads)](https://www.nuget.org/packages/SetNet)
 ![.NET Standard 2.1](https://img.shields.io/badge/.NET%20Standard-2.1-512BD4)
 ![Transports](https://img.shields.io/badge/transport-TCP%20%7C%20UDP%20%7C%20Both-success)
@@ -34,6 +35,7 @@ await SendAsync(MsgType.Position, position, DeliveryMethod.Unreliable);
 - 🔀 **Raw relay escape hatch** — override `OnRawFrame(type, data)` to intercept frames and `SendRawAsync` to forward bytes **without (de)serializing** — build an Among Us-style relay/proxy with zero overhead, while normal handlers stay typed.
 - 📦 **Pluggable serialization** — the core bundles no serializer. Pick a format via `ISerializer`: drop in the `SetNet.MessagePack` package (hardened MessagePack), or supply your own JSON/Protobuf/custom adapter, and register it once with `SetNetSerializer.Use(...)`.
 - 📞 **Optional RPC** — add the [`SetNet.Rpc`](https://www.nuget.org/packages/SetNet.Rpc) package for request/response: `await client.CallAsync<TReq, TResp>(...)` + `[RpcMethod]` handlers. Added by composition (no base class), coexists with one-way messages.
+- 🔐 **Optional Auth + sessions** — add [`SetNet.Auth`](https://www.nuget.org/packages/SetNet.Auth): an enforced gate drops a peer's traffic until it authenticates (you validate the token via `IAuthenticator`), plus session store, multi-session policy, and automatic reconnect-resume. Composition, over TLS.
 
 ## Install
 
@@ -232,6 +234,7 @@ dotnet run --project examples/Chat.Client -- 127.0.0.1 5000 alice
 SetNet/             core library (transport abstraction, reliability, hardening) — no serializer dependency
 SetNet.MessagePack/ MessagePack ISerializer adapter (companion package)
 SetNet.Rpc/         optional request/response RPC (await client.CallAsync<TReq,TResp>) — companion package
+SetNet.Auth/        optional auth + sessions (enforced gate, reconnect-resume) — companion package
 SetNet.Tests/       in-process scenario harness + benchmark
 SetNet.UnitTests/   xUnit unit + integration tests
 examples/           runnable chat (Chat.Shared / Chat.Server / Chat.Client)

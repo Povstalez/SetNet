@@ -110,6 +110,10 @@ namespace SetNet.Core
                 try { consumed = OnRawFrame(type, data); }
                 catch (Exception ex) { HandleProcessingError(type, ex); return; }
                 if (consumed) return;
+
+                // Inbound gate (e.g. auth enforcement): silently drop application frames the gate rejects,
+                // before any typed dispatch. System frames (heartbeat/bind-token) always pass, above.
+                if (!AllowInbound(type)) return;
             }
 
             if (_sequentialDispatch)
@@ -175,6 +179,17 @@ namespace SetNet.Core
         /// blocking. The base implementation returns <see langword="false"/>, so normal endpoints pay nothing.
         /// </remarks>
         protected virtual bool OnRawFrame(ushort type, byte[] data) => false;
+
+        /// <summary>
+        /// Inbound admission gate, consulted for every <b>application</b> frame (system frames always pass) after
+        /// <see cref="OnRawFrame"/> and before typed dispatch. Return <see langword="false"/> to <b>drop</b> the
+        /// frame. The default admits everything. Server-side peers override this to consult
+        /// <see cref="BaseServer.InboundAuthorizer"/>, which a package like <c>SetNet.Auth</c> sets to block traffic
+        /// from a peer until it has authenticated.
+        /// </summary>
+        /// <param name="type">The wire type id of the inbound frame.</param>
+        /// <returns><see langword="true"/> to dispatch; <see langword="false"/> to drop.</returns>
+        protected virtual bool AllowInbound(ushort type) => true;
 
         /// <summary>Called when a message handler throws. Overridden by client/peer to log via the configured logger.</summary>
         /// <param name="type">The wire type id of the message whose handler threw.</param>

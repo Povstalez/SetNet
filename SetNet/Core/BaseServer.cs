@@ -29,6 +29,14 @@ namespace SetNet.Core
         /// <summary>Reflection-discovered registry of server-side message handlers, shared with every peer for dispatch.</summary>
         private readonly ServerCommandExecutor _commandExecutor;
 
+        /// <summary>
+        /// Optional inbound admission gate consulted for every application frame from every peer, before dispatch.
+        /// Return <see langword="false"/> to drop the frame (system frames always pass). Left <see langword="null"/>
+        /// admits everything (default). A package like <c>SetNet.Auth</c> sets this to block a peer's traffic until
+        /// it has authenticated. Must be fast and thread-safe — it runs on the receive path.
+        /// </summary>
+        public Func<BasePeer, ushort, bool>? InboundAuthorizer { get; set; }
+
         /// <summary>The primary (TCP or UDP) listener accepting incoming connections; null until started.</summary>
         private ITransportListener? _listener;
 

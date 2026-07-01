@@ -16,8 +16,8 @@ namespace SetNet.Core
     /// </summary>
     public abstract class BasePeer : BaseSocket
     {
-        /// <summary>Connection handle and metadata (id, config, owning server, handler registry) for this client.</summary>
-        protected readonly PeerInfo CurrentPeerInfo;
+        /// <summary>Connection handle and metadata (id, config, owning server, handler registry) for this client. Public so composition packages (e.g. auth) can reach the peer's server and identity without subclassing.</summary>
+        public readonly PeerInfo CurrentPeerInfo;
 
         /// <summary>True while a server-initiated <see cref="Close"/> is in progress, so the receive loop treats the teardown as intentional and skips the unexpected-disconnect path.</summary>
         private volatile bool _isIntentionalClose;
@@ -399,6 +399,16 @@ namespace SetNet.Core
 
         /// <summary>Hook invoked when this client drops unexpectedly (crash or network failure), before the peer is closed; not fired on a graceful close or server-initiated kick.</summary>
         protected virtual void OnUnexpectedDisconnect() { }
+
+        /// <summary>
+        /// Consults the owning server's <see cref="BaseServer.InboundAuthorizer"/> (if any) to decide whether an
+        /// inbound application frame from this client may be dispatched. Enables server-level gating (e.g. auth)
+        /// without the peer subclass having to do anything.
+        /// </summary>
+        /// <param name="type">The wire type id of the inbound frame.</param>
+        /// <returns><see langword="true"/> to dispatch; <see langword="false"/> to drop.</returns>
+        protected override bool AllowInbound(ushort type)
+            => CurrentPeerInfo.Server?.InboundAuthorizer?.Invoke(this, type) ?? true;
 
         /// <summary>
         /// Builds the async dispatch delegate for a given message type that forwards this peer and the raw

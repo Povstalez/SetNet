@@ -1,4 +1,5 @@
 using System.Runtime.CompilerServices;
+using SetNet.Auth;
 using SetNet.Messaging;
 using SetNet.MessagePack;
 using SetNet.Rpc;
@@ -17,5 +18,6 @@ internal static class TestModuleInit
     {
         SetNetSerializer.Use(new MessagePackNetSerializer());
         RpcRuntime.Enable();
+        AuthRuntime.Enable();
     }
 }

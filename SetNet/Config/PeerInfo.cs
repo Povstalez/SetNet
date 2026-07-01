@@ -29,6 +29,9 @@ namespace SetNet.Config
         /// <summary>Back-reference to the owning server, used to deregister this peer from the connected-client pool on disconnect.</summary>
         private BaseServer _server;
 
+        /// <summary>The server that accepted this peer. Exposed so companion packages (e.g. auth) can reach server-level hooks such as <see cref="BaseServer.InboundAuthorizer"/>.</summary>
+        public BaseServer Server => _server;
+
         /// <summary>The command executor that routes this peer's inbound messages to their registered server-side handlers.</summary>
         public readonly ServerCommandExecutor CommandExecutor;
 
