@@ -31,6 +31,8 @@
         <ProjectReference Include="..\..\src\serializers\SetNet.Compression\SetNet.Compression.csproj" />
         <ProjectReference Include="..\..\src\security\SetNet.BanList\SetNet.BanList.csproj" />
         <ProjectReference Include="..\..\src\net\SetNet.Fragmentation\SetNet.Fragmentation.csproj" />
+        <ProjectReference Include="..\..\src\realtime\SetNet.StateSync.Prediction\SetNet.StateSync.Prediction.csproj" />
+        <ProjectReference Include="..\..\src\realtime\SetNet.StateSync.Rpc\SetNet.StateSync.Rpc.csproj" />
     </ItemGroup>
 
 </Project>

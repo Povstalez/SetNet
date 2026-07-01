@@ -41,6 +41,9 @@ namespace SetNet.StateSync
         /// <summary>Raised when an observer sends an input command (args: the peer, its input sequence number, and the raw payload you sent from the client).</summary>
         public event Action<BasePeer, uint, byte[]>? InputReceived;
 
+        /// <summary>A snapshot of the currently live entities (for interest managers, lag compensation, diagnostics).</summary>
+        public IReadOnlyCollection<NetworkEntity> Entities => new List<NetworkEntity>(_entities.Values);
+
         internal ServerReplication(BaseServer server, StateSyncOptions options)
         {
             _server = server;

@@ -7,6 +7,7 @@ using SetNet.MessagePack;
 using SetNet.Rooms;
 using SetNet.Rpc;
 using SetNet.StateSync;
+using SetNet.StateSync.Rpc;
 
 namespace SetNet.UnitTests;
 
@@ -27,5 +28,6 @@ internal static class TestModuleInit
         MatchmakingRuntime.Enable();
         StateSyncRuntime.Enable();
         FragmentationRuntime.Enable();
+        StateSyncRpcRuntime.Enable();
     }
 }

@@ -1,0 +1,35 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+    <PropertyGroup>
+        <TargetFramework>netstandard2.1</TargetFramework>
+        <ImplicitUsings>false</ImplicitUsings>
+        <Nullable>enable</Nullable>
+        <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    </PropertyGroup>
+
+    <PropertyGroup>
+        <PackageId>SetNet.StateSync.LagCompensation</PackageId>
+        <Version>1.1.0</Version>
+        <AssemblyVersion>1.1.0.0</AssemblyVersion>
+        <FileVersion>1.1.0.0</FileVersion>
+        <Authors>Artem Lemeshev</Authors>
+        <Description>Server-side lag compensation for SetNet.StateSync: record a short history of entity positions each tick and rewind the world to a past moment for fair hit detection. Depends on SetNet + SetNet.StateSync.</Description>
+        <PackageTags>networking;replication;lag-compensation;hit-detection;games;setnet</PackageTags>
+        <PackageLicenseExpression>MIT</PackageLicenseExpression>
+        <RepositoryUrl>https://github.com/Povstalez/SetNet.git</RepositoryUrl>
+        <RepositoryType>git</RepositoryType>
+        <PackageProjectUrl>https://github.com/Povstalez/SetNet</PackageProjectUrl>
+        <PackageReadmeFile>README.md</PackageReadmeFile>
+        <PackageIcon>icon.png</PackageIcon>
+    </PropertyGroup>
+
+    <ItemGroup>
+      <None Include="README.md" Pack="true" PackagePath="\" />
+      <None Include="../../../assets/icon.png" Pack="true" PackagePath="\" Visible="false" />
+    </ItemGroup>
+
+    <ItemGroup>
+      <ProjectReference Include="../SetNet.StateSync/SetNet.StateSync.csproj" />
+    </ItemGroup>
+
+</Project>
