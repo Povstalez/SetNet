@@ -236,7 +236,7 @@ In-process benchmark (`dotnet run -c Release --project tests/SetNet.Tests -- ben
 
 ```bash
 dotnet build                                              # build (library targets netstandard2.1)
-dotnet test tests/SetNet.UnitTests/SetNet.UnitTests.csproj      # 103 unit + integration tests
+dotnet test tests/SetNet.UnitTests/SetNet.UnitTests.csproj      # 115 unit + integration tests
 dotnet run --project tests/SetNet.Tests -- <frag|tcp|udp|loss|both|idle|deadlock>   # in-process transport scenarios
 dotnet run --project tests/SetNet.Tests -- bench                # throughput / connection benchmark
 
@@ -247,28 +247,54 @@ dotnet run --project examples/Chat.Client -- 127.0.0.1 5000 alice
 
 ## Project structure
 
-Projects live under `src/`, grouped by purpose; tests under `tests/`.
+Projects live under `src/`, grouped by purpose; tests under `tests/`. The core is one package; everything else is an optional companion you pull in only if you need it. **Full catalog: [docs/MODULES.md](docs/MODULES.md).**
 
 ```
 src/
-  core/         SetNet ................ core library (transport abstraction, reliability, hardening)
-  serializers/  SetNet.MessagePack .... MessagePack ISerializer adapter
-  transports/   SetNet.WebSockets ..... ws:// transport (config.UseWebSockets())
-                SetNet.InMemory ....... in-process loopback transport (config.UseInMemory())
-  messaging/    SetNet.Rpc ............ request/response RPC (client.CallAsync<TReq,TResp>)
-  security/     SetNet.Auth ........... auth + sessions (enforced gate, reconnect-resume)
-  realtime/     SetNet.Rooms .......... rooms/lobbies (join-by-code, broadcast, events)
-                SetNet.Matchmaking .... FIFO/skill matchmaking on top of Rooms
-                SetNet.StateSync ...... entity replication (snapshots, interpolation, interest)
-  net/          SetNet.RateLimit ...... per-peer token-bucket inbound gate
-  logging/      SetNet.Logging.Serilog  Serilog ILogger adapter
-  engine/       SetNet.Unity .......... Unity main-thread dispatcher
-                SetNet.StateSync.Unity  Unity components for StateSync (UPM source)
+  core/         SetNet ...................... core library (transport, reliability, hardening)
+  serializers/  SetNet.MessagePack .......... recommended serializer (hardened)
+                SetNet.Json ................. System.Text.Json (readable, web-friendly)
+                SetNet.MemoryPack ........... fast, AOT/IL2CPP-friendly
+                SetNet.Protobuf ............. compact, cross-language
+                SetNet.Compression .......... transparent Brotli decorator
+  transports/   SetNet.WebSockets ........... ws:// transport (config.UseWebSockets())
+                SetNet.InMemory ............. in-process loopback (config.UseInMemory())
+  messaging/    SetNet.Rpc .................. request/response RPC (client.CallAsync<TReq,TResp>)
+  security/     SetNet.Auth ................. auth + sessions (enforced gate, reconnect-resume)
+                SetNet.Auth.Jwt ............. JWT authenticator
+                SetNet.Auth.OAuth ........... OpenID Connect authenticator (JWKS)
+                SetNet.BanList .............. ban gate (IP/account) + kick
+                SetNet.DdosGuard ............ connection-flood auto-ban
+  net/          SetNet.RateLimit ............ per-peer token-bucket gate
+                SetNet.Fragmentation ........ oversize-UDP split/reassemble
+                SetNet.Priority ............. priority send queue
+                SetNet.Congestion ........... AIMD rate control
+  realtime/     SetNet.Rooms ................ rooms/lobbies (join-by-code, broadcast)
+                SetNet.Rooms.HostMigration .. host designation + migration
+                SetNet.Matchmaking .......... FIFO/skill matchmaking on top of Rooms
+                SetNet.Party ................ party/group with leader + ready
+                SetNet.Chat ................. channel text chat + moderation
+                SetNet.Lockstep ............. deterministic turn engine
+                SetNet.StateSync ............ entity replication (snapshots, interpolation)
+                SetNet.StateSync.SpatialGrid  grid interest management
+                SetNet.StateSync.LagCompensation  server rewind for hit detection
+                SetNet.StateSync.Prediction  client rewind & replay
+                SetNet.StateSync.NetworkVariable  typed change-tracked variables
+                SetNet.StateSync.Rpc ........ entity-scoped RPCs
+  infra/        SetNet.DependencyInjection .. handler construction via IServiceProvider
+                SetNet.Hosting .............. run as an IHostedService
+                SetNet.HealthChecks ......... IHealthCheck for liveness/connections
+                SetNet.Inspector ............ HttpListener metrics dashboard
+                SetNet.Gateway .............. raw-relay reverse proxy / sharding
+  logging/      SetNet.Logging.Serilog ...... Serilog ILogger adapter
+  engine/       SetNet.Unity ................ Unity main-thread dispatcher
+                SetNet.StateSync.Unity ...... Unity replication components (UPM source)
+                SetNet.Godot ................ Godot 4 (C#) dispatcher + math
 tests/
   SetNet.UnitTests .................... xUnit unit + integration tests
   SetNet.Tests ....................... in-process scenario harness + benchmark
 examples/ ............................ runnable chat (Chat.Shared / Chat.Server / Chat.Client)
-docs/ ................................ GUIDE.{en,ua}.md, PERFORMANCE.{en,ua}.md
+docs/ ................................ MODULES.md, GUIDE.{en,ua}.md, PERFORMANCE.{en,ua}.md
 ```
 
 ## Status

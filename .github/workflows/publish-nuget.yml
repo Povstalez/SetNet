@@ -25,69 +25,21 @@ jobs:
         run: echo "value=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
 
       - name: Pack
+        # Pack every packable library under src/ (core + all companion packages).
+        # SetNet.StateSync.Unity has no .csproj (it's a UPM source package) so it is skipped automatically.
         run: |
-          dotnet pack src/core/SetNet/SetNet.csproj \
-            -c Release -p:Version=${{ steps.version.outputs.value }} -o ./artifacts
-          dotnet pack src/serializers/SetNet.MessagePack/SetNet.MessagePack.csproj \
-            -c Release -p:Version=${{ steps.version.outputs.value }} -o ./artifacts
-          dotnet pack src/messaging/SetNet.Rpc/SetNet.Rpc.csproj \
-            -c Release -p:Version=${{ steps.version.outputs.value }} -o ./artifacts
-          dotnet pack src/security/SetNet.Auth/SetNet.Auth.csproj \
-            -c Release -p:Version=${{ steps.version.outputs.value }} -o ./artifacts
-          dotnet pack src/realtime/SetNet.Rooms/SetNet.Rooms.csproj \
-            -c Release -p:Version=${{ steps.version.outputs.value }} -o ./artifacts
-          dotnet pack src/net/SetNet.RateLimit/SetNet.RateLimit.csproj \
-            -c Release -p:Version=${{ steps.version.outputs.value }} -o ./artifacts
-          dotnet pack src/logging/SetNet.Logging.Serilog/SetNet.Logging.Serilog.csproj \
-            -c Release -p:Version=${{ steps.version.outputs.value }} -o ./artifacts
-          dotnet pack src/engine/SetNet.Unity/SetNet.Unity.csproj \
-            -c Release -p:Version=${{ steps.version.outputs.value }} -o ./artifacts
-          dotnet pack src/transports/SetNet.WebSockets/SetNet.WebSockets.csproj \
-            -c Release -p:Version=${{ steps.version.outputs.value }} -o ./artifacts
-          dotnet pack src/transports/SetNet.InMemory/SetNet.InMemory.csproj \
-            -c Release -p:Version=${{ steps.version.outputs.value }} -o ./artifacts
-          dotnet pack src/realtime/SetNet.Matchmaking/SetNet.Matchmaking.csproj \
-            -c Release -p:Version=${{ steps.version.outputs.value }} -o ./artifacts
-          dotnet pack src/realtime/SetNet.StateSync/SetNet.StateSync.csproj \
-            -c Release -p:Version=${{ steps.version.outputs.value }} -o ./artifacts
+          for proj in $(find src -name '*.csproj' | sort); do
+            echo "::group::pack $proj"
+            dotnet pack "$proj" -c Release -p:Version=${{ steps.version.outputs.value }} -o ./artifacts
+            echo "::endgroup::"
+          done
 
       - name: Push to NuGet
-        # SetNet first so the companions' dependency on it resolves; --skip-duplicate
-        # makes re-runs idempotent. Requires the NUGET_API_KEY repository secret.
+        # Push every produced package; --skip-duplicate makes re-runs idempotent.
+        # Requires the NUGET_API_KEY repository secret. Push order is irrelevant (packages are independent).
         run: |
-          dotnet nuget push "./artifacts/SetNet.${{ steps.version.outputs.value }}.nupkg" \
-            --api-key "${{ secrets.NUGET_API_KEY }}" \
-            --source https://api.nuget.org/v3/index.json --skip-duplicate
-          dotnet nuget push "./artifacts/SetNet.MessagePack.${{ steps.version.outputs.value }}.nupkg" \
-            --api-key "${{ secrets.NUGET_API_KEY }}" \
-            --source https://api.nuget.org/v3/index.json --skip-duplicate
-          dotnet nuget push "./artifacts/SetNet.Rpc.${{ steps.version.outputs.value }}.nupkg" \
-            --api-key "${{ secrets.NUGET_API_KEY }}" \
-            --source https://api.nuget.org/v3/index.json --skip-duplicate
-          dotnet nuget push "./artifacts/SetNet.Auth.${{ steps.version.outputs.value }}.nupkg" \
-            --api-key "${{ secrets.NUGET_API_KEY }}" \
-            --source https://api.nuget.org/v3/index.json --skip-duplicate
-          dotnet nuget push "./artifacts/SetNet.Rooms.${{ steps.version.outputs.value }}.nupkg" \
-            --api-key "${{ secrets.NUGET_API_KEY }}" \
-            --source https://api.nuget.org/v3/index.json --skip-duplicate
-          dotnet nuget push "./artifacts/SetNet.RateLimit.${{ steps.version.outputs.value }}.nupkg" \
-            --api-key "${{ secrets.NUGET_API_KEY }}" \
-            --source https://api.nuget.org/v3/index.json --skip-duplicate
-          dotnet nuget push "./artifacts/SetNet.Logging.Serilog.${{ steps.version.outputs.value }}.nupkg" \
-            --api-key "${{ secrets.NUGET_API_KEY }}" \
-            --source https://api.nuget.org/v3/index.json --skip-duplicate
-          dotnet nuget push "./artifacts/SetNet.Unity.${{ steps.version.outputs.value }}.nupkg" \
-            --api-key "${{ secrets.NUGET_API_KEY }}" \
-            --source https://api.nuget.org/v3/index.json --skip-duplicate
-          dotnet nuget push "./artifacts/SetNet.WebSockets.${{ steps.version.outputs.value }}.nupkg" \
-            --api-key "${{ secrets.NUGET_API_KEY }}" \
-            --source https://api.nuget.org/v3/index.json --skip-duplicate
-          dotnet nuget push "./artifacts/SetNet.InMemory.${{ steps.version.outputs.value }}.nupkg" \
-            --api-key "${{ secrets.NUGET_API_KEY }}" \
-            --source https://api.nuget.org/v3/index.json --skip-duplicate
-          dotnet nuget push "./artifacts/SetNet.Matchmaking.${{ steps.version.outputs.value }}.nupkg" \
-            --api-key "${{ secrets.NUGET_API_KEY }}" \
-            --source https://api.nuget.org/v3/index.json --skip-duplicate
-          dotnet nuget push "./artifacts/SetNet.StateSync.${{ steps.version.outputs.value }}.nupkg" \
-            --api-key "${{ secrets.NUGET_API_KEY }}" \
-            --source https://api.nuget.org/v3/index.json --skip-duplicate
+          for pkg in ./artifacts/*.nupkg; do
+            dotnet nuget push "$pkg" \
+              --api-key "${{ secrets.NUGET_API_KEY }}" \
+              --source https://api.nuget.org/v3/index.json --skip-duplicate
+          done

@@ -1,0 +1,36 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+    <PropertyGroup>
+        <TargetFramework>net8.0</TargetFramework>
+        <ImplicitUsings>false</ImplicitUsings>
+        <Nullable>enable</Nullable>
+        <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    </PropertyGroup>
+
+    <PropertyGroup>
+        <PackageId>SetNet.Godot</PackageId>
+        <Version>1.1.0</Version>
+        <AssemblyVersion>1.1.0.0</AssemblyVersion>
+        <FileVersion>1.1.0.0</FileVersion>
+        <Authors>Artem Lemeshev</Authors>
+        <Description>Godot 4 (C#) helpers for SetNet: a main-thread dispatcher to marshal background handler callbacks onto Godot's main thread (drain in _Process), and conversions between SetNet.StateSync math and Godot Vector2/Vector3/Quaternion. Depends on SetNet + SetNet.StateSync + GodotSharp.</Description>
+        <PackageTags>networking;godot;games;replication;setnet</PackageTags>
+        <PackageLicenseExpression>MIT</PackageLicenseExpression>
+        <RepositoryUrl>https://github.com/Povstalez/SetNet.git</RepositoryUrl>
+        <RepositoryType>git</RepositoryType>
+        <PackageProjectUrl>https://github.com/Povstalez/SetNet</PackageProjectUrl>
+        <PackageReadmeFile>README.md</PackageReadmeFile>
+        <PackageIcon>icon.png</PackageIcon>
+    </PropertyGroup>
+
+    <ItemGroup>
+      <None Include="README.md" Pack="true" PackagePath="\" />
+      <None Include="../../../assets/icon.png" Pack="true" PackagePath="\" Visible="false" />
+    </ItemGroup>
+
+    <ItemGroup>
+      <PackageReference Include="GodotSharp" Version="4.4.1" />
+      <ProjectReference Include="../../realtime/SetNet.StateSync/SetNet.StateSync.csproj" />
+    </ItemGroup>
+
+</Project>
