@@ -14,7 +14,7 @@ namespace SetNet.Auth
     internal sealed class AuthServerState
     {
         public IAuthenticator Authenticator = null!;
-        public SessionStore Store = null!;
+        public ISessionStore Store = null!;
         public AuthOptions Options = null!;
 
         // Weak-keyed: an entry auto-clears when the peer is collected after disconnect — no manual cleanup, no leak.
@@ -37,7 +37,7 @@ namespace SetNet.Auth
         // Process-wide background sweep: proactively evicts idle-past-TTL sessions from every store so dead
         // sessions (dropped clients that never reconnect) don't accumulate. Runs for the process lifetime.
         private static readonly Timer _sweepTimer = new Timer(
-            _ => { foreach (var state in _servers.Values) { try { state.Store.Sweep(); } catch { /* ignore */ } } },
+            _ => { foreach (var state in _servers.Values) { try { _ = state.Store.SweepAsync(); } catch { /* ignore */ } } },
             null, TimeSpan.FromSeconds(30), TimeSpan.FromSeconds(30));
 
         /// <summary>
@@ -58,7 +58,7 @@ namespace SetNet.Auth
             {
                 Authenticator = authenticator,
                 Options = opts,
-                Store = new SessionStore(opts.SessionTtl)
+                Store = opts.SessionStore ?? new MemorySessionStore(opts.SessionTtl)
             };
             _servers[server] = state;
 
@@ -91,7 +91,7 @@ namespace SetNet.Auth
             }
             else if (request.Kind == AuthKind.Resume)
             {
-                var session = state.Store.Resume(request.Token, peer.CurrentPeerInfo);
+                var session = await state.Store.ResumeAsync(request.Token, peer.CurrentPeerInfo).ConfigureAwait(false);
                 response = session != null
                     ? Accept(state, peer, session, request.CorrelationId)
                     : AuthResponse.Fail(request.CorrelationId, "session expired");
@@ -108,18 +108,18 @@ namespace SetNet.Auth
                 }
                 else
                 {
-                    response = ApplyPolicyAndCreate(state, peer, result.AccountId, request.CorrelationId);
+                    response = await ApplyPolicyAndCreateAsync(state, peer, result.AccountId, request.CorrelationId).ConfigureAwait(false);
                 }
             }
 
             await peer.SendAsync(AuthTypes.Response, response.Encode(), DeliveryMethod.Reliable).ConfigureAwait(false);
         }
 
-        private static AuthResponse ApplyPolicyAndCreate(AuthServerState state, BasePeer peer, string accountId, int corr)
+        private static async Task<AuthResponse> ApplyPolicyAndCreateAsync(AuthServerState state, BasePeer peer, string accountId, int corr)
         {
             if (state.Options.MultiSession != MultiSessionPolicy.AllowMultiple)
             {
-                var existing = state.Store.SessionsForAccount(accountId);
+                var existing = await state.Store.SessionsForAccountAsync(accountId).ConfigureAwait(false);
                 if (existing.Count > 0)
                 {
                     if (state.Options.MultiSession == MultiSessionPolicy.RejectNew)
@@ -129,12 +129,12 @@ namespace SetNet.Auth
                     foreach (var s in existing)
                     {
                         try { s.LivePeer?.Disconnect(); } catch { /* already gone */ }
-                        state.Store.Remove(s);
+                        await state.Store.RemoveAsync(s).ConfigureAwait(false);
                     }
                 }
             }
 
-            var session = state.Store.Create(accountId, peer.CurrentPeerInfo);
+            var session = await state.Store.CreateAsync(accountId, peer.CurrentPeerInfo).ConfigureAwait(false);
             return Accept(state, peer, session, corr);
         }
 

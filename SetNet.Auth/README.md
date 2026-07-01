@@ -52,7 +52,8 @@ var server = new MyServer(config);
 server.UseAuth(new MyAuthenticator(), new AuthOptions
 {
     MultiSession = MultiSessionPolicy.AllowMultiple,   // or KickExisting / RejectNew
-    SessionTtl   = TimeSpan.FromMinutes(2)             // reconnect window
+    SessionTtl   = TimeSpan.FromMinutes(2),            // reconnect window (default in-memory store)
+    // SessionStore = new RedisSessionStore(...)       // optional: survive restarts / share across a cluster
 });
 await server.StartAsync();
 ```
@@ -83,6 +84,7 @@ await client.SayAsync("hi");
 - After login the server issues a **reconnect token**; the client stores it and, on reconnect, **resumes the same session** automatically (within `SessionTtl`).
 - The reconnect token **rotates on every resume** (single-use), so a captured token is short-lived; the client updates to the new one transparently.
 - Idle sessions are evicted by a **background sweep** once past `SessionTtl`, so dead sessions don't accumulate.
+- **Pluggable store:** sessions live in an in-process `MemorySessionStore` by default. Implement `ISessionStore` (async — Redis, a database, …) and set `AuthOptions.SessionStore` to survive server restarts or share sessions across a cluster.
 - If the session has expired, the client falls back to a **fresh login** via your `tokenProvider` (which can return a refreshed token) — also automatic.
 - **Multi-session:** the same account on two devices = two sessions by default (`AllowMultiple`). Use `KickExisting` to disconnect the old device, or `RejectNew` to refuse the second login. Reconnect is always per-session, not per-account.
 

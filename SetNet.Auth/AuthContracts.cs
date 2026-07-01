@@ -81,8 +81,11 @@ namespace SetNet.Auth
         /// <summary>Concurrent-session behaviour for one account. Default <see cref="MultiSessionPolicy.AllowMultiple"/>.</summary>
         public MultiSessionPolicy MultiSession { get; set; } = MultiSessionPolicy.AllowMultiple;
 
-        /// <summary>How long a disconnected session stays resumable via its reconnect token. Default 2 minutes.</summary>
+        /// <summary>How long a disconnected session stays resumable via its reconnect token. Applies to the default in-memory store; a custom <see cref="SessionStore"/> manages its own expiry. Default 2 minutes.</summary>
         public TimeSpan SessionTtl { get; set; } = TimeSpan.FromMinutes(2);
+
+        /// <summary>The session store. Leave null for the default in-process <see cref="MemorySessionStore"/> (using <see cref="SessionTtl"/>); set a custom <see cref="ISessionStore"/> (Redis, DB, …) to survive restarts or share sessions across a cluster.</summary>
+        public ISessionStore? SessionStore { get; set; }
     }
 
     /// <summary>Thrown on the client when authentication is rejected by the server.</summary>

@@ -5,45 +5,45 @@ using Xunit;
 
 namespace SetNet.UnitTests;
 
-/// <summary>Unit tests for the auth session store: reconnect-token rotation and background-sweep eviction.</summary>
+/// <summary>Unit tests for the default <see cref="MemorySessionStore"/>: token rotation and background-sweep eviction.</summary>
 public class SessionStoreTests
 {
     [Fact]
-    public void ReconnectToken_Rotates_On_Resume()
+    public async Task ReconnectToken_Rotates_On_Resume()
     {
-        var store = new SessionStore(TimeSpan.FromMinutes(5));
-        var session = store.Create("acc", null);
+        ISessionStore store = new MemorySessionStore(TimeSpan.FromMinutes(5));
+        var session = await store.CreateAsync("acc", null);
         var token1 = session.ReconnectToken;
 
-        var resumed = store.Resume(token1, null);
+        var resumed = await store.ResumeAsync(token1, null);
         Assert.NotNull(resumed);
         var token2 = resumed!.ReconnectToken;
 
-        Assert.NotEqual(token1, token2);                 // token rotated
-        Assert.Null(store.Resume(token1, null));          // the old token is now dead (single-use)
-        Assert.NotNull(store.Resume(token2, null));       // the new token resumes the same session
+        Assert.NotEqual(token1, token2);                       // token rotated
+        Assert.Null(await store.ResumeAsync(token1, null));     // the old token is now dead (single-use)
+        Assert.NotNull(await store.ResumeAsync(token2, null));  // the new token resumes the same session
     }
 
     [Fact]
     public async Task Sweep_Evicts_Expired_Sessions()
     {
-        var store = new SessionStore(TimeSpan.FromMilliseconds(1));
-        var token = store.Create("acc", null).ReconnectToken;
+        ISessionStore store = new MemorySessionStore(TimeSpan.FromMilliseconds(1));
+        var token = (await store.CreateAsync("acc", null)).ReconnectToken;
 
         await Task.Delay(50);   // let it age past the tiny TTL
-        store.Sweep();
+        await store.SweepAsync();
 
-        Assert.Null(store.Resume(token, null));           // swept away
+        Assert.Null(await store.ResumeAsync(token, null));      // swept away
     }
 
     [Fact]
-    public void Live_Session_Survives_Sweep()
+    public async Task Live_Session_Survives_Sweep()
     {
-        var store = new SessionStore(TimeSpan.FromMinutes(5));
-        var token = store.Create("acc", null).ReconnectToken;
+        ISessionStore store = new MemorySessionStore(TimeSpan.FromMinutes(5));
+        var token = (await store.CreateAsync("acc", null)).ReconnectToken;
 
-        store.Sweep();
+        await store.SweepAsync();
 
-        Assert.NotNull(store.Resume(token, null));        // still within TTL
+        Assert.NotNull(await store.ResumeAsync(token, null));   // still within TTL
     }
 }
