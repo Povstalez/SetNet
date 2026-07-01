@@ -27,6 +27,8 @@
         <ProjectReference Include="..\..\src\transports\SetNet.InMemory\SetNet.InMemory.csproj" />
         <ProjectReference Include="..\..\src\realtime\SetNet.Matchmaking\SetNet.Matchmaking.csproj" />
         <ProjectReference Include="..\..\src\realtime\SetNet.StateSync\SetNet.StateSync.csproj" />
+        <ProjectReference Include="..\..\src\serializers\SetNet.Json\SetNet.Json.csproj" />
+        <ProjectReference Include="..\..\src\serializers\SetNet.Compression\SetNet.Compression.csproj" />
     </ItemGroup>
 
 </Project>
