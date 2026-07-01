@@ -2,7 +2,7 @@
 
 This document covers: (1) the performance model and how to tune it, (2) scaling limits and overload protection, (3) a structural roadmap of deferred optimizations.
 
-The numbers below are from the built-in benchmark (`dotnet run -c Release --project SetNet.Tests -- bench`, in-process loopback, ServerGC), and are approximate.
+The numbers below are from the built-in benchmark (`dotnet run -c Release --project tests/SetNet.Tests -- bench`, in-process loopback, ServerGC), and are approximate.
 
 ---
 

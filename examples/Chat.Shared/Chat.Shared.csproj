@@ -12,7 +12,7 @@
     </ItemGroup>
 
     <ItemGroup>
-        <ProjectReference Include="..\..\SetNet\SetNet.csproj" />
+        <ProjectReference Include="..\..\src\core\SetNet\SetNet.csproj" />
     </ItemGroup>
 
 </Project>

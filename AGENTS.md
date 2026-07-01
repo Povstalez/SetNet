@@ -17,12 +17,12 @@ dotnet build
 
 **Run the unit + integration tests (xUnit):**
 ```bash
-dotnet test SetNet.UnitTests/SetNet.UnitTests.csproj
+dotnet test tests/SetNet.UnitTests/SetNet.UnitTests.csproj
 ```
 
 **Run the in-process transport scenarios (manual harness):**
 ```bash
-dotnet run --project SetNet.Tests -- <frag|tcp|udp|loss|both|idle|deadlock>
+dotnet run --project tests/SetNet.Tests -- <frag|tcp|udp|loss|both|idle|deadlock>
 ```
 
 **Run the example chat (separate server + client):**
@@ -198,7 +198,9 @@ Server-side, `BasePeer` mirrors this: `Close()` (kick) → only `OnDisconnected`
 
 ## Project Structure
 
-- **SetNet/**: Core library
+Projects live under `src/` grouped by purpose (`core`, `serializers`, `transports`, `messaging`, `security`, `realtime`, `net`, `logging`, `engine`); tests under `tests/`. Project names below imply their category folder (core = `src/core/SetNet/`, Rpc = `src/messaging/SetNet.Rpc/`, StateSync = `src/realtime/SetNet.StateSync/`, etc.).
+
+- **SetNet/** (`src/core/SetNet/`): Core library
   - `Core/`: BaseSocket, BaseClient, BaseServer, BasePeer, PacketBuilder, RateLimiter, TimerScheduler, MonotonicClock, SystemMessageTypes, Commands (CommandExecutor)
   - `Core/Transport/`: transport abstraction + enums (`TransportType`, `DeliveryMethod`); `Tcp/`, `Udp/` (handshake, demux, `ReliabilityChannel`/`ReliabilityChannelSet`), `Both/` implementations; `TransportFactory`
   - `Config/`: Configuration, PeerInfo
@@ -209,7 +211,7 @@ Server-side, `BasePeer` mirrors this: `Close()` (kick) → only `OnDisconnected`
   - `Diagnostics/`: NetworkMetrics
   - `Utils/`: GameLoopScheduler, UpdateScheduler
 
-- **SetNet.Tests/**: Manual in-process scenario harness — `dotnet run --project SetNet.Tests -- <frag|tcp|udp|loss|both|idle|deadlock>`
+- **SetNet.Tests/**: Manual in-process scenario harness — `dotnet run --project tests/SetNet.Tests -- <frag|tcp|udp|loss|both|idle|deadlock>`
 
 - **SetNet.UnitTests/**: xUnit unit + integration test project (`dotnet test`). Unit: PacketBuilder, UdpDatagram, AsyncQueue, MonotonicClock, Configuration.Validate, MessageProcessor, CommandExecutor, ReliabilityChannel. `Integration/`: end-to-end TCP/UDP/loss/Both round-trips, hardening (limits, rate-limit, back-pressure, TLS, batching, lifecycle), fuzz. The library exposes internals via `[InternalsVisibleTo]`.
 

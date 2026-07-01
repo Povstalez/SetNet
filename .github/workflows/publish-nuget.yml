@@ -26,29 +26,29 @@ jobs:
 
       - name: Pack
         run: |
-          dotnet pack SetNet/SetNet.csproj \
+          dotnet pack src/core/SetNet/SetNet.csproj \
             -c Release -p:Version=${{ steps.version.outputs.value }} -o ./artifacts
-          dotnet pack SetNet.MessagePack/SetNet.MessagePack.csproj \
+          dotnet pack src/serializers/SetNet.MessagePack/SetNet.MessagePack.csproj \
             -c Release -p:Version=${{ steps.version.outputs.value }} -o ./artifacts
-          dotnet pack SetNet.Rpc/SetNet.Rpc.csproj \
+          dotnet pack src/messaging/SetNet.Rpc/SetNet.Rpc.csproj \
             -c Release -p:Version=${{ steps.version.outputs.value }} -o ./artifacts
-          dotnet pack SetNet.Auth/SetNet.Auth.csproj \
+          dotnet pack src/security/SetNet.Auth/SetNet.Auth.csproj \
             -c Release -p:Version=${{ steps.version.outputs.value }} -o ./artifacts
-          dotnet pack SetNet.Rooms/SetNet.Rooms.csproj \
+          dotnet pack src/realtime/SetNet.Rooms/SetNet.Rooms.csproj \
             -c Release -p:Version=${{ steps.version.outputs.value }} -o ./artifacts
-          dotnet pack SetNet.RateLimit/SetNet.RateLimit.csproj \
+          dotnet pack src/net/SetNet.RateLimit/SetNet.RateLimit.csproj \
             -c Release -p:Version=${{ steps.version.outputs.value }} -o ./artifacts
-          dotnet pack SetNet.Logging.Serilog/SetNet.Logging.Serilog.csproj \
+          dotnet pack src/logging/SetNet.Logging.Serilog/SetNet.Logging.Serilog.csproj \
             -c Release -p:Version=${{ steps.version.outputs.value }} -o ./artifacts
-          dotnet pack SetNet.Unity/SetNet.Unity.csproj \
+          dotnet pack src/engine/SetNet.Unity/SetNet.Unity.csproj \
             -c Release -p:Version=${{ steps.version.outputs.value }} -o ./artifacts
-          dotnet pack SetNet.WebSockets/SetNet.WebSockets.csproj \
+          dotnet pack src/transports/SetNet.WebSockets/SetNet.WebSockets.csproj \
             -c Release -p:Version=${{ steps.version.outputs.value }} -o ./artifacts
-          dotnet pack SetNet.InMemory/SetNet.InMemory.csproj \
+          dotnet pack src/transports/SetNet.InMemory/SetNet.InMemory.csproj \
             -c Release -p:Version=${{ steps.version.outputs.value }} -o ./artifacts
-          dotnet pack SetNet.Matchmaking/SetNet.Matchmaking.csproj \
+          dotnet pack src/realtime/SetNet.Matchmaking/SetNet.Matchmaking.csproj \
             -c Release -p:Version=${{ steps.version.outputs.value }} -o ./artifacts
-          dotnet pack SetNet.StateSync/SetNet.StateSync.csproj \
+          dotnet pack src/realtime/SetNet.StateSync/SetNet.StateSync.csproj \
             -c Release -p:Version=${{ steps.version.outputs.value }} -o ./artifacts
 
       - name: Push to NuGet

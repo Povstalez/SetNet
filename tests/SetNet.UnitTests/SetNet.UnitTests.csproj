@@ -1,0 +1,32 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+    <PropertyGroup>
+        <TargetFramework>net8.0</TargetFramework>
+        <ImplicitUsings>enable</ImplicitUsings>
+        <Nullable>enable</Nullable>
+        <IsPackable>false</IsPackable>
+        <IsTestProject>true</IsTestProject>
+    </PropertyGroup>
+
+    <ItemGroup>
+        <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.11.1" />
+        <PackageReference Include="xunit" Version="2.9.2" />
+        <PackageReference Include="xunit.runner.visualstudio" Version="2.8.2" />
+        <PackageReference Include="Xunit.SkippableFact" Version="1.5.23" />
+    </ItemGroup>
+
+    <ItemGroup>
+        <ProjectReference Include="..\..\src\core\SetNet\SetNet.csproj" />
+        <ProjectReference Include="..\..\src\serializers\SetNet.MessagePack\SetNet.MessagePack.csproj" />
+        <ProjectReference Include="..\..\src\messaging\SetNet.Rpc\SetNet.Rpc.csproj" />
+        <ProjectReference Include="..\..\src\security\SetNet.Auth\SetNet.Auth.csproj" />
+        <ProjectReference Include="..\..\src\realtime\SetNet.Rooms\SetNet.Rooms.csproj" />
+        <ProjectReference Include="..\..\src\net\SetNet.RateLimit\SetNet.RateLimit.csproj" />
+        <ProjectReference Include="..\..\src\transports\SetNet.WebSockets\SetNet.WebSockets.csproj" />
+        <ProjectReference Include="..\..\src\engine\SetNet.Unity\SetNet.Unity.csproj" />
+        <ProjectReference Include="..\..\src\transports\SetNet.InMemory\SetNet.InMemory.csproj" />
+        <ProjectReference Include="..\..\src\realtime\SetNet.Matchmaking\SetNet.Matchmaking.csproj" />
+        <ProjectReference Include="..\..\src\realtime\SetNet.StateSync\SetNet.StateSync.csproj" />
+    </ItemGroup>
+
+</Project>

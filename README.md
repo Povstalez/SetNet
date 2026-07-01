@@ -216,7 +216,7 @@ var config = new Configuration
 
 ## Performance
 
-In-process benchmark (`dotnet run -c Release --project SetNet.Tests -- bench`, ServerGC):
+In-process benchmark (`dotnet run -c Release --project tests/SetNet.Tests -- bench`, ServerGC):
 
 | Mode | Throughput (1 connection) | Optimized for |
 |---|---|---|
@@ -236,9 +236,9 @@ In-process benchmark (`dotnet run -c Release --project SetNet.Tests -- bench`, S
 
 ```bash
 dotnet build                                              # build (library targets netstandard2.1)
-dotnet test SetNet.UnitTests/SetNet.UnitTests.csproj      # 103 unit + integration tests
-dotnet run --project SetNet.Tests -- <frag|tcp|udp|loss|both|idle|deadlock>   # in-process transport scenarios
-dotnet run --project SetNet.Tests -- bench                # throughput / connection benchmark
+dotnet test tests/SetNet.UnitTests/SetNet.UnitTests.csproj      # 103 unit + integration tests
+dotnet run --project tests/SetNet.Tests -- <frag|tcp|udp|loss|both|idle|deadlock>   # in-process transport scenarios
+dotnet run --project tests/SetNet.Tests -- bench                # throughput / connection benchmark
 
 # chat example (two terminals)
 dotnet run --project examples/Chat.Server -- 127.0.0.1 5000
@@ -247,24 +247,28 @@ dotnet run --project examples/Chat.Client -- 127.0.0.1 5000 alice
 
 ## Project structure
 
+Projects live under `src/`, grouped by purpose; tests under `tests/`.
+
 ```
-SetNet/             core library (transport abstraction, reliability, hardening) — no serializer dependency
-SetNet.MessagePack/ MessagePack ISerializer adapter (companion package)
-SetNet.Rpc/         optional request/response RPC (await client.CallAsync<TReq,TResp>) — companion package
-SetNet.Auth/        optional auth + sessions (enforced gate, reconnect-resume) — companion package
-SetNet.Rooms/       optional rooms/lobbies (join-by-code, broadcast, events) — companion package
-SetNet.Matchmaking/ optional matchmaking (FIFO/skill queues) on top of Rooms — companion package
-SetNet.StateSync/   optional entity replication (snapshots, interpolation, interest) — companion package
-SetNet.StateSync.Unity/  Unity components for StateSync (UPM source: NetworkObject/Transform/Animator/Rigidbody)
-SetNet.WebSockets/  optional WebSocket transport (config.UseWebSockets()) — companion package
-SetNet.InMemory/    optional in-process loopback transport (config.UseInMemory()) — companion package
-SetNet.RateLimit/   optional per-peer token-bucket inbound gate — companion package
-SetNet.Unity/       optional Unity main-thread dispatcher — companion package
-SetNet.Logging.Serilog/  optional Serilog ILogger adapter — companion package
-SetNet.Tests/       in-process scenario harness + benchmark
-SetNet.UnitTests/   xUnit unit + integration tests
-examples/           runnable chat (Chat.Shared / Chat.Server / Chat.Client)
-docs/               GUIDE.{en,ua}.md, PERFORMANCE.{en,ua}.md
+src/
+  core/         SetNet ................ core library (transport abstraction, reliability, hardening)
+  serializers/  SetNet.MessagePack .... MessagePack ISerializer adapter
+  transports/   SetNet.WebSockets ..... ws:// transport (config.UseWebSockets())
+                SetNet.InMemory ....... in-process loopback transport (config.UseInMemory())
+  messaging/    SetNet.Rpc ............ request/response RPC (client.CallAsync<TReq,TResp>)
+  security/     SetNet.Auth ........... auth + sessions (enforced gate, reconnect-resume)
+  realtime/     SetNet.Rooms .......... rooms/lobbies (join-by-code, broadcast, events)
+                SetNet.Matchmaking .... FIFO/skill matchmaking on top of Rooms
+                SetNet.StateSync ...... entity replication (snapshots, interpolation, interest)
+  net/          SetNet.RateLimit ...... per-peer token-bucket inbound gate
+  logging/      SetNet.Logging.Serilog  Serilog ILogger adapter
+  engine/       SetNet.Unity .......... Unity main-thread dispatcher
+                SetNet.StateSync.Unity  Unity components for StateSync (UPM source)
+tests/
+  SetNet.UnitTests .................... xUnit unit + integration tests
+  SetNet.Tests ....................... in-process scenario harness + benchmark
+examples/ ............................ runnable chat (Chat.Shared / Chat.Server / Chat.Client)
+docs/ ................................ GUIDE.{en,ua}.md, PERFORMANCE.{en,ua}.md
 ```
 
 ## Status

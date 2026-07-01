@@ -17,12 +17,12 @@ dotnet build
 
 **Run the unit + integration tests (xUnit):**
 ```bash
-dotnet test SetNet.UnitTests/SetNet.UnitTests.csproj
+dotnet test tests/SetNet.UnitTests/SetNet.UnitTests.csproj
 ```
 
 **Run the in-process transport scenarios (manual harness):**
 ```bash
-dotnet run --project SetNet.Tests -- <frag|tcp|udp|loss|both|idle|deadlock>
+dotnet run --project tests/SetNet.Tests -- <frag|tcp|udp|loss|both|idle|deadlock>
 ```
 
 **Run the example chat (separate server + client):**
@@ -337,7 +337,9 @@ public class GameServerPeer : BasePeer
 
 ## Project Structure
 
-- **SetNet/**: Core library
+Projects are organized under `src/` by purpose (`src/core/`, `src/serializers/`, `src/transports/`, `src/messaging/`, `src/security/`, `src/realtime/`, `src/net/`, `src/logging/`, `src/engine/`), tests under `tests/`. The paths below name each project by its folder; its category prefix under `src/` is implied (e.g. core = `src/core/SetNet/`, Rpc = `src/messaging/SetNet.Rpc/`, StateSync = `src/realtime/SetNet.StateSync/`).
+
+- **SetNet/** (`src/core/SetNet/`): Core library
   - `Core/`: BaseSocket, BaseClient, BaseServer, BasePeer, PacketBuilder, SystemMessageTypes, Commands (CommandExecutor)
   - `Core/Transport/`: transport abstraction + enums (`TransportType`, `DeliveryMethod`); `Tcp/`, `Udp/` (handshake, demux, `ReliabilityChannel`), `Both/` implementations; `TransportFactory`
   - `Config/`: Configuration, PeerInfo
@@ -351,7 +353,7 @@ public class GameServerPeer : BasePeer
   - `Core/`: MainServer, MainClient, PlayerPeer, `Scenarios` (in-process transport tests), LossStats
   - `Data/`: MessageTypes, TestMessage, UpdateClientIdMessage, LossCountMessage
   - `Messages/`: Handler implementations for test messages
-  - `Program.cs`: scenario dispatcher — `dotnet run --project SetNet.Tests -- <frag|tcp|udp|loss|both|idle|deadlock>`
+  - `Program.cs`: scenario dispatcher — `dotnet run --project tests/SetNet.Tests -- <frag|tcp|udp|loss|both|idle|deadlock>`
 
 - **SetNet.UnitTests/**: xUnit unit + integration test project (`dotnet test`)
   - Unit: PacketBuilder (incl. fragmentation), UdpDatagram, AsyncQueue, MonotonicClock, Configuration.Validate, MessageProcessor, CommandExecutor, ReliabilityChannel (ordered/dedup)

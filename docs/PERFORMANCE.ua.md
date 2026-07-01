@@ -2,7 +2,7 @@
 
 Цей документ описує: (1) модель продуктивності та як її налаштувати, (2) межі масштабування й захист від перевантаження, (3) структурний roadmap відкладених оптимізацій.
 
-Цифри нижче — з вбудованого бенчмарку (`dotnet run -c Release --project SetNet.Tests -- bench`, in-process loopback, ServerGC), орієнтовні.
+Цифри нижче — з вбудованого бенчмарку (`dotnet run -c Release --project tests/SetNet.Tests -- bench`, in-process loopback, ServerGC), орієнтовні.
 
 ---
 

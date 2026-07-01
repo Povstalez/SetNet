@@ -277,7 +277,7 @@ var config = new Configuration
 
 Спробувати локально:
 ```bash
-dotnet run --project SetNet.Tests -- <frag|tcp|udp|loss|both|idle|deadlock>
+dotnet run --project tests/SetNet.Tests -- <frag|tcp|udp|loss|both|idle|deadlock>
 ```
 
 ---

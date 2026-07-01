@@ -10,8 +10,8 @@
     </PropertyGroup>
 
     <ItemGroup>
-        <ProjectReference Include="..\..\SetNet\SetNet.csproj" />
-        <ProjectReference Include="..\..\SetNet.MessagePack\SetNet.MessagePack.csproj" />
+        <ProjectReference Include="..\..\src\core\SetNet\SetNet.csproj" />
+        <ProjectReference Include="..\..\src\serializers\SetNet.MessagePack\SetNet.MessagePack.csproj" />
         <ProjectReference Include="..\Chat.Shared\Chat.Shared.csproj" />
     </ItemGroup>
 

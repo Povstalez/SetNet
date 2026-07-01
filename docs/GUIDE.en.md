@@ -277,7 +277,7 @@ Notes:
 
 Try it locally:
 ```bash
-dotnet run --project SetNet.Tests -- <frag|tcp|udp|loss|both|idle|deadlock>
+dotnet run --project tests/SetNet.Tests -- <frag|tcp|udp|loss|both|idle|deadlock>
 ```
 
 ---
