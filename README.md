@@ -154,6 +154,8 @@ Then register the serializer once at startup, before connecting:
 SetNetSerializer.Use(new MessagePackNetSerializer());   // from SetNet.MessagePack
 ```
 
+Packages ship to **NuGet.org** (public, no auth) and to **GitHub Packages**. To use the GitHub Packages feed, copy [`docs/nuget.config.example`](docs/nuget.config.example) to your solution as `nuget.config` and set `GITHUB_PACKAGES_PAT` (a token with `read:packages`) — see [docs/README.md](docs/README.md#installing-from-github-packages).
+
 > **Unity:** works on desktop/mobile standalone (Unity 2021+, netstandard2.1). Two things to know: message handlers run on **background threads**, so marshal to the main thread before touching the Unity API (e.g. queue and drain in `Update()`); and on **IL2CPP/AOT** builds, MessagePack needs pre-generated formatters (or swap in an AOT-friendly serializer — see [Serialization](#serialization)). **WebGL is not supported** (no threads/sockets).
 
 ## Quick start
@@ -322,7 +324,7 @@ In-process benchmark (`dotnet run -c Release --project tests/SetNet.Tests -- ben
 
 ```bash
 dotnet build                                              # build (library targets netstandard2.1)
-dotnet test tests/SetNet.UnitTests/SetNet.UnitTests.csproj      # 125 unit + integration tests
+dotnet test tests/SetNet.UnitTests/SetNet.UnitTests.csproj      # 126 unit + integration tests
 dotnet run --project tests/SetNet.Tests -- <frag|tcp|udp|loss|both|idle|deadlock>   # in-process transport scenarios
 dotnet run --project tests/SetNet.Tests -- bench                # throughput / connection benchmark
 

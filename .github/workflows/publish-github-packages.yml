@@ -1,0 +1,61 @@
+name: Publish to GitHub Packages
+
+# Publishes every SetNet package to this repository's GitHub Packages NuGet feed.
+# Runs when a GitHub Release is published (the version is taken from the tag, e.g.
+# "v1.1.0" -> 1.1.0), and can also be triggered manually with an explicit version.
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Package version (e.g. 1.1.0)'
+        required: true
+
+# GITHUB_TOKEN needs write access to Packages; no personal access token required.
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Derive version
+        id: version
+        # On release: strip a leading "v" from the tag. On manual run: use the input.
+        run: |
+          if [ -n "${{ github.event.inputs.version }}" ]; then
+            echo "value=${{ github.event.inputs.version }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "value=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Pack
+        # Pack every packable library under src/ (core + all companion packages).
+        # SetNet.StateSync.Unity has no .csproj (UPM source package) so it is skipped automatically.
+        run: |
+          for proj in $(find src -name '*.csproj' | sort); do
+            echo "::group::pack $proj"
+            dotnet pack "$proj" -c Release -p:Version=${{ steps.version.outputs.value }} -o ./artifacts
+            echo "::endgroup::"
+          done
+
+      - name: Push to GitHub Packages
+        # The feed is scoped to the repository owner. --skip-duplicate makes re-runs idempotent
+        # (GitHub Packages does not allow overwriting an existing version).
+        run: |
+          for pkg in ./artifacts/*.nupkg; do
+            dotnet nuget push "$pkg" \
+              --api-key "${{ secrets.GITHUB_TOKEN }}" \
+              --source "https://nuget.pkg.github.com/${{ github.repository_owner }}/index.json" \
+              --skip-duplicate
+          done

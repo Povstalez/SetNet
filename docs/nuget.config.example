@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Sample nuget.config for consuming SetNet packages from GitHub Packages.
+
+  Copy this file to the root of YOUR solution as "nuget.config" and set the
+  GITHUB_PACKAGES_PAT environment variable to a GitHub token that has the
+  "read:packages" scope (required even for public packages on GitHub Packages).
+
+  Do NOT commit a token into this file — use the %ENV_VAR% form below so the
+  secret stays out of source control.
+
+  Then restore/add packages as usual, e.g.:
+      dotnet add package SetNet
+      dotnet add package SetNet.Rpc
+-->
+<configuration>
+  <packageSources>
+    <clear />
+    <add key="nuget.org" value="https://api.nuget.org/v3/index.json" protocolVersion="3" />
+    <add key="github" value="https://nuget.pkg.github.com/Povstalez/index.json" />
+  </packageSources>
+  <packageSourceCredentials>
+    <github>
+      <add key="Username" value="Povstalez" />
+      <add key="ClearTextPassword" value="%GITHUB_PACKAGES_PAT%" />
+    </github>
+  </packageSourceCredentials>
+</configuration>

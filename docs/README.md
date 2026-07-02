@@ -66,6 +66,18 @@ Rule of thumb: **register a typed `On<T>` handler / use the typed `<T>` overload
 
 Companion packages claim ids from the top of the `ushort` range so they never collide with your application message types (number yours from `0` upward). The reserved block is currently the contiguous range **65501–65535** — the full map is in [MODULES.md](MODULES.md).
 
+## Installing from GitHub Packages
+
+Releases are published to **NuGet.org** (public, no auth) *and* to this repo's **GitHub Packages** feed. To consume the GitHub Packages feed, copy [`docs/nuget.config.example`](nuget.config.example) to your solution root as `nuget.config` and set a token:
+
+```bash
+export GITHUB_PACKAGES_PAT=<a token with read:packages>
+dotnet add package SetNet
+dotnet add package SetNet.Rpc
+```
+
+Notes: GitHub Packages requires a token with `read:packages` **even for public packages**; keep it in an env var, never commit it. Publishing is automated — a published GitHub Release triggers [`.github/workflows/publish-github-packages.yml`](../.github/workflows/publish-github-packages.yml) (and the NuGet.org workflow), packing every library under `src/` at the release-tag version and pushing with `--skip-duplicate`. You can also run the workflow manually (`workflow_dispatch`) with an explicit version.
+
 ## Building & testing
 
 ```bash
