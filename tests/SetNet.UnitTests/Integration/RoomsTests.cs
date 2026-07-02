@@ -48,7 +48,7 @@ public class RoomsTests
 
         byte[]? gotPayload = null;
         string? gotFrom = null;
-        roomsA.MessageReceived += (from, payload) => { gotFrom = from; gotPayload = payload; };
+        roomsA.MessageReceived += (from, type, payload) => { gotFrom = from; gotPayload = payload; };
         await roomsB.BroadcastAsync(new byte[] { 1, 2, 3 });
 
         Assert.True(await WaitUntil(() => gotPayload != null));
@@ -104,6 +104,36 @@ public class RoomsTests
         await Assert.ThrowsAsync<RoomException>(() => rooms.JoinAsync("ZZZZZZ"));
 
         a.Disconnect();
+        await server.StopAsync();
+    }
+
+    [Fact]
+    public async Task Typed_Broadcast_Routes_To_On_Handler()
+    {
+        const ushort MoveMsg = 1;
+        var server = new TestServer(Config(5894));
+        server.UseRooms();
+        _ = server.StartAsync();
+        await Task.Delay(200);
+
+        var a = new TestClient(Config(5894));
+        var roomsA = a.UseRooms();
+        string? gotFrom = null; string? gotText = null;
+        roomsA.On<EchoMessage>(MoveMsg, (from, msg) => { gotFrom = from; gotText = msg.Text; });   // typed, no byte[]
+        await a.ConnectAsync();
+        var room = await roomsA.CreateAsync();
+
+        var b = new TestClient(Config(5894));
+        var roomsB = b.UseRooms();
+        await b.ConnectAsync();
+        var bRoom = await roomsB.JoinAsync(room.Code);
+        await roomsB.BroadcastAsync(MoveMsg, new EchoMessage { Text = "typed-move" });   // typed send
+
+        Assert.True(await WaitUntil(() => gotText == "typed-move"));
+        Assert.Equal(bRoom.OwnPlayerId, gotFrom);
+
+        a.Disconnect();
+        b.Disconnect();
         await server.StopAsync();
     }
 

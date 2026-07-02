@@ -57,9 +57,8 @@ A recurring question: *why do some APIs hand me `byte[]`?* There are two differe
   - `stateRpc.SendAsync<T>(netId, methodId, arg)` and `peer.SendFragmentedAsync<T>(type, msg, ...)` — typed send.
 
 - **On receive**, where one type is known you get it typed. Where a channel multiplexes **many types under an id** (e.g. StateSync.Rpc, whose `methodId` selects a different argument type each time), a single generic *event* is impossible — so those packages expose a **typed handler registration** instead:
-  - `stateRpc.On<T>(methodId, (…, arg) => …)` — registers a typed handler per method id; the payload is deserialized to `T` for you. This is the recommended path.
-  - A raw **`Received`** event remains as a catch-all for ids you didn't register (relays, logging, dynamic dispatch); there the `byte[]` **is** the `SetNetSerializer` output, so you decode it with `SetNetSerializer.Deserialize<T>(payload)`.
-  - (`Rooms.MessageReceived` still hands `byte[]` — a room broadcast is a single untyped channel; deserialize with the type you `BroadcastAsync<T>`'d.)
+  - `stateRpc.On<T>(methodId, (…, arg) => …)` and `rooms.On<T>(messageType, (from, msg) => …)` — register a typed handler per id; the payload is deserialized to `T` for you. This is the recommended path (pair with `rooms.BroadcastAsync<T>(messageType, msg)` / `stateRpc.SendAsync<T>(…)`).
+  - A raw **`Received`** / **`MessageReceived`** event remains as a catch-all for ids you didn't register (relays, logging, dynamic dispatch); there the `byte[]` **is** the `SetNetSerializer` output, so you decode it with `SetNetSerializer.Deserialize<T>(payload)`.
 
 Rule of thumb: **register a typed `On<T>` handler / use the typed `<T>` overload** when one exists; only drop to the raw `byte[]` event for advanced/relay scenarios.
 

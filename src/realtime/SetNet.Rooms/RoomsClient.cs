@@ -1,4 +1,6 @@
 using System;
+using System.Buffers.Binary;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
@@ -22,6 +24,7 @@ namespace SetNet.Rooms
         private string? _code;
         private string _ownId = "";
         private readonly HashSet<string> _members = new HashSet<string>();
+        private readonly ConcurrentDictionary<ushort, Action<string, byte[]>> _typed = new ConcurrentDictionary<ushort, Action<string, byte[]>>();
 
         /// <summary>The room this client is currently in, or null.</summary>
         public RoomInfo? CurrentRoom
@@ -39,8 +42,12 @@ namespace SetNet.Rooms
         /// <summary>Raised when a player leaves the current room (arg: their player id).</summary>
         public event Action<string>? PlayerLeft;
 
-        /// <summary>Raised on a broadcast from another member (args: sender player id, raw payload — deserialize with your serializer).</summary>
-        public event Action<string, byte[]>? MessageReceived;
+        /// <summary>
+        /// Catch-all for broadcasts whose message-type id has no <see cref="On{T}"/> handler registered (args: sender player id,
+        /// message-type id, raw body). Prefer <see cref="On{T}"/> for typed dispatch; this fires for unregistered types
+        /// (including the default type <c>0</c> used by the untyped <see cref="BroadcastAsync{T}(T)"/> overload).
+        /// </summary>
+        public event Action<string, ushort, byte[]>? MessageReceived;
 
         /// <summary>Raised when the current room closes.</summary>
         public event Action? Closed;
@@ -66,15 +73,43 @@ namespace SetNet.Rooms
             lock (_gate) { _code = null; _members.Clear(); }
         }
 
-        /// <summary>Broadcasts raw bytes to the other members of the current room (fire-and-forget).</summary>
-        public Task BroadcastAsync(byte[] payload)
+        /// <summary>Broadcasts raw bytes to the other members under a message-type id, routed on the far side to <see cref="On{T}"/> or <see cref="MessageReceived"/>.</summary>
+        public Task BroadcastAsync(ushort messageType, byte[] body)
         {
-            var command = new RoomCommand(0, RoomOp.Broadcast, CurrentRoom?.Code ?? "", 0, payload);
+            var command = new RoomCommand(0, RoomOp.Broadcast, CurrentRoom?.Code ?? "", 0, Frame(messageType, body ?? Array.Empty<byte>()));
             return _client.SendAsync(RoomTypes.Command, command.Encode(), DeliveryMethod.Reliable);
         }
 
-        /// <summary>Serializes and broadcasts a message to the other members of the current room.</summary>
-        public Task BroadcastAsync<T>(T message) => BroadcastAsync(SetNetSerializer.Serialize(message));
+        /// <summary>Broadcasts raw bytes under the default message-type id (<c>0</c>).</summary>
+        public Task BroadcastAsync(byte[] payload) => BroadcastAsync((ushort)0, payload);
+
+        /// <summary>Serializes and broadcasts a message under the default message-type id (<c>0</c>). Receive with <c>On&lt;T&gt;(0, …)</c> or the raw <see cref="MessageReceived"/>.</summary>
+        public Task BroadcastAsync<T>(T message) => BroadcastAsync((ushort)0, SetNetSerializer.Serialize(message));
+
+        /// <summary>Serializes and broadcasts a message under a message-type id — receive it typed with <c>On&lt;T&gt;(messageType, …)</c>.</summary>
+        public Task BroadcastAsync<T>(ushort messageType, T message) => BroadcastAsync(messageType, SetNetSerializer.Serialize(message));
+
+        /// <summary>
+        /// Registers a typed handler for one broadcast message-type id: the body is deserialized to <typeparamref name="T"/>
+        /// via <see cref="SetNetSerializer"/> and your callback is invoked with (senderPlayerId, message). Overwrites any
+        /// handler for the same id.
+        /// </summary>
+        public void On<T>(ushort messageType, Action<string, T> handler)
+        {
+            if (handler == null) throw new ArgumentNullException(nameof(handler));
+            _typed[messageType] = (sender, body) => handler(sender, SetNetSerializer.Deserialize<T>(body));
+        }
+
+        /// <summary>Removes the typed handler for a broadcast message-type id (it then falls through to <see cref="MessageReceived"/>).</summary>
+        public void Off(ushort messageType) => _typed.TryRemove(messageType, out _);
+
+        private static byte[] Frame(ushort messageType, byte[] body)
+        {
+            var framed = new byte[2 + body.Length];
+            BinaryPrimitives.WriteUInt16LittleEndian(framed.AsSpan(0, 2), messageType);
+            Buffer.BlockCopy(body, 0, framed, 2, body.Length);
+            return framed;
+        }
 
         private RoomInfo ApplyRoom(RoomReply reply)
         {
@@ -126,8 +161,16 @@ namespace SetNet.Rooms
                     PlayerLeft?.Invoke(evt.PlayerId);
                     break;
                 case RoomEventType.Message:
-                    MessageReceived?.Invoke(evt.PlayerId, evt.Payload);
+                {
+                    var framed = evt.Payload;
+                    if (framed.Length < 2) break;   // malformed broadcast
+                    var messageType = BinaryPrimitives.ReadUInt16LittleEndian(framed.AsSpan(0, 2));
+                    var body = new byte[framed.Length - 2];
+                    Buffer.BlockCopy(framed, 2, body, 0, body.Length);
+                    if (_typed.TryGetValue(messageType, out var handler)) handler(evt.PlayerId, body);   // typed handler consumes it
+                    else MessageReceived?.Invoke(evt.PlayerId, messageType, body);                       // otherwise the catch-all
                     break;
+                }
                 case RoomEventType.Closed:
                     lock (_gate) { _code = null; _members.Clear(); }
                     Closed?.Invoke();

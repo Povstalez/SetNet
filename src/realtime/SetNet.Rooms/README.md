@@ -57,22 +57,24 @@ Console.WriteLine($"Join code: {room.Code}");   // e.g. "K7P2QX"
 var joined = await rooms.JoinAsync("K7P2QX");   // throws RoomException if missing/full
 
 // React to others:
-rooms.PlayerJoined   += id => Console.WriteLine($"{id} joined");
-rooms.PlayerLeft     += id => Console.WriteLine($"{id} left");
-rooms.MessageReceived += (from, payload) =>
-{
-    var move = SetNetSerializer.Deserialize<MoveMessage>(payload);
-    // apply move from `from`
-};
+rooms.PlayerJoined += id => Console.WriteLine($"{id} joined");
+rooms.PlayerLeft   += id => Console.WriteLine($"{id} left");
 
-// Broadcast to everyone else in the room:
-await rooms.BroadcastAsync(new MoveMessage { X = 1, Y = 2 });
+// Typed broadcast: tag a message with a type id and handle it typed on the far side —
+// a room can carry several message types, each routed to its own handler:
+const ushort Move = 1, Chat = 2;
+rooms.On<MoveMessage>(Move, (from, move) => ApplyMove(from, move));   // deserialized for you
+rooms.On<ChatLine>(Chat, (from, line) => ShowChat(from, line));
+
+await rooms.BroadcastAsync(Move, new MoveMessage { X = 1, Y = 2 });   // typed send under a type id
+await rooms.BroadcastAsync(Chat, new ChatLine { Text = "gg" });
 
 await rooms.LeaveAsync();
 ```
 
 - `rooms.CurrentRoom` gives the code, your player id, and the member list.
-- `BroadcastAsync<T>(msg)` serializes with your serializer; `MessageReceived` hands you the raw payload to deserialize (so the server never touches your game types).
+- **Typed broadcasts:** `BroadcastAsync<T>(messageType, msg)` tags the message with a `ushort` type id; the far side routes it to the matching `On<T>(messageType, …)` handler, which deserializes the body for you — no raw bytes, and one room channel can multiplex many message types.
+- **Raw catch-all:** `BroadcastAsync<T>(msg)` / `BroadcastAsync(byte[])` use the default type id `0`; unregistered type ids fall through to `MessageReceived += (from, messageType, body) => …` (deserialize with `SetNetSerializer.Deserialize<T>(body)`). The server never touches your game types either way.
 
 ## Pluggable store
 
