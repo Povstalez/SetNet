@@ -53,6 +53,85 @@ await SendAsync(MsgType.Position, position, DeliveryMethod.Unreliable);
 - 🎮 **Optional Unity helper** — add [`SetNet.Unity`](https://www.nuget.org/packages/SetNet.Unity): a `MainThreadDispatcher` to marshal handler callbacks onto Unity's main thread (drain in `Update()`).
 - 🪵 **Optional Serilog logging** — add [`SetNet.Logging.Serilog`](https://www.nuget.org/packages/SetNet.Logging.Serilog): route SetNet's `ILogger` into Serilog (`config.Logger = new SerilogLogger(...)`).
 
+## Modules
+
+The core is one package (`SetNet`); everything else is an **optional companion** added by composition — pull in only what you need. Each package name links to its **README**; the 📦 links to **NuGet** (install with `dotnet add package <name>`). Full catalog + core extension points: **[docs/MODULES.md](docs/MODULES.md)**.
+
+**Core & serializers**
+
+| Package | What it does |
+|---|---|
+| [SetNet](src/core/SetNet/README.md) · [📦](https://www.nuget.org/packages/SetNet) | Core: TCP/UDP/Both transport, reliability, hardening, typed handlers |
+| [SetNet.MessagePack](src/serializers/SetNet.MessagePack/README.md) · [📦](https://www.nuget.org/packages/SetNet.MessagePack) | Recommended serializer (hardened MessagePack) |
+| [SetNet.Json](src/serializers/SetNet.Json/README.md) · [📦](https://www.nuget.org/packages/SetNet.Json) | `System.Text.Json` — human-readable, web-friendly |
+| [SetNet.MemoryPack](src/serializers/SetNet.MemoryPack/README.md) · [📦](https://www.nuget.org/packages/SetNet.MemoryPack) | Fast, zero-encoding, AOT/IL2CPP-friendly |
+| [SetNet.Protobuf](src/serializers/SetNet.Protobuf/README.md) · [📦](https://www.nuget.org/packages/SetNet.Protobuf) | protobuf-net — compact, cross-language |
+| [SetNet.Compression](src/serializers/SetNet.Compression/README.md) · [📦](https://www.nuget.org/packages/SetNet.Compression) | Transparent Brotli decorator over any serializer |
+
+**Transports** (`config.UseXxx()`)
+
+| Package | What it does |
+|---|---|
+| [SetNet.WebSockets](src/transports/SetNet.WebSockets/README.md) · [📦](https://www.nuget.org/packages/SetNet.WebSockets) | `ws://` transport — HTTP-friendly, proxy/firewall-traversable |
+| [SetNet.InMemory](src/transports/SetNet.InMemory/README.md) · [📦](https://www.nuget.org/packages/SetNet.InMemory) | In-process loopback (no sockets) — fast tests / co-hosting |
+
+**Messaging & security**
+
+| Package | What it does |
+|---|---|
+| [SetNet.Rpc](src/messaging/SetNet.Rpc/README.md) · [📦](https://www.nuget.org/packages/SetNet.Rpc) | Request/response: `client.CallAsync<TReq,TResp>()` |
+| [SetNet.Auth](src/security/SetNet.Auth/README.md) · [📦](https://www.nuget.org/packages/SetNet.Auth) | Enforced auth gate + sessions + reconnect-resume |
+| [SetNet.Auth.Jwt](src/security/SetNet.Auth.Jwt/README.md) · [📦](https://www.nuget.org/packages/SetNet.Auth.Jwt) | JWT `IAuthenticator` |
+| [SetNet.Auth.OAuth](src/security/SetNet.Auth.OAuth/README.md) · [📦](https://www.nuget.org/packages/SetNet.Auth.OAuth) | OpenID Connect authenticator (auto-refreshed JWKS) |
+| [SetNet.BanList](src/security/SetNet.BanList/README.md) · [📦](https://www.nuget.org/packages/SetNet.BanList) | Ban gate (IP/account) + instant kick, pluggable store |
+| [SetNet.DdosGuard](src/security/SetNet.DdosGuard/README.md) · [📦](https://www.nuget.org/packages/SetNet.DdosGuard) | Per-IP connection-flood detection + timed auto-ban |
+
+**Net / QoS**
+
+| Package | What it does |
+|---|---|
+| [SetNet.RateLimit](src/net/SetNet.RateLimit/README.md) · [📦](https://www.nuget.org/packages/SetNet.RateLimit) | Per-peer token-bucket inbound gate |
+| [SetNet.Fragmentation](src/net/SetNet.Fragmentation/README.md) · [📦](https://www.nuget.org/packages/SetNet.Fragmentation) | Split/reassemble oversize UDP messages |
+| [SetNet.Priority](src/net/SetNet.Priority/README.md) · [📦](https://www.nuget.org/packages/SetNet.Priority) | Priority send queue with a per-flush byte budget |
+| [SetNet.Congestion](src/net/SetNet.Congestion/README.md) · [📦](https://www.nuget.org/packages/SetNet.Congestion) | AIMD send-rate controller |
+
+**Realtime & games**
+
+| Package | What it does |
+|---|---|
+| [SetNet.Rooms](src/realtime/SetNet.Rooms/README.md) · [📦](https://www.nuget.org/packages/SetNet.Rooms) | Rooms/lobbies by code, typed broadcast, join/leave events |
+| [SetNet.Rooms.HostMigration](src/realtime/SetNet.Rooms.HostMigration/README.md) · [📦](https://www.nuget.org/packages/SetNet.Rooms.HostMigration) | Host designation + migration on host drop |
+| [SetNet.Matchmaking](src/realtime/SetNet.Matchmaking/README.md) · [📦](https://www.nuget.org/packages/SetNet.Matchmaking) | FIFO/skill matchmaking → creates a room to join |
+| [SetNet.Party](src/realtime/SetNet.Party/README.md) · [📦](https://www.nuget.org/packages/SetNet.Party) | Parties: leader + ready, queue together |
+| [SetNet.Chat](src/realtime/SetNet.Chat/README.md) · [📦](https://www.nuget.org/packages/SetNet.Chat) | Channel text chat + moderation |
+| [SetNet.Lockstep](src/realtime/SetNet.Lockstep/README.md) · [📦](https://www.nuget.org/packages/SetNet.Lockstep) | Deterministic input-synchronous turn engine (RTS) |
+| [SetNet.StateSync](src/realtime/SetNet.StateSync/README.md) · [📦](https://www.nuget.org/packages/SetNet.StateSync) | Server-authoritative entity replication (snapshots, interpolation) |
+| [SetNet.StateSync.SpatialGrid](src/realtime/SetNet.StateSync.SpatialGrid/README.md) · [📦](https://www.nuget.org/packages/SetNet.StateSync.SpatialGrid) | Grid-based interest management |
+| [SetNet.StateSync.LagCompensation](src/realtime/SetNet.StateSync.LagCompensation/README.md) · [📦](https://www.nuget.org/packages/SetNet.StateSync.LagCompensation) | Server rewind for fair hit detection |
+| [SetNet.StateSync.Prediction](src/realtime/SetNet.StateSync.Prediction/README.md) · [📦](https://www.nuget.org/packages/SetNet.StateSync.Prediction) | Client-side prediction & reconciliation |
+| [SetNet.StateSync.NetworkVariable](src/realtime/SetNet.StateSync.NetworkVariable/README.md) · [📦](https://www.nuget.org/packages/SetNet.StateSync.NetworkVariable) | Typed, change-tracked variables |
+| [SetNet.StateSync.Rpc](src/realtime/SetNet.StateSync.Rpc/README.md) · [📦](https://www.nuget.org/packages/SetNet.StateSync.Rpc) | Entity-scoped RPCs (typed `On<T>`) |
+
+**Infrastructure**
+
+| Package | What it does |
+|---|---|
+| [SetNet.DependencyInjection](src/infra/SetNet.DependencyInjection/README.md) · [📦](https://www.nuget.org/packages/SetNet.DependencyInjection) | Construct handlers via `IServiceProvider` |
+| [SetNet.Hosting](src/infra/SetNet.Hosting/README.md) · [📦](https://www.nuget.org/packages/SetNet.Hosting) | Run as an `IHostedService` (Generic Host / ASP.NET Core) |
+| [SetNet.HealthChecks](src/infra/SetNet.HealthChecks/README.md) · [📦](https://www.nuget.org/packages/SetNet.HealthChecks) | `IHealthCheck` for liveness + connection count |
+| [SetNet.Inspector](src/infra/SetNet.Inspector/README.md) · [📦](https://www.nuget.org/packages/SetNet.Inspector) | Built-in HttpListener metrics dashboard |
+| [SetNet.Gateway](src/infra/SetNet.Gateway/README.md) · [📦](https://www.nuget.org/packages/SetNet.Gateway) | Raw-relay reverse proxy / player sharding |
+
+**Logging & engine bindings**
+
+| Package | What it does |
+|---|---|
+| [SetNet.Logging.Serilog](src/logging/SetNet.Logging.Serilog/README.md) · [📦](https://www.nuget.org/packages/SetNet.Logging.Serilog) | Route `ILogger` into Serilog |
+| [SetNet.Unity](src/engine/SetNet.Unity/README.md) · [📦](https://www.nuget.org/packages/SetNet.Unity) | Unity main-thread dispatcher |
+| [SetNet.StateSync.Unity](src/engine/SetNet.StateSync.Unity/README.md) | Unity replication components (**UPM source**, not NuGet) |
+| [SetNet.Godot](src/engine/SetNet.Godot/README.md) · [📦](https://www.nuget.org/packages/SetNet.Godot) | Godot 4 (C#) main-thread dispatcher + math conversions |
+| [SetNet.StateSync.Godot](src/engine/SetNet.StateSync.Godot/README.md) · [📦](https://www.nuget.org/packages/SetNet.StateSync.Godot) | Godot 4 replication components |
+
 ## Install
 
 Requires **.NET Standard 2.1** (consumable from .NET Core 3.0+/.NET 5–8, Unity, Mono, MAUI — not .NET Framework).
@@ -225,6 +304,8 @@ In-process benchmark (`dotnet run -c Release --project tests/SetNet.Tests -- ben
 
 ~10 KB per endpoint; 2,000 connections established in ~110 ms. The default favors latency (every small message sent immediately); enable `SendBatching` for high message rates. These numbers include serialization cost — the library deserializes each inbound message into the handler's typed `T`. Full model, scaling limits and roadmap: [docs/PERFORMANCE.en.md](docs/PERFORMANCE.en.md).
 
+## Documentation
+
 - 📚 **[Documentation home (docs/README.md)](docs/README.md)** — the docs hub: a "which package do I need?" guide, the serialization/payloads explainer, links to every module's README, and everything below.
 - 📖 **[User guide (docs/GUIDE.en.md)](docs/GUIDE.en.md)** — full usage manual: handlers, transports, reliable channels, reconnect, batching, hardening, the complete `Configuration` reference, and a production checklist. *(Українською: [docs/GUIDE.ua.md](docs/GUIDE.ua.md))*
 - ⚙️ **[Performance (docs/PERFORMANCE.en.md)](docs/PERFORMANCE.en.md)** — performance model, scaling limits, structural roadmap. *(Українською: [docs/PERFORMANCE.ua.md](docs/PERFORMANCE.ua.md))*
@@ -235,7 +316,7 @@ In-process benchmark (`dotnet run -c Release --project tests/SetNet.Tests -- ben
 
 ```bash
 dotnet build                                              # build (library targets netstandard2.1)
-dotnet test tests/SetNet.UnitTests/SetNet.UnitTests.csproj      # 115 unit + integration tests
+dotnet test tests/SetNet.UnitTests/SetNet.UnitTests.csproj      # 119 unit + integration tests
 dotnet run --project tests/SetNet.Tests -- <frag|tcp|udp|loss|both|idle|deadlock>   # in-process transport scenarios
 dotnet run --project tests/SetNet.Tests -- bench                # throughput / connection benchmark
 
@@ -310,7 +391,7 @@ docs/ ................................ MODULES.md, GUIDE.{en,ua}.md, PERFORMANCE
 
 SetNet has been through extensive adversarial auditing (multi-round correctness convergence + a performance pass) with a full unit/integration suite and in-process scenarios. It is well-suited as the **network layer for .NET ↔ .NET real-time systems** (multiplayer games, chat, collaborative apps).
 
-It is **not** a general-purpose HTTP framework, and there's no built-in DI/hosting integration. Optional companion packages fill common gaps — request/response ([`SetNet.Rpc`](https://www.nuget.org/packages/SetNet.Rpc)), auth ([`SetNet.Auth`](https://www.nuget.org/packages/SetNet.Auth)), rooms ([`SetNet.Rooms`](https://www.nuget.org/packages/SetNet.Rooms)), and a WebSocket transport ([`SetNet.WebSockets`](https://www.nuget.org/packages/SetNet.WebSockets)). Before production, enable authentication, set the hardening config, and run a soak/load test under realistic traffic.
+It is **not** a general-purpose HTTP framework. Everything beyond the raw connection is an opt-in companion package (see [Modules](#modules)) — request/response RPC, auth, rooms/matchmaking/party, state replication, alternative transports (WebSockets/in-memory), QoS, DI/hosting/health-checks, and Unity/Godot bindings. Before production, enable authentication, set the hardening config, and run a soak/load test under realistic traffic.
 
 ## License
 
