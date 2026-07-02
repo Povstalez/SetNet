@@ -30,25 +30,22 @@ StateSyncRpcRuntime.Enable();     // once at startup, both ends, before creating
 
 ## Server
 
+Register a **typed handler per method id** with `On<T>` — the payload is deserialized for you, so you work with your DTO, not bytes:
+
 ```csharp
 var rpc = server.UseStateSyncRpc();
 
-// receive calls from clients (validate ownership/authority yourself):
-rpc.Received += (peer, netId, methodId, payload) =>
+// one typed handler per method — validate ownership/authority inside it:
+rpc.On<FireCommand>((ushort)UnitRpc.Fire, (peer, netId, shot) =>
 {
-    switch (methodId)
-    {
-        case (ushort)UnitRpc.Fire:
-            var shot = SetNetSerializer.Deserialize<FireCommand>(payload);
-            if (Owns(peer, netId)) ApplyFire(netId, shot);
-            break;
-    }
-};
+    if (Owns(peer, netId)) ApplyFire(netId, shot);
+});
+rpc.On<UseItem>((ushort)UnitRpc.UseItem, (peer, netId, cmd) => { /* … */ });
 
-// push a call to a specific client (e.g. the entity's owner):
+// push a call to a specific client (typed — serialized for you):
 await rpc.SendAsync(ownerPeer, netId, (ushort)UnitRpc.Fire, new FireCommand { Dir = dir });
 
-// …or broadcast to several observers (you decide who):
+// …or to several observers (you decide who):
 foreach (var observer in observersOf(netId))
     await rpc.SendAsync(observer, netId, (ushort)UnitRpc.PlayHitFx, hitInfo);
 ```
@@ -58,41 +55,40 @@ foreach (var observer in observersOf(netId))
 ```csharp
 var rpc = client.UseStateSyncRpc();
 
-rpc.Received += (netId, methodId, payload) =>
-{
-    if (methodId == (ushort)UnitRpc.PlayHitFx)
-    {
-        var hit = SetNetSerializer.Deserialize<HitInfo>(payload);
-        FindObject(netId)?.PlayHit(hit);
-    }
-};
+rpc.On<HitInfo>((ushort)UnitRpc.PlayHitFx, (netId, hit) => FindObject(netId)?.PlayHit(hit));
+rpc.On<DoorState>((ushort)UnitRpc.DoorChanged, (netId, s) => FindObject(netId)?.SetDoor(s));
 
 // invoke on the entity you own (server validates):
 await rpc.SendAsync(myNetId, (ushort)UnitRpc.Fire, new FireCommand { Dir = aimDir });
 ```
 
-## Typed vs raw payloads
+## Typed handlers vs the raw catch-all
 
-- `SendAsync<T>(…, T arg)` **serializes** the argument via `SetNetSerializer` — pass your DTO directly.
-- On the receive side you get `byte[]`, because different `methodId`s carry **different argument types** (a single event can't be generic). Deserialize per `methodId` with `SetNetSerializer.Deserialize<T>(payload)`.
-- The raw `SendAsync(…, byte[] payload)` overload is there if you already have serialized bytes.
+The channel routes each incoming call like this:
+
+1. If a `On<T>(methodId, …)` handler is registered for the method → the payload is **deserialized to `T`** and that handler runs. This is the recommended path — one typed handler per method id, no `byte[]`.
+2. Otherwise the raw **`Received`** event fires with `(…, methodId, byte[] payload)` — a catch-all for methods you didn't register (relays, logging, dynamic dispatch). Decode it yourself with `SetNetSerializer.Deserialize<T>(payload)`.
+
+Why the split? A single C# event can't be generic over your type when **each `methodId` carries a different argument type** — so the typed layer is a *registration* (`On<T>`), and the untyped event is the fallback. `Off(methodId)` removes a typed handler.
 
 ## API
 
 | Member | Side | Purpose |
 |---|---|---|
 | `server.UseStateSyncRpc()` → `ServerStateRpc` | server | enable + get the channel |
+| `ServerStateRpc.On<T>(methodId, Action<BasePeer,uint,T>)` | server | **typed** handler for a method (deserializes the arg) |
 | `ServerStateRpc.SendAsync<T>(peer, netId, methodId, arg, delivery?)` | server | call a method on one client's entity |
-| `ServerStateRpc.Received` | server | `(peer, netId, methodId, payload)` from a client |
+| `ServerStateRpc.Received` / `Off(methodId)` | server | raw catch-all for unregistered methods / unregister |
 | `client.UseStateSyncRpc()` → `ClientStateRpc` | client | enable + get the channel |
+| `ClientStateRpc.On<T>(methodId, Action<uint,T>)` | client | **typed** handler for a method |
 | `ClientStateRpc.SendAsync<T>(netId, methodId, arg, delivery?)` | client | call a method on the server (owned entity) |
-| `ClientStateRpc.Received` | client | `(netId, methodId, payload)` from the server |
+| `ClientStateRpc.Received` / `Off(methodId)` | client | raw catch-all / unregister |
 
 Reliable by default; pass `DeliveryMethod.Unreliable` for frequent, loss-tolerant effects. Reserved wire type `65516`.
 
 ## Notes
 
-- **Method binding** (which C# method a `methodId` maps to) is your code — typically a `switch` or a dictionary. The Unity layer can bind these to methods on a `NetworkObject`.
+- **One handler per method id.** `On<T>` overwrites any previous handler for the same id; use distinct method ids per call type. The Unity layer can bind these to methods on a `NetworkObject`.
 - **Authority**: the server must validate that a client-invoked RPC is legal for the peer that sent it (e.g. the peer owns `netId`). The server is authoritative — never trust the client.
 - Routing to the right client uses a process-wide registry (one client per process is the common case; co-located clients share routing).
 

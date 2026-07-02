@@ -48,10 +48,33 @@ namespace SetNet.StateSync.Rpc
     /// </summary>
     public sealed class ServerStateRpc
     {
-        /// <summary>Raised when a client invokes an RPC (args: sender peer, entity net id, method id, payload).</summary>
+        private readonly ConcurrentDictionary<ushort, Action<BasePeer, uint, byte[]>> _typed = new ConcurrentDictionary<ushort, Action<BasePeer, uint, byte[]>>();
+
+        /// <summary>
+        /// Fallback for method ids that have no <see cref="On{T}"/> handler registered (args: sender peer, entity net id,
+        /// method id, raw payload). Use <see cref="On{T}"/> for typed per-method dispatch; this is the catch-all.
+        /// </summary>
         public event Action<BasePeer, uint, ushort, byte[]>? Received;
 
-        internal void Raise(BasePeer peer, uint netId, ushort methodId, byte[] payload) => Received?.Invoke(peer, netId, methodId, payload);
+        /// <summary>
+        /// Registers a typed handler for one method id: the payload is deserialized to <typeparamref name="T"/> via
+        /// <see cref="SetNetSerializer"/> and your callback is invoked with (peer, netId, arg). Overwrites any handler for
+        /// the same id. Validate ownership/authority inside the callback — the server is authoritative.
+        /// </summary>
+        public void On<T>(ushort methodId, Action<BasePeer, uint, T> handler)
+        {
+            if (handler == null) throw new ArgumentNullException(nameof(handler));
+            _typed[methodId] = (peer, netId, payload) => handler(peer, netId, SetNetSerializer.Deserialize<T>(payload));
+        }
+
+        /// <summary>Removes the typed handler for a method id (subsequent calls fall through to <see cref="Received"/>).</summary>
+        public void Off(ushort methodId) => _typed.TryRemove(methodId, out _);
+
+        internal void Raise(BasePeer peer, uint netId, ushort methodId, byte[] payload)
+        {
+            if (_typed.TryGetValue(methodId, out var typed)) typed(peer, netId, payload);   // typed handler consumes it
+            else Received?.Invoke(peer, netId, methodId, payload);                           // otherwise the catch-all
+        }
 
         /// <summary>Sends an entity RPC to one client (e.g. the entity's owner or an observer).</summary>
         public Task SendAsync(BasePeer peer, uint netId, ushort methodId, byte[] payload, DeliveryMethod delivery = DeliveryMethod.Reliable)
@@ -66,8 +89,12 @@ namespace SetNet.StateSync.Rpc
     public sealed class ClientStateRpc
     {
         private readonly BaseClient _client;
+        private readonly ConcurrentDictionary<ushort, Action<uint, byte[]>> _typed = new ConcurrentDictionary<ushort, Action<uint, byte[]>>();
 
-        /// <summary>Raised when the server invokes an RPC on an entity (args: entity net id, method id, payload).</summary>
+        /// <summary>
+        /// Fallback for method ids that have no <see cref="On{T}"/> handler registered (args: entity net id, method id,
+        /// raw payload). Use <see cref="On{T}"/> for typed per-method dispatch; this is the catch-all.
+        /// </summary>
         public event Action<uint, ushort, byte[]>? Received;
 
         internal ClientStateRpc(BaseClient client)
@@ -76,7 +103,24 @@ namespace SetNet.StateSync.Rpc
             StateRpcRegistry.RegisterClient(this);
         }
 
-        internal void Raise(uint netId, ushort methodId, byte[] payload) => Received?.Invoke(netId, methodId, payload);
+        /// <summary>
+        /// Registers a typed handler for one method id: the payload is deserialized to <typeparamref name="T"/> via
+        /// <see cref="SetNetSerializer"/> and your callback is invoked with (netId, arg). Overwrites any handler for the same id.
+        /// </summary>
+        public void On<T>(ushort methodId, Action<uint, T> handler)
+        {
+            if (handler == null) throw new ArgumentNullException(nameof(handler));
+            _typed[methodId] = (netId, payload) => handler(netId, SetNetSerializer.Deserialize<T>(payload));
+        }
+
+        /// <summary>Removes the typed handler for a method id (subsequent calls fall through to <see cref="Received"/>).</summary>
+        public void Off(ushort methodId) => _typed.TryRemove(methodId, out _);
+
+        internal void Raise(uint netId, ushort methodId, byte[] payload)
+        {
+            if (_typed.TryGetValue(methodId, out var typed)) typed(netId, payload);
+            else Received?.Invoke(netId, methodId, payload);
+        }
 
         /// <summary>Sends an entity RPC to the server (typically for the entity you own).</summary>
         public Task SendAsync(uint netId, ushort methodId, byte[] payload, DeliveryMethod delivery = DeliveryMethod.Reliable)

@@ -50,15 +50,18 @@ A recurring question: *why do some APIs hand me `byte[]`?* There are two differe
 
 - **The inter-package envelope** (an RPC correlation id, a room code, a lockstep turn number, an opcode) is **hand-framed as `byte[]`** by each companion package — deliberately, so the package has **no dependency on any serializer**. That's what makes RPC / Rooms / Auth / Matchmaking / StateSync serializer-agnostic (MessagePack-free). You never see this layer.
 
-- **Your game payload** inside the envelope goes through **`SetNetSerializer`** wherever the type is known at the call site, so you work with **typed objects**, not bytes:
+- **Your game payload** inside the envelope goes through **`SetNetSerializer`** wherever the type is known, so you work with **typed objects**, not bytes:
   - `client.CallAsync<TReq, TResp>(...)` (Rpc) — typed both ways.
   - `rooms.BroadcastAsync<T>(msg)` — typed send.
   - `client.UseLockstep<TInput>()` — `SubmitInput(TInput)` + `TurnReady` delivers `IReadOnlyDictionary<string, TInput>`.
   - `stateRpc.SendAsync<T>(netId, methodId, arg)` and `peer.SendFragmentedAsync<T>(type, msg, ...)` — typed send.
 
-- **Where you still get `byte[]` on receive**, it's because a single C# event can't be generic over your type (e.g. StateSync.Rpc, where each `methodId` carries a *different* argument type, or `Rooms.MessageReceived`). The `byte[]` you receive **is** the `SetNetSerializer` output — decode it with `SetNetSerializer.Deserialize<T>(payload)` (per `methodId` where relevant). This is the honest boundary: the framework can't statically know your type there, so it hands you the bytes and you name the type.
+- **On receive**, where one type is known you get it typed. Where a channel multiplexes **many types under an id** (e.g. StateSync.Rpc, whose `methodId` selects a different argument type each time), a single generic *event* is impossible — so those packages expose a **typed handler registration** instead:
+  - `stateRpc.On<T>(methodId, (…, arg) => …)` — registers a typed handler per method id; the payload is deserialized to `T` for you. This is the recommended path.
+  - A raw **`Received`** event remains as a catch-all for ids you didn't register (relays, logging, dynamic dispatch); there the `byte[]` **is** the `SetNetSerializer` output, so you decode it with `SetNetSerializer.Deserialize<T>(payload)`.
+  - (`Rooms.MessageReceived` still hands `byte[]` — a room broadcast is a single untyped channel; deserialize with the type you `BroadcastAsync<T>`'d.)
 
-Rule of thumb: **prefer the typed `<T>` overload** when one exists; only drop to `byte[]` for advanced/raw/relay scenarios.
+Rule of thumb: **register a typed `On<T>` handler / use the typed `<T>` overload** when one exists; only drop to the raw `byte[]` event for advanced/relay scenarios.
 
 ## Reserved wire types
 
