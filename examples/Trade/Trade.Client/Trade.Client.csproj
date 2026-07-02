@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+    <PropertyGroup>
+        <OutputType>Exe</OutputType>
+        <TargetFramework>net8.0</TargetFramework>
+        <IsPackable>false</IsPackable>
+        <ImplicitUsings>enable</ImplicitUsings>
+        <Nullable>enable</Nullable>
+        <RootNamespace>Trade.Client</RootNamespace>
+        <AssemblyName>Trade.Client</AssemblyName>
+    </PropertyGroup>
+
+    <ItemGroup>
+        <ProjectReference Include="..\..\..\src\core\SetNet\SetNet.csproj" />
+        <ProjectReference Include="..\..\..\src\serializers\SetNet.MessagePack\SetNet.MessagePack.csproj" />
+        <ProjectReference Include="..\..\..\src\realtime\SetNet.Inventory\SetNet.Inventory.csproj" />
+        <ProjectReference Include="..\..\..\src\realtime\SetNet.Trade\SetNet.Trade.csproj" />
+        <ProjectReference Include="..\Trade.Shared\Trade.Shared.csproj" />
+    </ItemGroup>
+
+</Project>

@@ -65,6 +65,10 @@
         <ProjectReference Include="..\..\src\infra\SetNet.LoadBalancer\SetNet.LoadBalancer.csproj" />
         <ProjectReference Include="..\..\src\realtime\SetNet.Marketplace\SetNet.Marketplace.csproj" />
         <ProjectReference Include="..\..\src\realtime\SetNet.StatusEffects\SetNet.StatusEffects.csproj" />
+        <ProjectReference Include="..\..\src\realtime\SetNet.GeoData\SetNet.GeoData.csproj" />
+        <ProjectReference Include="..\..\src\realtime\SetNet.PathFinding\SetNet.PathFinding.csproj" />
+        <ProjectReference Include="..\..\src\realtime\SetNet.NPC\SetNet.NPC.csproj" />
+        <ProjectReference Include="..\..\src\realtime\SetNet.Mobs\SetNet.Mobs.csproj" />
     </ItemGroup>
 
 </Project>

@@ -1,0 +1,14 @@
+{
+    "name": "SetNet.GeoData.Unity.Editor",
+    "rootNamespace": "SetNet.GeoData.Unity.Editor",
+    "references": [ "SetNet.GeoData.Unity" ],
+    "includePlatforms": [ "Editor" ],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
+}

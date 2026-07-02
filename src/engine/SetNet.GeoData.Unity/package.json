@@ -1,0 +1,10 @@
+{
+  "name": "com.setnet.geodata",
+  "version": "1.1.0",
+  "displayName": "SetNet GeoData Baker for Unity",
+  "description": "Unity tool that bakes a portable SetNet.GeoData file (.geo) from a scene's NavMesh or colliders — including multi-storey LAYERED grids (floors/bridges without a nav-mesh) and SECTORED worlds (tiles + a .geomap manifest). Menu: SetNet > Bake GeoData. Includes a Scene-view debug visualizer (GeoDataGizmo). Writes an engine-independent binary blob a headless SetNet server loads via GeoDataFile.LoadFromFile / GeoDataManifest.Load — no runtime engine dependency, no SetNet assembly needed.",
+  "unity": "2021.3",
+  "keywords": [ "networking", "geodata", "navmesh", "layered", "sectors", "baking", "editor", "visualizer", "pathfinding", "setnet" ],
+  "author": { "name": "Artem Lemeshev", "url": "https://github.com/Povstalez/SetNet" },
+  "license": "MIT"
+}

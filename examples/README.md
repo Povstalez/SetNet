@@ -1,38 +1,103 @@
 # SetNet examples
 
-Runnable, minimal samples — each is a separate **server** and **client** console app (with a small **Shared** project for the DTOs/schema), so you run them in different terminals over TCP.
+Runnable sample apps. Each example lives in its own folder with three projects — `<Name>.Shared` (DTOs/contracts),
+`<Name>.Server` and `<Name>.Client` (both console executables). They register the MessagePack serializer at startup
+(`SetNetSerializer.Use(new MessagePackNetSerializer())`) and, where a companion package is used, call its
+`XxxRuntime.Enable()` before connecting.
 
-> Register a serializer and call the relevant `XxxRuntime.Enable()` once at startup — every example does this in its `Program.cs`.
+Most map directly onto the communication model — see **[docs/COMMUNICATION.md](../docs/COMMUNICATION.md)**.
 
-## Chat — one-way messages + broadcast
+## What each example teaches
 
-Classic chat: each client sends lines, the server relays them to everyone. Shows plain `[MessageHandler]` typed handlers and server-side broadcast.
+| Example | Shows | Packages |
+|---|---|---|
+| **Chat** | Custom `SetNet.Protocol` channel: `[Op]` request/reply (Join) + fire-and-forget (Say) + `[Event]` push handlers + `PublishAsync` fan-out | core |
+| **Rpc** | Request/reply via `client.CallAsync` (a typed alias of `RequestAsync`) + `[RpcMethod]` handlers | `SetNet.Rpc` |
+| **Presence** | Build-your-own **topic pub/sub** on pure `SetNet.Protocol` (`[Op]` subscribe/publish + `On<T>` receive) — no companion module | core |
+| **Rooms** | Rooms/lobbies by code, typed `On<T>` room broadcast | `SetNet.Rooms` |
+| **Matchmaking** | Queue → auto-match → auto-join a room (`FindAndJoinAsync`) | `SetNet.Rooms` + `SetNet.Matchmaking` |
+| **Party** | Party by code, leader + ready-up, party events | `SetNet.Party` |
+| **Economy** | **Authoritative item drop** broadcast to the other players in a room (`TryRevokeAsync` + `BroadcastToRoomOfAsync`) | `SetNet.Rooms` + `SetNet.Inventory` |
+| **Trade** | Two-player escrow trade (propose → offer → ready → confirm) | `SetNet.Inventory` + `SetNet.Trade` |
+| **Auth** | Token auth **gate**: app frames are dropped until the client authenticates | `SetNet.Auth` |
+| **FileTransfer** | Large-payload streaming with progress | `SetNet.Streams` |
+| **Voice** | Opaque audio-frame relay in a channel | `SetNet.Voice` |
+| **StateSync** | Server-authoritative entity replication (server bounces balls, client renders positions) | `SetNet.StateSync` |
+| **Npc** | Walk into a zone, discover NPCs, interact → **capability hand-off** (`vendor:blacksmith`, `teleport:dungeon`) | `SetNet.NPC` |
+| **World** | *(single project, no networking)* multi-storey **layered grid** + cross-floor A*, a **headless mob** chasing a player around a wall (no StateSync), and a pathfinder **micro-benchmark** | `SetNet.GeoData` + `SetNet.PathFinding` + `SetNet.Mobs` |
+
+## Run commands
+
+Open a terminal per process. Defaults are `127.0.0.1` and the port shown.
 
 ```bash
-dotnet run --project examples/Chat.Server -- 127.0.0.1 5000
-dotnet run --project examples/Chat.Client -- 127.0.0.1 5000 alice
-dotnet run --project examples/Chat.Client -- 127.0.0.1 5000 bob
+# Chat (5000) — server + N clients. SetNet.Protocol channel + [Op]/[Event].
+dotnet run --project examples/Chat/Chat.Server
+dotnet run --project examples/Chat/Chat.Client -- 127.0.0.1 5000 alice
+
+# Rpc (5100) — non-interactive: client calls GetTime + Add and prints results
+dotnet run --project examples/Rpc/Rpc.Server
+dotnet run --project examples/Rpc/Rpc.Client
+
+# Presence / pub-sub (5330) — server + clients, each on a topic
+dotnet run --project examples/Presence/Presence.Server
+dotnet run --project examples/Presence/Presence.Client -- news
+dotnet run --project examples/Presence/Presence.Client -- news     # both on "news" see each other's lines
+
+# Rooms (5001) — server + two clients (create / join by code)
+dotnet run --project examples/Rooms/Rooms.Server
+dotnet run --project examples/Rooms/Rooms.Client -- 127.0.0.1 5001 create      # prints a room code
+dotnet run --project examples/Rooms/Rooms.Client -- 127.0.0.1 5001 <ROOMCODE>
+
+# Matchmaking (5300) — server + TWO clients; they get matched into a room together
+dotnet run --project examples/Matchmaking/Matchmaking.Server
+dotnet run --project examples/Matchmaking/Matchmaking.Client
+dotnet run --project examples/Matchmaking/Matchmaking.Client
+
+# Party (5301) — server + a leader + members
+dotnet run --project examples/Party/Party.Server
+dotnet run --project examples/Party/Party.Client -- create
+dotnet run --project examples/Party/Party.Client -- join <CODE>     # then type: ready / unready / /quit
+
+# Economy — authoritative item drop (5200) — server + two clients in one room
+dotnet run --project examples/Economy/Economy.Server
+dotnet run --project examples/Economy/Economy.Client -- create      # prints a room code
+dotnet run --project examples/Economy/Economy.Client -- join <CODE> # type "sword" to drop; the other sees it
+
+# Trade (5310) — server logs each player's key; two clients trade
+dotnet run --project examples/Trade/Trade.Server
+dotnet run --project examples/Trade/Trade.Client                    # note this client's key from the server log
+dotnet run --project examples/Trade/Trade.Client -- propose <KEY>   # then: offer <item> <count> / ready / confirm
+
+# Auth (5311) — token gate ("letmein"); a wrong token is rejected
+dotnet run --project examples/Auth/Auth.Server
+dotnet run --project examples/Auth/Auth.Client
+dotnet run --project examples/Auth/Auth.Client -- wrongtoken        # shows the rejection
+
+# FileTransfer (5320) — non-interactive: client uploads a payload with progress
+dotnet run --project examples/FileTransfer/FileTransfer.Server
+dotnet run --project examples/FileTransfer/FileTransfer.Client
+
+# Voice (5321) — server + two clients; what one types the other receives as an (opaque) frame
+dotnet run --project examples/Voice/Voice.Server
+dotnet run --project examples/Voice/Voice.Client
+dotnet run --project examples/Voice/Voice.Client
+
+# StateSync (5002) — server bounces balls, client prints interpolated positions
+dotnet run --project examples/StateSync/StateSync.Server -- 127.0.0.1 5002 8
+dotnet run --project examples/StateSync/StateSync.Client -- 127.0.0.1 5002
+
+# Npc (5000) — server spawns a blacksmith + a teleporter in "town"; client interacts and follows the capability
+dotnet run --project examples/Npc/Npc.Server
+dotnet run --project examples/Npc/Npc.Client                        # non-interactive: prints each hand-off
+
+# World — ONE project, no networking. GeoData (layered/multi-storey) + PathFinding + headless Mobs.
+dotnet run --project examples/World                                 # runs all three demos
+dotnet run --project examples/World -- floors                       # just the multi-storey grid + cross-floor A*
+dotnet run --project examples/World -- chase                        # just the headless mob chase
+dotnet run --project examples/World -- bench                        # just the pathfinder micro-benchmark
 ```
 
-## Rooms — lobbies + typed `On<T>` broadcast
+All examples build as part of the solution (`dotnet build SetNet.sln`).
 
-Players join a shared room by **code** and chat within it. Shows [`SetNet.Rooms`](../src/realtime/SetNet.Rooms/README.md): `CreateAsync`/`JoinAsync`, `PlayerJoined`/`PlayerLeft`, and the **typed** broadcast API `BroadcastAsync<T>(messageType, msg)` → `On<T>(messageType, (from, msg) => …)` (no raw bytes). The server is just `server.UseRooms()`.
-
-```bash
-dotnet run --project examples/Rooms.Server -- 127.0.0.1 5001
-dotnet run --project examples/Rooms.Client -- 127.0.0.1 5001 create      # prints a room code
-dotnet run --project examples/Rooms.Client -- 127.0.0.1 5001 <ROOMCODE>  # a friend joins it
-```
-
-## StateSync — server-authoritative replication
-
-A headless server spawns balls bouncing in a cube and replicates their positions; the client prints them each frame. Shows [`SetNet.StateSync`](../src/realtime/SetNet.StateSync/README.md): a shared archetype schema, `world.Spawn(...)` + mutating fields on the server, and `EntitySpawned`/`Entities`/interpolated `GetVec3(...)` on the client.
-
-```bash
-dotnet run --project examples/StateSync.Server -- 127.0.0.1 5002 8   # 8 balls
-dotnet run --project examples/StateSync.Client -- 127.0.0.1 5002
-```
-
----
-
-More modules, patterns, and a "which package do I need?" guide: **[docs/README.md](../docs/README.md)**.
+More modules and a "which package do I need?" guide: **[docs/README.md](../docs/README.md)**.

@@ -1,0 +1,38 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+    <PropertyGroup>
+        <TargetFramework>netstandard2.1</TargetFramework>
+        <ImplicitUsings>false</ImplicitUsings>
+        <Nullable>enable</Nullable>
+        <LangVersion>8.0</LangVersion>
+        <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    </PropertyGroup>
+
+    <PropertyGroup>
+        <PackageId>SetNet.Mobs</PackageId>
+        <Version>1.0.0</Version>
+        <AssemblyVersion>1.0.0.0</AssemblyVersion>
+        <FileVersion>1.0.0.0</FileVersion>
+        <Authors>Artem Lemeshev</Authors>
+        <Description>Server-authoritative hostile AI entities for SetNet. One IMobBrain per mob type (aggressive, passive-retaliate, ranged/kiting, caster) — or compose one from behaviour components — behind a uniform tick loop that handles perception, threat, movement (via SetNet.PathFinding, straight-line fallback), ability cooldowns/casts/telegraphs, damage, death and respawn. Replication is a seam (IMobReplication, no-op default; poll MobServer.Mobs or handle MobMoved) — a StateSync adapter ships separately as SetNet.Mobs.StateSync. server.UseMobs() + client.UseMobs(). Rides the unified SetNet.Protocol on the Channels.Mobs channel. Depends on SetNet + SetNet.GeoData + SetNet.PathFinding (NOT StateSync).</Description>
+        <PackageTags>networking;mobs;ai;monster;combat;game;server-authoritative;setnet</PackageTags>
+        <PackageLicenseExpression>MIT</PackageLicenseExpression>
+        <RepositoryUrl>https://github.com/Povstalez/SetNet.git</RepositoryUrl>
+        <RepositoryType>git</RepositoryType>
+        <PackageProjectUrl>https://github.com/Povstalez/SetNet</PackageProjectUrl>
+        <PackageReadmeFile>README.md</PackageReadmeFile>
+        <PackageIcon>icon.png</PackageIcon>
+    </PropertyGroup>
+
+    <ItemGroup>
+      <None Include="README.md" Pack="true" PackagePath="\" />
+      <None Include="../../../assets/icon.png" Pack="true" PackagePath="\" Visible="false" />
+    </ItemGroup>
+
+    <ItemGroup>
+      <ProjectReference Include="../../core/SetNet/SetNet.csproj" />
+      <ProjectReference Include="../SetNet.GeoData/SetNet.GeoData.csproj" />
+      <ProjectReference Include="../SetNet.PathFinding/SetNet.PathFinding.csproj" />
+    </ItemGroup>
+
+</Project>

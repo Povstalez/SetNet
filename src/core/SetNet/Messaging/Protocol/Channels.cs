@@ -83,5 +83,14 @@ namespace SetNet.Protocol
 
         /// <summary>Deterministic lockstep input (SetNet.Lockstep).</summary>
         public const ushort Lockstep = 24;
+
+        /// <summary>RPC request/reply (SetNet.Rpc) — the op is the RPC method id.</summary>
+        public const ushort Rpc = 25;
+
+        /// <summary>Interactive non-living entities (SetNet.NPC).</summary>
+        public const ushort Npc = 26;
+
+        /// <summary>Hostile AI entities (SetNet.Mobs).</summary>
+        public const ushort Mobs = 27;
     }
 }

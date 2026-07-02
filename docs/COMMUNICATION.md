@@ -30,7 +30,7 @@ same socket, because each occupies a **distinct wire-type space** and never coll
 | StateSync | 65518–65522 · StateSync.Rpc 65516 |
 | Fragmentation 65517 · Multiplex 65494 · Streams 65492/65493 | (transparent / control) |
 | Voice 65503–65505 · Relay 65498–65500 · Cluster 65501 | |
-| RPC 65531/65532 · Auth 65529/65530 · ProofOfWork 65506/65507 | |
+| Auth 65529/65530 · ProofOfWork 65506/65507 | (RPC now rides the 65447 envelope on `Channels.Rpc`) |
 | Core system (heartbeat, UDP bind token) | 65533–65535 |
 
 The only rule for **your own** core message types: keep them low (from `0`), so they never reach the reserved block
@@ -249,16 +249,18 @@ await server.GuildGroups().BroadcastExceptAsync(guildKey, except, channel, op, m
 
 Node-local (members are the live connections on this server), matching how Rooms/Party track membership.
 
-### RPC (separate package `SetNet.Rpc`)
+### RPC (separate package `SetNet.Rpc`) — a typed alias of `RequestAsync`
 
-Method-style request/response with its own method-id space (an alternative to a Protocol request channel).
+A method-style front end. Under the hood `client.CallAsync<TReq,TResp>(methodId, req)` **is**
+`client.RequestAsync<TReq,TResp>(Channels.Rpc, methodId, req)` — the same request/reply mechanism, same envelope,
+same correlation. Use whichever reads better; they're one mechanism.
 
 ```csharp
 RpcRuntime.Enable();                                          // once at startup
 TResp r = await client.CallAsync<TReq, TResp>(methodId, req); // client; default 5 s timeout, RpcException on failure
 
 [RpcMethod(methodId)]
-public class Handler : IRpcHandler<TReq, TResp>               // server
+public class Handler : IRpcHandler<TReq, TResp>               // server (discovered like [Op] on the Rpc channel)
 {
     public Task<TResp> HandleAsync(BasePeer peer, TReq req) => Task.FromResult(new TResp());
 }

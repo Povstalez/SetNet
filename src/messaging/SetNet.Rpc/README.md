@@ -64,9 +64,9 @@ var reply = await client.CallAsync<LoginRequest, LoginResponse>(
 
 ## Notes
 
-- **Serializer-agnostic, no MessagePack dependency** — `SetNet.Rpc` depends only on `SetNet`. The envelope is hand-framed as a `byte[]`, so RPC rides over whatever serializer you registered; the request/response **bodies** go through your `SetNetSerializer` (MessagePack, JSON, …).
-- Uses reserved wire type ids `65531`/`65532` for its envelopes — don't use those for your own messages.
-- Both ends of a call must use the same serializer.
+- **A thin alias over the unified protocol.** `client.CallAsync<TReq,TResp>(methodId, req)` is exactly `client.RequestAsync<TReq,TResp>(Channels.Rpc, methodId, req)` — the same request/reply mechanism (one envelope, one correlation registry), carried on the reserved `Channels.Rpc` channel with the RPC **method id as the op**. Prefer `RequestAsync` for new code; `CallAsync` + `[RpcMethod]` remain as a typed method-id front end.
+- **Serializer-agnostic, no MessagePack dependency** — `SetNet.Rpc` depends only on `SetNet`. The request/response **bodies** go through your `SetNetSerializer` (MessagePack, JSON, …); both ends must use the same serializer.
+- No per-package wire ids anymore — RPC rides the single `SetNet.Protocol` envelope (`65447`) like the rest.
 
 ## Documentation & source
 

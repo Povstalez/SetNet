@@ -1,7 +1,13 @@
-# SetNet.NPC — design (not yet implemented)
+# SetNet.NPC — design (implemented)
 
-**Status:** design only. Reserved wire types (tentative): **65445 / 65446 / 65447**.
-**Depends on:** `SetNet` only (composes with Vendor / Quests / StatusEffects / Zones / Wallet at the *app* layer, not by hard reference).
+> **✅ Implemented** (2026-07-02). This document is the original design; a few things landed differently from the sketch below — see the box. Source: [`src/realtime/SetNet.NPC`](../../src/realtime/SetNet.NPC), README: [SetNet.NPC/README.md](../../src/realtime/SetNet.NPC/README.md).
+>
+> **As-built vs. this design:**
+> - **No reserved wire ids.** NPC rides the **unified protocol** (`SetNet.Protocol`) on `Channels.Npc` (26) with per-op verbs, not the tentative `65445/65446/65447` triple.
+> - **No separate `Entities` layer** — NPC is standalone; it references `SetNet.GeoData` only for the shared `Vec3` (positions/range).
+> - Capability hand-off shipped as designed: e.g. `VendorNpcBehaviour("blacksmith")` → `NpcResponse.Capability = "vendor:blacksmith"`.
+
+**Depends on:** `SetNet` + `SetNet.GeoData` (for `Vec3`); composes with Vendor / Quests / StatusEffects / Zones / Wallet at the *app* layer, not by hard reference.
 
 ## Goal
 

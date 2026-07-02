@@ -9,14 +9,13 @@ namespace SetNet.Rpc
     public static class RpcRuntime
     {
         /// <summary>
-        /// Ensures the RPC layer is discoverable. Touching this method loads the <c>SetNet.Rpc</c> assembly, so
-        /// the reserved-type handlers are present when SetNet builds its dispatch tables. Call it once at startup.
+        /// Ensures the RPC layer is discoverable. Touching this method loads the <c>SetNet.Rpc</c> assembly, so the
+        /// RPC channel service (and your <c>[RpcMethod]</c> handlers) are present when SetNet scans for channel
+        /// services. Call it once at startup.
         /// </summary>
         public static void Enable()
         {
-            // Referencing a type from this assembly here is enough to force the runtime to load it before the
-            // SetNet command executors scan AppDomain assemblies.
-            _ = RpcTypes.Request;
+            _ = typeof(RpcChannelService);
         }
     }
 }

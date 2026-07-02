@@ -1,7 +1,14 @@
-# SetNet.Mobs — design (not yet implemented)
+# SetNet.Mobs — design (implemented)
 
-**Status:** design only. Reserved wire types (tentative): **65442 / 65443 / 65444** (AI telegraphs / aggro / death); movement + HP replicate over `SetNet.StateSync` (reuses its wire types).
-**Depends on:** `SetNet` + `SetNet.StateSync` (movement/state replication); optional `SetNet.StatusEffects` (debuffs), `SetNet.Loot` (drops), `SetNet.Progression` (kill XP).
+> **✅ Implemented** (2026-07-02). This document is the original design; a few things landed differently — see the box. Source: [`src/realtime/SetNet.Mobs`](../../src/realtime/SetNet.Mobs), README: [SetNet.Mobs/README.md](../../src/realtime/SetNet.Mobs/README.md).
+>
+> **As-built vs. this design:**
+> - **StateSync is optional, not a hard dependency.** Replication goes through an `IMobReplication` seam (default `NullMobReplication`). Drive the AI headlessly with `mobs.Update(dtMs)` and no StateSync at all, or plug **`SetNet.Mobs.StateSync`** (`world.StateSyncReplication()`) to replicate over `SetNet.StateSync`. Player positions likewise come through a seam (`MobOptions.PlayerPosition`/`AllPlayers` or `IPlayerPositions`), so perception, the interest/sleep gate, and combat all work without any network layer.
+> - **No reserved wire ids for control.** Mobs ride the **unified protocol** on `Channels.Mobs` (27), not the tentative `65442/65443/65444` triple.
+> - **Depends on** `SetNet` + `SetNet.GeoData` + `SetNet.PathFinding` (movement/LoS), **not** `SetNet.StateSync`. Loot/XP/status compose at the app layer.
+> - Shipped brains: `AggressiveBrain`, `PassiveRetaliateBrain`, `RangedBrain`, `CasterBrain`, plus `MobBrain.Compose(...)` to build one from components.
+
+**Depends on:** `SetNet` + `SetNet.GeoData` + `SetNet.PathFinding`; **StateSync-optional** via `IMobReplication` (adapter: `SetNet.Mobs.StateSync`); composes with `SetNet.StatusEffects` (debuffs), `SetNet.Loot` (drops), `SetNet.Progression` (kill XP) at the app layer.
 
 ## Goal
 

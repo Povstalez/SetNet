@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+    <PropertyGroup>
+        <OutputType>Exe</OutputType>
+        <TargetFramework>net8.0</TargetFramework>
+        <IsPackable>false</IsPackable>
+        <ImplicitUsings>enable</ImplicitUsings>
+        <Nullable>enable</Nullable>
+        <RootNamespace>Party.Server</RootNamespace>
+        <AssemblyName>Party.Server</AssemblyName>
+    </PropertyGroup>
+
+    <ItemGroup>
+        <ProjectReference Include="..\..\..\src\core\SetNet\SetNet.csproj" />
+        <ProjectReference Include="..\..\..\src\serializers\SetNet.MessagePack\SetNet.MessagePack.csproj" />
+        <ProjectReference Include="..\..\..\src\realtime\SetNet.Party\SetNet.Party.csproj" />
+        <ProjectReference Include="..\Party.Shared\Party.Shared.csproj" />
+    </ItemGroup>
+
+</Project>

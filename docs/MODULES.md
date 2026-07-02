@@ -10,7 +10,8 @@ same three verbs over one shared envelope wire id (`ProtocolTypes.Envelope`), de
 (`client.PostAsync`/`PostRawAsync`), and **server push** (`client.On<T>`/`OnRaw` ↔ `peer.PublishRawAsync`), with the
 server side handled by an auto-discovered `[ProtocolChannel(Channels.X)] IChannelService`. This means no per-module
 wire-type reservations and one shared correlation/subscription mechanism instead of each module hand-rolling its own.
-A handful of modules with a different message shape stay off it and keep their own reserved ids: `SetNet.Rpc`,
+`SetNet.Rpc` rides it too — `client.CallAsync(methodId, req)` is a typed alias of `RequestAsync` on the `Channels.Rpc`
+channel. A handful of modules with a genuinely different message shape stay off it and keep their own reserved ids:
 `SetNet.StateSync` (+ `.Rpc`), `SetNet.Voice`, `SetNet.Fragmentation`, `SetNet.Multiplex`, `SetNet.Streams`,
 `SetNet.Cluster`, `SetNet.Auth`, `SetNet.ProofOfWork`.
 
@@ -93,6 +94,15 @@ Grouped by purpose (mirrors the `src/<category>/` layout). Each depends only on 
 | **SetNet.StateSync.NetworkVariable** | typed change-tracked `NetworkVariable<T>` (deps `SetNet.StateSync`) |
 | **SetNet.StateSync.Rpc** | entity-scoped RPCs both directions (deps `SetNet.StateSync`) |
 
+**World / AI** (`src/realtime/`) — server-side spatial libraries (GeoData/PathFinding have no wire protocol) + entity modules
+| Package | What it adds |
+|---|---|
+| **SetNet.GeoData** | server-side world geometry behind one `IGeoData`: walkability, line-of-sight, can-walk-straight, ground height, raycast — over a 2.5D nav-grid (`GridGeoData`), an **L2-style multi-storey grid** (`LayeredGridGeoData` — stacked height layers per cell → floors/bridges without a nav-mesh), or a Y-aware nav-mesh (`NavMeshGeoData`); **`SectoredGeoData`** stitches many per-sector geodatas into one seamless world (+ `GeoDataManifest` `.geomap`); bake portable `GeoDataFile`s (no wire protocol) |
+| **SetNet.PathFinding** | A* over `GridGeoData` (octile, no corner-cut), `LayeredGridGeoData` (per-layer, climbs stairs between floors), `NavMeshGeoData` (triangle A* → portals → string-pull), or `SectoredGeoData` (delegate within a sector + stitch across borders) + `PathFollower`; **pooled + generation-stamped search** (allocation-free hot path, built-once-reused for MMO scale) (deps `SetNet.GeoData`) |
+| **SetNet.NPC** | non-living interactive entities (vendors/buffers/teleporters/dialogue): one `INpcBehaviour` per type + spawn/zone-interest/interact, delegating to the economy/status modules via a capability hand-off (deps `SetNet.GeoData` for `Vec3`) |
+| **SetNet.Mobs** | hostile AI entities with **per-mob AI** (`IMobBrain`: ready aggressive / retaliate-only / ranged-kiter / caster brains + a composer), server-authoritative tick loop, perception, threat, telegraphed abilities, loot/respawn on death. **StateSync-optional** — replicates via an `IMobReplication` seam (drive it with `Update(dtMs)` and no StateSync at all, or plug the adapter below) (deps `SetNet.GeoData` + `SetNet.PathFinding`) |
+| **SetNet.Mobs.StateSync** | optional adapter that replicates mobs over StateSync (`IMobReplication` → `ServerReplication`) (deps `SetNet.Mobs` + `SetNet.StateSync`) |
+
 **Infra** (`src/infra/`)
 | Package | What it adds |
 |---|---|
@@ -118,6 +128,7 @@ Grouped by purpose (mirrors the `src/<category>/` layout). Each depends only on 
 |---|---|
 | **SetNet.Unity** | `MainThreadDispatcher` for Unity's main thread |
 | **SetNet.StateSync.Unity** | Unity components: NetworkObject/Transform/Animator/Rigidbody/Behaviour + NetworkManager (**UPM source**, not NuGet) |
+| **SetNet.GeoData.Unity** | Editor tool to bake a `SetNet.GeoData` file from a Unity NavMesh, colliders (flat grid), a **multi-surface sweep** (multi-storey layered grid), or **tiled sectors** (+ `.geomap` manifest); one-click auto-bounds + a Scene-view **debug visualizer** (`GeoDataGizmo`) (**UPM source**, not NuGet) |
 | **SetNet.Godot** | Godot 4 (C#) main-thread dispatcher + math conversions (deps `SetNet.StateSync` + `GodotSharp`) |
 | **SetNet.StateSync.Godot** | Godot 4 replication components: NetworkObject/Transform/AnimationPlayer/RigidBody/Behaviour + NetworkManager (deps `SetNet.StateSync` + `SetNet.Godot` + `GodotSharp`) |
 
@@ -144,5 +155,3 @@ Grouped by purpose (mirrors the `src/<category>/` layout). Each depends only on 
 - **SetNet.Logging.MicrosoftExtensions** — an `ILogger` adapter over `Microsoft.Extensions.Logging` (sibling to the Serilog package).
 - **SetNet.WebRTC / SetNet.Quic / SetNet.Steam** — additional transports via the same `ITransportProvider` hook.
 - **SetNet.RateLimit** per-message-type budgets (`PerType = {...}`) on top of the current per-peer bucket.
-- **SetNet.NPC** — a unified abstraction for non-living interactive entities (vendors, bankers, quest-givers, buffers, teleporters): one `INpcBehaviour` per NPC type + spawn/interest/interact, delegating to the economy/quest/status modules via a capability hand-off. Detailed design: [design/SetNet.NPC.md](design/SetNet.NPC.md).
-- **SetNet.Mobs** — hostile AI entities with **per-mob AI** (`IMobBrain`): ready-made aggressive / retaliate-only / ranged-kiter / caster brains + composable behaviour components, server-authoritative tick loop, threat, telegraphed abilities, StateSync replication, loot/XP/respawn on death. Detailed design: [design/SetNet.Mobs.md](design/SetNet.Mobs.md).

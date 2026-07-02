@@ -351,19 +351,21 @@ dotnet test tests/SetNet.UnitTests/SetNet.UnitTests.csproj      # 129 unit + int
 dotnet run --project tests/SetNet.Tests -- <frag|tcp|udp|loss|both|idle|deadlock>   # in-process transport scenarios
 dotnet run --project tests/SetNet.Tests -- bench                # throughput / connection benchmark
 
-# chat example (two terminals)
-dotnet run --project examples/Chat.Server -- 127.0.0.1 5000
-dotnet run --project examples/Chat.Client -- 127.0.0.1 5000 alice
+# chat example (two terminals) — SetNet.Protocol channel + [Op]/[Event]
+dotnet run --project examples/Chat/Chat.Server -- 127.0.0.1 5000
+dotnet run --project examples/Chat/Chat.Client -- 127.0.0.1 5000 alice
 
 # rooms lobby example — typed On<T> broadcast (three terminals: server + two clients)
-dotnet run --project examples/Rooms.Server -- 127.0.0.1 5001
-dotnet run --project examples/Rooms.Client -- 127.0.0.1 5001 create      # prints a room code
-dotnet run --project examples/Rooms.Client -- 127.0.0.1 5001 <ROOMCODE>
+dotnet run --project examples/Rooms/Rooms.Server -- 127.0.0.1 5001
+dotnet run --project examples/Rooms/Rooms.Client -- 127.0.0.1 5001 create      # prints a room code
+dotnet run --project examples/Rooms/Rooms.Client -- 127.0.0.1 5001 <ROOMCODE>
 
 # state replication example — server bounces balls, client prints their positions (two terminals)
-dotnet run --project examples/StateSync.Server -- 127.0.0.1 5002 8
-dotnet run --project examples/StateSync.Client -- 127.0.0.1 5002
+dotnet run --project examples/StateSync/StateSync.Server -- 127.0.0.1 5002 8
+dotnet run --project examples/StateSync/StateSync.Client -- 127.0.0.1 5002
 ```
+
+Each example now lives in its own folder under `examples/` (Shared/Server/Client). **Full catalog with run commands: [examples/README.md](examples/README.md)** — Chat, Rooms, StateSync, Rpc, Economy, Matchmaking, Party, Trade, Auth, FileTransfer, Voice, Presence.
 
 ## Project structure
 

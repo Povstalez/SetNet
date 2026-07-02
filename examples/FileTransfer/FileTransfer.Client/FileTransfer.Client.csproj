@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+    <PropertyGroup>
+        <OutputType>Exe</OutputType>
+        <TargetFramework>net8.0</TargetFramework>
+        <IsPackable>false</IsPackable>
+        <ImplicitUsings>enable</ImplicitUsings>
+        <Nullable>enable</Nullable>
+        <RootNamespace>FileTransfer.Client</RootNamespace>
+        <AssemblyName>FileTransfer.Client</AssemblyName>
+    </PropertyGroup>
+
+    <ItemGroup>
+        <ProjectReference Include="..\..\..\src\core\SetNet\SetNet.csproj" />
+        <ProjectReference Include="..\..\..\src\serializers\SetNet.MessagePack\SetNet.MessagePack.csproj" />
+        <ProjectReference Include="..\..\..\src\messaging\SetNet.Streams\SetNet.Streams.csproj" />
+        <ProjectReference Include="..\FileTransfer.Shared\FileTransfer.Shared.csproj" />
+    </ItemGroup>
+
+</Project>

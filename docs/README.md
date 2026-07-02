@@ -85,7 +85,7 @@ Rule of thumb: **register a typed `On<T>` handler / use the typed `<T>` overload
 
 ## Reserved wire types
 
-Companion packages claim ids from the top of the `ushort` range so they never collide with your application message types (number yours from `0` upward). Most game/command packages now share a **single** envelope id — `SetNet.Protocol`'s `ProtocolTypes.Envelope` (**65447**) — and are demultiplexed by a per-module `Channels` id + `op`, so there are no longer per-package wire-type triples to reserve. The remaining reserved ids belong to the shape-different packages (`SetNet.Rpc`, `SetNet.StateSync`(+`.Rpc`), `SetNet.Voice`, `SetNet.Fragmentation`, `SetNet.Multiplex`, `SetNet.Streams`, `SetNet.Cluster`, `SetNet.Auth`, `SetNet.ProofOfWork`) plus the core system types (65533–65535) — the full map is in [MODULES.md](MODULES.md).
+Companion packages claim ids from the top of the `ushort` range so they never collide with your application message types (number yours from `0` upward). Most game/command packages now share a **single** envelope id — `SetNet.Protocol`'s `ProtocolTypes.Envelope` (**65447**) — and are demultiplexed by a per-module `Channels` id + `op`, so there are no longer per-package wire-type triples to reserve. `SetNet.Rpc` rides the shared envelope too (`CallAsync` is a typed alias of `RequestAsync`). The remaining reserved ids belong to the shape-different packages (`SetNet.StateSync`(+`.Rpc`), `SetNet.Voice`, `SetNet.Fragmentation`, `SetNet.Multiplex`, `SetNet.Streams`, `SetNet.Cluster`, `SetNet.Auth`, `SetNet.ProofOfWork`) plus the core system types (65533–65535) — the full map is in [MODULES.md](MODULES.md).
 
 ## Installing from GitHub Packages
 
