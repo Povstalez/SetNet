@@ -326,7 +326,7 @@ In-process benchmark (`dotnet run -c Release --project tests/SetNet.Tests -- ben
 
 ```bash
 dotnet build                                              # build (library targets netstandard2.1)
-dotnet test tests/SetNet.UnitTests/SetNet.UnitTests.csproj      # 126 unit + integration tests
+dotnet test tests/SetNet.UnitTests/SetNet.UnitTests.csproj      # 129 unit + integration tests
 dotnet run --project tests/SetNet.Tests -- <frag|tcp|udp|loss|both|idle|deadlock>   # in-process transport scenarios
 dotnet run --project tests/SetNet.Tests -- bench                # throughput / connection benchmark
 
