@@ -10,7 +10,8 @@ namespace Rooms.Server;
 public sealed class LobbyPeer : BasePeer
 {
     public LobbyPeer(PeerInfo peerInfo) : base(peerInfo) { }
-    protected override void OnDisconnected() { }
+
+    protected override void OnDisconnected() { Console.WriteLine($"[server] peer disconnected: {CurrentPeerInfo.Id}"); }
     protected override void OnError(string error) => Console.WriteLine($"[server] peer error: {error}");
 }
 

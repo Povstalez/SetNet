@@ -8,7 +8,13 @@ namespace StateSync.Server;
 public sealed class BallPeer : BasePeer
 {
     public BallPeer(PeerInfo peerInfo) : base(peerInfo) { }
-    protected override void OnDisconnected() { }
+
+    // Fires once for every disconnect — graceful (client called Disconnect), a kick, or after a failure.
+    protected override void OnDisconnected() => Console.WriteLine($"[server] peer disconnected: {CurrentPeerInfo.Id}");
+
+    // Fires only on an UNEXPECTED drop (network error / crash / heartbeat timeout), before OnDisconnected.
+    protected override void OnUnexpectedDisconnect() => Console.WriteLine($"[server] peer lost unexpectedly: {CurrentPeerInfo.Id}");
+
     protected override void OnError(string error) => Console.WriteLine($"[server] peer error: {error}");
 }
 
