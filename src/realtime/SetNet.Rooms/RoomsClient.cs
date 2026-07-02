@@ -66,10 +66,14 @@ namespace SetNet.Rooms
         public async Task<RoomInfo> JoinAsync(string code)
             => ApplyRoom(await SendAsync(RoomOp.Join, code, 0, Array.Empty<byte>()).ConfigureAwait(false));
 
-        /// <summary>Leaves the current room.</summary>
+        /// <summary>
+        /// Leaves the current room. Tolerant of a dropped connection — if the client is already disconnected the server
+        /// has removed us anyway (via <c>PeerDisconnected</c>), so local state is cleared without throwing.
+        /// </summary>
         public async Task LeaveAsync()
         {
-            await SendAsync(RoomOp.Leave, "", 0, Array.Empty<byte>()).ConfigureAwait(false);
+            try { await SendAsync(RoomOp.Leave, "", 0, Array.Empty<byte>()).ConfigureAwait(false); }
+            catch { /* already disconnected — the server auto-removes us; just clear local state */ }
             lock (_gate) { _code = null; _members.Clear(); }
         }
 

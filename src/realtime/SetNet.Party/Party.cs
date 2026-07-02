@@ -205,8 +205,13 @@ namespace SetNet.Party
         public async Task<PartyInfo> CreateAsync() => Apply(await Send(PartyOp.Create, "", false).ConfigureAwait(false));
         /// <summary>Joins a party by code.</summary>
         public async Task<PartyInfo> JoinAsync(string code) => Apply(await Send(PartyOp.Join, code, false).ConfigureAwait(false));
-        /// <summary>Leaves the current party.</summary>
-        public async Task LeaveAsync() { await Send(PartyOp.Leave, "", false).ConfigureAwait(false); lock (_gate) _code = null; }
+        /// <summary>Leaves the current party. Tolerant of a dropped connection (the server auto-removes a disconnected member).</summary>
+        public async Task LeaveAsync()
+        {
+            try { await Send(PartyOp.Leave, "", false).ConfigureAwait(false); }
+            catch { /* already disconnected — server auto-removes us */ }
+            lock (_gate) _code = null;
+        }
         /// <summary>Sets this client's ready state.</summary>
         public async Task<PartyInfo> SetReadyAsync(bool ready) => Apply(await Send(PartyOp.SetReady, CurrentCode ?? "", ready).ConfigureAwait(false));
 

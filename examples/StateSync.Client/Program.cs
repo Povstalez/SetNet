@@ -19,7 +19,7 @@ World.Register();                                       // identical schema on b
 var host = args.Length > 0 ? args[0] : "127.0.0.1";
 var port = args.Length > 1 && int.TryParse(args[1], out var p) ? p : 5000;
 
-var client = new BallClient(new Configuration { Host = host, Port = port });
+var client = new BallClient(new Configuration { Host = host, Port = port, HeartbeatEnabled = true});
 var repl = client.UseStateSync(new StateSyncOptions { InterpolationDelayMs = 100 });
 
 repl.EntitySpawned   += v => Console.WriteLine($"+ ball {v.NetId} appeared");

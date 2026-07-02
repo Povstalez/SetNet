@@ -23,7 +23,9 @@ var host = args.Length > 0 ? args[0] : "127.0.0.1";
 var port = args.Length > 1 && int.TryParse(args[1], out var parsed) ? parsed : 5000;
 var joinArg = args.Length > 2 ? args[2] : "create";
 
-var client = new LobbyClient(new Configuration { Host = host, Port = port });
+// Heartbeat must be enabled on BOTH ends: the client pings, the server watches for those pings and
+// drops a peer that goes silent. (Without this an idle client is dropped after the heartbeat timeout.)
+var client = new LobbyClient(new Configuration { Host = host, Port = port, HeartbeatEnabled = true });
 var rooms = client.UseRooms();
 
 rooms.PlayerJoined += id => Console.WriteLine($"* {Short(id)} joined the room");
@@ -53,7 +55,7 @@ while ((line = Console.ReadLine()) is not null)
     await rooms.BroadcastAsync((ushort)RoomMsg.ChatLine, new RoomChatLine { Text = line });   // typed send
 }
 
-await rooms.LeaveAsync();
-client.Disconnect();
+try { await rooms.LeaveAsync(); } catch { /* connection may already be down */ }
+try { client.Disconnect(); } catch { /* ignore */ }
 
 static string Short(string playerId) => playerId.Length >= 6 ? playerId[..6] : playerId;
