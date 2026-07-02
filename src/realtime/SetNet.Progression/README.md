@@ -48,7 +48,7 @@ var state = await progression.GetAsync();
 
 ## Notes
 
-- **Reserved wire types 65459 / 65460 / 65461.** Don't reuse them.
+- Rides the unified **SetNet.Protocol** messaging layer on the `Channels.Progression` channel (all modules share one envelope wire type, `65447`) — no per-module wire ids to reserve. Serializer-agnostic: the control protocol is hand-framed `byte[]`, your payloads use your `SetNetSerializer`.
 - **Multi-level rollover.** A single large XP grant advances as many levels as it fills; `LeveledUp` fires once per level. XP is clamped to 0 at `MaxLevel`.
 - **Rewards live in your handler.** `LeveledUp` is where you grant items ([`SetNet.Inventory`](https://www.nuget.org/packages/SetNet.Inventory)), currency ([`SetNet.Wallet`](https://www.nuget.org/packages/SetNet.Wallet)), or unlocks — this package only tracks the number.
 - **Stable player key** (default = connection id) — override for durable progression, matching your other player-data modules.

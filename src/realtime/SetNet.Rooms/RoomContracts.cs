@@ -3,23 +3,6 @@ using System.Collections.Generic;
 
 namespace SetNet.Rooms
 {
-    /// <summary>Reserved wire type ids for the rooms protocol. Below the auth (65529/65530), RPC and system ranges. Don't reuse these ids.</summary>
-    public static class RoomTypes
-    {
-        /// <summary>Client → server command (create/join/leave/broadcast).</summary>
-        public const ushort Command = ushort.MaxValue - 8;   // 65527
-
-        /// <summary>Server → client reply to a command (correlated).</summary>
-        public const ushort Reply = ushort.MaxValue - 7;     // 65528
-
-        /// <summary>Server → client push event (player joined/left, message, closed).</summary>
-        public const ushort Event = ushort.MaxValue - 9;     // 65526
-    }
-
-    internal enum RoomOp : byte { Create = 0, Join = 1, Leave = 2, Broadcast = 3 }
-
-    internal enum RoomEventType : byte { PlayerJoined = 0, PlayerLeft = 1, Message = 2, Closed = 3 }
-
     /// <summary>Options for creating a room.</summary>
     public sealed class RoomOptions
     {

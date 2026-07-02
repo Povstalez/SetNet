@@ -59,7 +59,7 @@ await market.CancelAsync(orderId);
 
 ## Notes
 
-- **Reserved wire types 65451 / 65452 / 65453.** Don't reuse them.
+- Rides the unified **SetNet.Protocol** messaging layer on the `Channels.Marketplace` channel (all modules share one envelope wire type, `65447`) — no per-module wire ids to reserve. Serializer-agnostic: the control protocol is hand-framed `byte[]`, your payloads use your `SetNetSerializer`.
 - **Price-time priority.** Best price first, ties broken by who posted earlier. A trade executes at the **resting** order's price, so an incoming order never does worse than its limit; a buyer whose limit beats the ask is refunded the difference per unit.
 - **Escrow on post.** A buy escrows `price × quantity` currency; a sell escrows `quantity` items. Matching is decided under a per-book lock; the item/currency moves run afterward through `SetNet.Inventory`/`SetNet.Wallet` — nothing is created or lost, and a cancel returns the remaining escrow.
 - **Marketplace vs [Auction](https://www.nuget.org/packages/SetNet.Auction) vs [Trade](https://www.nuget.org/packages/SetNet.Trade):** Marketplace is a continuous many-to-many exchange (fungible goods, instant matching); Auction is timed bidding on one specific listing; Trade is a direct two-party swap. Use Marketplace for commodity economies.

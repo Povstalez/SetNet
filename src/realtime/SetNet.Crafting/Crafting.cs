@@ -2,27 +2,15 @@ using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
-using System.Threading;
 using System.Threading.Tasks;
 using SetNet.Core;
-using SetNet.Core.Transport;
-using SetNet.Data;
-using SetNet.Data.Attributes;
 using SetNet.Inventory;
+using SetNet.Protocol;
 
 namespace SetNet.Crafting
 {
-    /// <summary>Reserved wire types for the crafting service. Don't reuse these ids for application messages.</summary>
-    public static class CraftingTypes
-    {
-        /// <summary>Client → server: craft/list command.</summary>
-        public const ushort Command = ushort.MaxValue - 67;   // 65468
-
-        /// <summary>Server → client: correlated reply.</summary>
-        public const ushort Reply = ushort.MaxValue - 68;     // 65467
-    }
-
-    internal enum CraftOp : byte { Craft = 0, List = 1 }
+    /// <summary>Command operations (client → server) within the Crafting protocol channel.</summary>
+    internal enum CraftOp : ushort { Craft = 1, List = 2 }
 
     /// <summary>Thrown when crafting fails (unknown recipe, missing ingredients, timeout).</summary>
     public sealed class CraftingException : Exception
@@ -75,26 +63,25 @@ namespace SetNet.Crafting
 
     internal static class CraftCodec
     {
-        public static byte[] EncodeCommand(int corr, CraftOp op, string recipeId, int times)
+        public static byte[] EncodeCommand(string recipeId, int times)
         {
             using var ms = new MemoryStream();
             using var w = new BinaryWriter(ms);
-            w.Write(corr); w.Write((byte)op); w.Write(recipeId ?? ""); w.Write(times);
+            w.Write(recipeId ?? ""); w.Write(times);
             return ms.ToArray();
         }
 
-        public static (int Corr, CraftOp Op, string RecipeId, int Times) DecodeCommand(byte[] data)
+        public static (string RecipeId, int Times) DecodeCommand(byte[] data)
         {
             using var ms = new MemoryStream(data);
             using var r = new BinaryReader(ms);
-            return (r.ReadInt32(), (CraftOp)r.ReadByte(), r.ReadString(), r.ReadInt32());
+            return (r.ReadString(), r.ReadInt32());
         }
 
-        public static byte[] EncodeReply(int corr, bool ok, string error, List<Recipe> recipes)
+        public static byte[] EncodeReply(List<Recipe> recipes)
         {
             using var ms = new MemoryStream();
             using var w = new BinaryWriter(ms);
-            w.Write(corr); w.Write(ok); w.Write(error ?? "");
             w.Write(recipes.Count);
             foreach (var rec in recipes)
             {
@@ -105,16 +92,16 @@ namespace SetNet.Crafting
             return ms.ToArray();
         }
 
-        public static (int Corr, bool Ok, string Error, List<Recipe> Recipes) DecodeReply(byte[] data)
+        public static List<Recipe> DecodeReply(byte[] data)
         {
+            if (data == null || data.Length == 0) return new List<Recipe>();
             using var ms = new MemoryStream(data);
             using var r = new BinaryReader(ms);
-            var corr = r.ReadInt32(); var ok = r.ReadBoolean(); var err = r.ReadString();
             var count = r.ReadInt32();
             var list = new List<Recipe>(count);
             for (var i = 0; i < count; i++)
                 list.Add(new Recipe { Id = r.ReadString(), Inputs = ReadAmounts(r), Outputs = ReadAmounts(r) });
-            return (corr, ok, err, list);
+            return list;
         }
 
         private static void WriteAmounts(BinaryWriter w, List<ItemAmount> a)
@@ -132,22 +119,11 @@ namespace SetNet.Crafting
         }
     }
 
-    internal static class CraftRegistry
-    {
-        private static int _counter;
-        private static readonly ConcurrentDictionary<int, TaskCompletionSource<(bool Ok, string Error, List<Recipe> Recipes)>> Pending
-            = new ConcurrentDictionary<int, TaskCompletionSource<(bool, string, List<Recipe>)>>();
-
-        public static int NextId() => Interlocked.Increment(ref _counter);
-        public static void Register(int id, TaskCompletionSource<(bool, string, List<Recipe>)> tcs) => Pending[id] = tcs;
-        public static void Remove(int id) => Pending.TryRemove(id, out _);
-        public static void Complete(int id, (bool, string, List<Recipe>) result) { if (Pending.TryGetValue(id, out var tcs)) tcs.TrySetResult(result); }
-    }
-
     /// <summary>
     /// Client-side crafting driver, attached by <see cref="CraftingClientExtensions.UseCrafting"/>. Requests a craft
     /// (the server validates and consumes ingredients from your inventory, then grants the outputs) and browses the
-    /// recipe book. Inventory changes arrive through your <c>SetNet.Inventory</c> subscription.
+    /// recipe book. Inventory changes arrive through your <c>SetNet.Inventory</c> subscription. Rides the unified
+    /// protocol on the <see cref="Channels.Crafting"/> channel.
     /// </summary>
     public sealed class CraftingClient
     {
@@ -158,34 +134,22 @@ namespace SetNet.Crafting
         /// <summary>Crafts <paramref name="times"/> of a recipe; throws <see cref="CraftingException"/> if ingredients are missing.</summary>
         public async Task CraftAsync(string recipeId, int times = 1)
         {
-            var (ok, error, _) = await Send(CraftOp.Craft, recipeId, Math.Max(1, times)).ConfigureAwait(false);
-            if (!ok) throw new CraftingException(error);
+            await Send(CraftOp.Craft, recipeId, Math.Max(1, times)).ConfigureAwait(false);
         }
 
         /// <summary>Lists the server's recipe book.</summary>
         public async Task<IReadOnlyList<Recipe>> ListAsync()
-        {
-            var (ok, error, recipes) = await Send(CraftOp.List, "", 0).ConfigureAwait(false);
-            if (!ok) throw new CraftingException(error);
-            return recipes;
-        }
+            => await Send(CraftOp.List, "", 0).ConfigureAwait(false);
 
-        private async Task<(bool Ok, string Error, List<Recipe> Recipes)> Send(CraftOp op, string recipeId, int times)
+        private async Task<List<Recipe>> Send(CraftOp op, string recipeId, int times)
         {
-            var id = CraftRegistry.NextId();
-            var tcs = new TaskCompletionSource<(bool, string, List<Recipe>)>(TaskCreationOptions.RunContinuationsAsynchronously);
-            CraftRegistry.Register(id, tcs);
             try
             {
-                await _client.SendAsync(CraftingTypes.Command, CraftCodec.EncodeCommand(id, op, recipeId, times), DeliveryMethod.Reliable).ConfigureAwait(false);
-                using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
-                using (timeout.Token.Register(() => tcs.TrySetCanceled()))
-                {
-                    try { return await tcs.Task.ConfigureAwait(false); }
-                    catch (OperationCanceledException) { throw new CraftingException("Craft command timed out."); }
-                }
+                var body = await _client.RequestRawAsync(Channels.Crafting, (ushort)op, CraftCodec.EncodeCommand(recipeId, times)).ConfigureAwait(false);
+                return CraftCodec.DecodeReply(body);
             }
-            finally { CraftRegistry.Remove(id); }
+            catch (ProtocolException ex) { throw new CraftingException(ex.Message); }
+            catch (TimeoutException) { throw new CraftingException("Craft command timed out."); }
         }
     }
 
@@ -239,43 +203,31 @@ namespace SetNet.Crafting
             return (true, "");
         }
 
-        internal async Task OnCommand(BasePeer peer, byte[] data)
+        internal async Task HandleAsync(ChannelRequest request)
         {
-            var (corr, op, recipeId, times) = CraftCodec.DecodeCommand(data);
-            if (op == CraftOp.List)
+            var (recipeId, times) = CraftCodec.DecodeCommand(request.RawBody);
+            if ((CraftOp)request.Op == CraftOp.List)
             {
-                await Reply(peer, corr, true, "", new List<Recipe>(_recipes.Values)).ConfigureAwait(false);
+                await request.ReplyRawAsync(CraftCodec.EncodeReply(new List<Recipe>(_recipes.Values))).ConfigureAwait(false);
                 return;
             }
-            var (ok, error) = await CraftAsync(_inventory.KeyOf(peer), recipeId, times).ConfigureAwait(false);
-            await Reply(peer, corr, ok, error, new List<Recipe>()).ConfigureAwait(false);
-        }
-
-        private static Task Reply(BasePeer peer, int corr, bool ok, string error, List<Recipe> recipes)
-        {
-            try { return peer.SendAsync(CraftingTypes.Reply, CraftCodec.EncodeReply(corr, ok, error, recipes), DeliveryMethod.Reliable); }
-            catch { return Task.CompletedTask; }
+            var (ok, error) = await CraftAsync(_inventory.KeyOf(request.Peer), recipeId, times).ConfigureAwait(false);
+            if (!ok) throw new ProtocolException(error);
+            await request.ReplyRawAsync(CraftCodec.EncodeReply(new List<Recipe>())).ConfigureAwait(false);
         }
     }
 
-    /// <summary>Auto-discovered server handler for crafting commands.</summary>
-    [MessageHandler(CraftingTypes.Command)]
-    public sealed class CraftingCommandHandler : IServerMessageHandler<byte[]>
+    /// <summary>Auto-discovered channel service for crafting commands.</summary>
+    [ProtocolChannel(Channels.Crafting)]
+    public sealed class CraftingChannelService : IChannelService
     {
         /// <inheritdoc/>
-        public Task HandleAsync(BasePeer peer, byte[] data)
+        public Task HandleAsync(ChannelRequest request)
         {
-            var hub = CraftingServer.For(peer.CurrentPeerInfo.Server);
-            return hub?.OnCommand(peer, data) ?? Task.CompletedTask;
+            var hub = CraftingServer.For(request.Peer.CurrentPeerInfo.Server);
+            if (hub == null) throw new ProtocolException("crafting is not configured on this server");
+            return hub.HandleAsync(request);
         }
-    }
-
-    /// <summary>Auto-discovered client handler for correlated crafting replies.</summary>
-    [MessageHandler(CraftingTypes.Reply)]
-    public sealed class CraftingReplyHandler : IClientMessageHandler<byte[]>
-    {
-        /// <inheritdoc/>
-        public Task HandleAsync(byte[] data) { var (corr, ok, err, recipes) = CraftCodec.DecodeReply(data); CraftRegistry.Complete(corr, (ok, err, recipes)); return Task.CompletedTask; }
     }
 
     /// <summary>Attaches the crafting hub to a server by composition.</summary>
@@ -297,10 +249,10 @@ namespace SetNet.Crafting
         public static CraftingClient UseCrafting(this BaseClient client) => new CraftingClient(client);
     }
 
-    /// <summary>One-time bootstrap so the crafting handlers are discovered. Call at startup.</summary>
+    /// <summary>One-time bootstrap so the crafting channel service is discovered. Call at startup.</summary>
     public static class CraftingRuntime
     {
         /// <summary>Ensures the crafting layer is discoverable.</summary>
-        public static void Enable() { _ = CraftingTypes.Command; }
+        public static void Enable() { _ = typeof(CraftingChannelService); }
     }
 }

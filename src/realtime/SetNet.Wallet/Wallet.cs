@@ -2,27 +2,17 @@ using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
-using System.Threading;
 using System.Threading.Tasks;
 using SetNet.Core;
-using SetNet.Core.Transport;
-using SetNet.Data;
-using SetNet.Data.Attributes;
+using SetNet.Protocol;
 
 namespace SetNet.Wallet
 {
-    /// <summary>Reserved wire types for the wallet service. Don't reuse these ids for application messages.</summary>
-    public static class WalletTypes
-    {
-        /// <summary>Client → server: balance query.</summary>
-        public const ushort Command = ushort.MaxValue - 58;   // 65477
+    /// <summary>Command operations (client → server) within the Wallet protocol channel.</summary>
+    internal enum WalletOp : ushort { Query = 1 }
 
-        /// <summary>Server → client: correlated reply (a balance snapshot).</summary>
-        public const ushort Reply = ushort.MaxValue - 59;     // 65476
-
-        /// <summary>Server → client: push event when the peer's balances change.</summary>
-        public const ushort Event = ushort.MaxValue - 60;     // 65475
-    }
+    /// <summary>Push events (server → client) within the Wallet protocol channel.</summary>
+    internal enum WalletEvt : ushort { Changed = 10 }
 
     /// <summary>Thrown when a wallet operation fails (query timeout).</summary>
     public sealed class WalletException : Exception
@@ -139,52 +129,38 @@ namespace SetNet.Wallet
 
     internal static class WalletCodec
     {
-        public static byte[] EncodeSnapshot(int correlationId, IReadOnlyList<CurrencyBalance> balances)
+        public static byte[] EncodeBalances(IReadOnlyList<CurrencyBalance> balances)
         {
             using var ms = new MemoryStream();
             using var w = new BinaryWriter(ms);
-            w.Write(correlationId);
             w.Write(balances.Count);
             foreach (var b in balances) { w.Write(b.Currency ?? ""); w.Write(b.Amount); }
             return ms.ToArray();
         }
 
-        public static (int Correlation, List<CurrencyBalance> Balances) DecodeSnapshot(byte[] data)
+        public static List<CurrencyBalance> DecodeBalances(byte[] data)
         {
+            if (data == null || data.Length == 0) return new List<CurrencyBalance>();
             using var ms = new MemoryStream(data);
             using var r = new BinaryReader(ms);
-            var corr = r.ReadInt32();
             var count = r.ReadInt32();
             var list = new List<CurrencyBalance>(count);
             for (var i = 0; i < count; i++) list.Add(new CurrencyBalance(r.ReadString(), r.ReadInt64()));
-            return (corr, list);
+            return list;
         }
     }
 
     // ---- client ----
 
-    internal static class WalletRegistry
-    {
-        private static int _counter;
-        private static readonly ConcurrentDictionary<int, TaskCompletionSource<List<CurrencyBalance>>> Pending
-            = new ConcurrentDictionary<int, TaskCompletionSource<List<CurrencyBalance>>>();
-        private static readonly ConcurrentDictionary<WalletClient, byte> Clients = new ConcurrentDictionary<WalletClient, byte>();
-
-        public static int NextId() => Interlocked.Increment(ref _counter);
-        public static void Register(int id, TaskCompletionSource<List<CurrencyBalance>> tcs) => Pending[id] = tcs;
-        public static void Remove(int id) => Pending.TryRemove(id, out _);
-        public static void Complete(int id, List<CurrencyBalance> b) { if (Pending.TryGetValue(id, out var tcs)) tcs.TrySetResult(b); }
-        public static void RegisterClient(WalletClient c) => Clients[c] = 0;
-        public static void DispatchEvent(List<CurrencyBalance> b) { foreach (var c in Clients.Keys) c.OnChanged(b); }
-    }
-
     /// <summary>
     /// Client-side wallet driver, attached by <see cref="WalletClientExtensions.UseWallet"/>. Read-only (the server
     /// is authoritative): fetch balances and subscribe to changes. Deposits/withdrawals happen in server game logic.
+    /// Rides the unified protocol on the <see cref="Channels.Wallet"/> channel.
     /// </summary>
     public sealed class WalletClient
     {
         private readonly BaseClient _client;
+        private readonly IDisposable _subscription;
 
         /// <summary>Raised when the server pushes updated balances for this player.</summary>
         public event Action<IReadOnlyList<CurrencyBalance>>? Changed;
@@ -192,31 +168,21 @@ namespace SetNet.Wallet
         internal WalletClient(BaseClient client)
         {
             _client = client ?? throw new ArgumentNullException(nameof(client));
-            WalletRegistry.RegisterClient(this);
+            _subscription = _client.OnRaw(Channels.Wallet, (ushort)WalletEvt.Changed,
+                body => Changed?.Invoke(WalletCodec.DecodeBalances(body)));
         }
 
         /// <summary>Fetches this player's current balances.</summary>
         public async Task<IReadOnlyList<CurrencyBalance>> GetAsync()
         {
-            var id = WalletRegistry.NextId();
-            var tcs = new TaskCompletionSource<List<CurrencyBalance>>(TaskCreationOptions.RunContinuationsAsynchronously);
-            WalletRegistry.Register(id, tcs);
             try
             {
-                using var ms = new MemoryStream();
-                using (var w = new BinaryWriter(ms)) w.Write(id);
-                await _client.SendAsync(WalletTypes.Command, ms.ToArray(), DeliveryMethod.Reliable).ConfigureAwait(false);
-                using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
-                using (timeout.Token.Register(() => tcs.TrySetCanceled()))
-                {
-                    try { return await tcs.Task.ConfigureAwait(false); }
-                    catch (OperationCanceledException) { throw new WalletException("Wallet query timed out."); }
-                }
+                var body = await _client.RequestRawAsync(Channels.Wallet, (ushort)WalletOp.Query, Array.Empty<byte>()).ConfigureAwait(false);
+                return WalletCodec.DecodeBalances(body);
             }
-            finally { WalletRegistry.Remove(id); }
+            catch (ProtocolException ex) { throw new WalletException(ex.Message); }
+            catch (TimeoutException) { throw new WalletException("Wallet query timed out."); }
         }
-
-        internal void OnChanged(List<CurrencyBalance> b) => Changed?.Invoke(b);
     }
 
     // ---- server ----
@@ -287,47 +253,29 @@ namespace SetNet.Wallet
         {
             if (!_online.TryGetValue(playerKey, out var peer)) return;
             var balances = await Store.GetAsync(playerKey).ConfigureAwait(false);
-            try { await peer.SendAsync(WalletTypes.Event, WalletCodec.EncodeSnapshot(0, balances), DeliveryMethod.Reliable).ConfigureAwait(false); } catch { }
+            try { await peer.PublishRawAsync(Channels.Wallet, (ushort)WalletEvt.Changed, WalletCodec.EncodeBalances(balances)).ConfigureAwait(false); } catch { }
         }
 
-        internal async Task OnQuery(BasePeer peer, int correlationId)
+        internal async Task HandleQueryAsync(ChannelRequest request)
         {
-            var balances = await Store.GetAsync(_options.PlayerKey(peer)).ConfigureAwait(false);
-            try { await peer.SendAsync(WalletTypes.Reply, WalletCodec.EncodeSnapshot(correlationId, balances), DeliveryMethod.Reliable).ConfigureAwait(false); } catch { }
+            var balances = await Store.GetAsync(_options.PlayerKey(request.Peer)).ConfigureAwait(false);
+            await request.ReplyRawAsync(WalletCodec.EncodeBalances(balances)).ConfigureAwait(false);
         }
     }
 
-    // ---- auto-discovered handlers ----
+    // ---- auto-discovered channel service ----
 
-    /// <summary>Auto-discovered server handler for wallet queries.</summary>
-    [MessageHandler(WalletTypes.Command)]
-    public sealed class WalletCommandHandler : IServerMessageHandler<byte[]>
+    /// <summary>Auto-discovered channel service for wallet queries.</summary>
+    [ProtocolChannel(Channels.Wallet)]
+    public sealed class WalletChannelService : IChannelService
     {
         /// <inheritdoc/>
-        public Task HandleAsync(BasePeer peer, byte[] data)
+        public Task HandleAsync(ChannelRequest request)
         {
-            var hub = WalletServer.For(peer.CurrentPeerInfo.Server);
-            if (hub == null) return Task.CompletedTask;
-            using var ms = new MemoryStream(data);
-            using var r = new BinaryReader(ms);
-            return hub.OnQuery(peer, r.ReadInt32());
+            var hub = WalletServer.For(request.Peer.CurrentPeerInfo.Server);
+            if (hub == null) throw new ProtocolException("wallet is not configured on this server");
+            return hub.HandleQueryAsync(request);
         }
-    }
-
-    /// <summary>Auto-discovered client handler for correlated balance snapshots.</summary>
-    [MessageHandler(WalletTypes.Reply)]
-    public sealed class WalletReplyHandler : IClientMessageHandler<byte[]>
-    {
-        /// <inheritdoc/>
-        public Task HandleAsync(byte[] data) { var (corr, b) = WalletCodec.DecodeSnapshot(data); WalletRegistry.Complete(corr, b); return Task.CompletedTask; }
-    }
-
-    /// <summary>Auto-discovered client handler for pushed balance changes.</summary>
-    [MessageHandler(WalletTypes.Event)]
-    public sealed class WalletEventHandler : IClientMessageHandler<byte[]>
-    {
-        /// <inheritdoc/>
-        public Task HandleAsync(byte[] data) { var (_, b) = WalletCodec.DecodeSnapshot(data); WalletRegistry.DispatchEvent(b); return Task.CompletedTask; }
     }
 
     // ---- composition entry points ----
@@ -350,10 +298,10 @@ namespace SetNet.Wallet
         public static WalletClient UseWallet(this BaseClient client) => new WalletClient(client);
     }
 
-    /// <summary>One-time bootstrap so the wallet handlers are discovered. Call at startup.</summary>
+    /// <summary>One-time bootstrap so the wallet channel service is discovered. Call at startup.</summary>
     public static class WalletRuntime
     {
         /// <summary>Ensures the wallet layer is discoverable.</summary>
-        public static void Enable() { _ = WalletTypes.Command; }
+        public static void Enable() { _ = typeof(WalletChannelService); }
     }
 }

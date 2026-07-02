@@ -1,21 +1,18 @@
 using System;
-using System.Buffers.Binary;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
-using System.Threading;
 using System.Threading.Tasks;
 using SetNet.Core;
-using SetNet.Core.Transport;
-using SetNet.Data;
-using SetNet.Data.Attributes;
 using SetNet.Messaging;
+using SetNet.Protocol;
 
 namespace SetNet.Rooms
 {
     /// <summary>
     /// Client-side rooms driver, attached by <see cref="RoomsClientExtensions.UseRooms"/>. Create/join a room by
     /// code, broadcast to it, and receive player-joined/left and message events — all by composition, alongside
-    /// your regular messages.
+    /// your regular messages. Rides the unified protocol on the <see cref="Channels.Rooms"/> channel: requests use
+    /// the shared correlation mechanism and events the shared subscription mechanism (no per-module plumbing).
     /// </summary>
     public sealed class RoomsClient
     {
@@ -25,6 +22,7 @@ namespace SetNet.Rooms
         private string _ownId = "";
         private readonly HashSet<string> _members = new HashSet<string>();
         private readonly ConcurrentDictionary<ushort, Action<string, byte[]>> _typed = new ConcurrentDictionary<ushort, Action<string, byte[]>>();
+        private readonly List<IDisposable> _subscriptions = new List<IDisposable>();
 
         /// <summary>The room this client is currently in, or null.</summary>
         public RoomInfo? CurrentRoom
@@ -55,16 +53,19 @@ namespace SetNet.Rooms
         internal RoomsClient(BaseClient client)
         {
             _client = client ?? throw new ArgumentNullException(nameof(client));
-            RoomRegistry.RegisterClient(this);
+            _subscriptions.Add(_client.OnRaw(Channels.Rooms, (ushort)RoomEvt.PlayerJoined, body => OnPlayerEvent(true, body)));
+            _subscriptions.Add(_client.OnRaw(Channels.Rooms, (ushort)RoomEvt.PlayerLeft, body => OnPlayerEvent(false, body)));
+            _subscriptions.Add(_client.OnRaw(Channels.Rooms, (ushort)RoomEvt.Message, OnMessageEvent));
+            _subscriptions.Add(_client.OnRaw(Channels.Rooms, (ushort)RoomEvt.Closed, OnClosedEvent));
         }
 
         /// <summary>Creates a new room and joins it; returns the room (with its join code).</summary>
         public async Task<RoomInfo> CreateAsync(RoomOptions? options = null)
-            => ApplyRoom(await SendAsync(RoomOp.Create, "", options?.MaxPlayers ?? 0, Array.Empty<byte>()).ConfigureAwait(false));
+            => ApplyRoom(await RequestAsync((ushort)RoomOp.Create, RoomWire.EncodeCreate(options?.MaxPlayers ?? 0)).ConfigureAwait(false));
 
         /// <summary>Joins an existing room by code; throws <see cref="RoomException"/> if it's missing or full.</summary>
         public async Task<RoomInfo> JoinAsync(string code)
-            => ApplyRoom(await SendAsync(RoomOp.Join, code, 0, Array.Empty<byte>()).ConfigureAwait(false));
+            => ApplyRoom(await RequestAsync((ushort)RoomOp.Join, RoomWire.EncodeJoin(code)).ConfigureAwait(false));
 
         /// <summary>
         /// Leaves the current room. Tolerant of a dropped connection — if the client is already disconnected the server
@@ -72,17 +73,14 @@ namespace SetNet.Rooms
         /// </summary>
         public async Task LeaveAsync()
         {
-            try { await SendAsync(RoomOp.Leave, "", 0, Array.Empty<byte>()).ConfigureAwait(false); }
+            try { await RequestAsync((ushort)RoomOp.Leave, Array.Empty<byte>()).ConfigureAwait(false); }
             catch { /* already disconnected — the server auto-removes us; just clear local state */ }
             lock (_gate) { _code = null; _members.Clear(); }
         }
 
         /// <summary>Broadcasts raw bytes to the other members under a message-type id, routed on the far side to <see cref="On{T}"/> or <see cref="MessageReceived"/>.</summary>
         public Task BroadcastAsync(ushort messageType, byte[] body)
-        {
-            var command = new RoomCommand(0, RoomOp.Broadcast, CurrentRoom?.Code ?? "", 0, Frame(messageType, body ?? Array.Empty<byte>()));
-            return _client.SendAsync(RoomTypes.Command, command.Encode(), DeliveryMethod.Reliable);
-        }
+            => _client.PostRawAsync(Channels.Rooms, (ushort)RoomOp.Broadcast, RoomWire.FrameBroadcast(messageType, body ?? Array.Empty<byte>()));
 
         /// <summary>Broadcasts raw bytes under the default message-type id (<c>0</c>).</summary>
         public Task BroadcastAsync(byte[] payload) => BroadcastAsync((ushort)0, payload);
@@ -107,79 +105,56 @@ namespace SetNet.Rooms
         /// <summary>Removes the typed handler for a broadcast message-type id (it then falls through to <see cref="MessageReceived"/>).</summary>
         public void Off(ushort messageType) => _typed.TryRemove(messageType, out _);
 
-        private static byte[] Frame(ushort messageType, byte[] body)
+        /// <summary>Sends a room command and maps protocol failures back to the public <see cref="RoomException"/>.</summary>
+        private async Task<byte[]> RequestAsync(ushort op, byte[] body)
         {
-            var framed = new byte[2 + body.Length];
-            BinaryPrimitives.WriteUInt16LittleEndian(framed.AsSpan(0, 2), messageType);
-            Buffer.BlockCopy(body, 0, framed, 2, body.Length);
-            return framed;
+            try { return await _client.RequestRawAsync(Channels.Rooms, op, body).ConfigureAwait(false); }
+            catch (ProtocolException ex) { throw new RoomException(ex.Message); }
+            catch (TimeoutException) { throw new RoomException("Room command timed out."); }
         }
 
-        private RoomInfo ApplyRoom(RoomReply reply)
+        private RoomInfo ApplyRoom(byte[] replyBody)
         {
-            if (!reply.Success) throw new RoomException(reply.Error);
+            var (code, ownId, members) = RoomWire.DecodeReply(replyBody);
             lock (_gate)
             {
-                _code = reply.Code;
-                _ownId = reply.OwnPlayerId;
+                _code = code;
+                _ownId = ownId;
                 _members.Clear();
-                foreach (var m in reply.Members) _members.Add(m);
+                foreach (var m in members) _members.Add(m);
                 return new RoomInfo(_code, _ownId, new List<string>(_members));
             }
         }
 
-        private async Task<RoomReply> SendAsync(RoomOp op, string code, int maxPlayers, byte[] payload)
+        private void OnPlayerEvent(bool joined, byte[] body)
         {
-            var correlationId = RoomRegistry.NextId();
-            var tcs = new TaskCompletionSource<RoomReply>(TaskCreationOptions.RunContinuationsAsynchronously);
-            RoomRegistry.Register(correlationId, tcs);
-            try
+            var (code, playerId) = RoomWire.DecodePlayer(body);
+            lock (_gate) { if (_code == null || _code != code) return; }   // not my room
+            if (joined)
             {
-                var command = new RoomCommand(correlationId, op, code, maxPlayers, payload);
-                await _client.SendAsync(RoomTypes.Command, command.Encode(), DeliveryMethod.Reliable).ConfigureAwait(false);
-
-                using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
-                using (timeout.Token.Register(() => tcs.TrySetCanceled()))
-                {
-                    try { return await tcs.Task.ConfigureAwait(false); }
-                    catch (OperationCanceledException) { throw new RoomException("Room command timed out."); }
-                }
+                lock (_gate) _members.Add(playerId);
+                PlayerJoined?.Invoke(playerId);
             }
-            finally { RoomRegistry.Remove(correlationId); }
+            else
+            {
+                lock (_gate) _members.Remove(playerId);
+                PlayerLeft?.Invoke(playerId);
+            }
         }
 
-        internal void OnEvent(RoomEvent evt)
+        private void OnMessageEvent(byte[] body)
         {
-            lock (_gate)
-            {
-                if (_code == null || _code != evt.Code) return;   // not my room
-            }
-            switch (evt.Type)
-            {
-                case RoomEventType.PlayerJoined:
-                    lock (_gate) _members.Add(evt.PlayerId);
-                    PlayerJoined?.Invoke(evt.PlayerId);
-                    break;
-                case RoomEventType.PlayerLeft:
-                    lock (_gate) _members.Remove(evt.PlayerId);
-                    PlayerLeft?.Invoke(evt.PlayerId);
-                    break;
-                case RoomEventType.Message:
-                {
-                    var framed = evt.Payload;
-                    if (framed.Length < 2) break;   // malformed broadcast
-                    var messageType = BinaryPrimitives.ReadUInt16LittleEndian(framed.AsSpan(0, 2));
-                    var body = new byte[framed.Length - 2];
-                    Buffer.BlockCopy(framed, 2, body, 0, body.Length);
-                    if (_typed.TryGetValue(messageType, out var handler)) handler(evt.PlayerId, body);   // typed handler consumes it
-                    else MessageReceived?.Invoke(evt.PlayerId, messageType, body);                       // otherwise the catch-all
-                    break;
-                }
-                case RoomEventType.Closed:
-                    lock (_gate) { _code = null; _members.Clear(); }
-                    Closed?.Invoke();
-                    break;
-            }
+            var (code, sender, messageType, payload) = RoomWire.DecodeMessage(body);
+            lock (_gate) { if (_code == null || _code != code) return; }   // not my room
+            if (_typed.TryGetValue(messageType, out var handler)) handler(sender, payload);   // typed handler consumes it
+            else MessageReceived?.Invoke(sender, messageType, payload);                       // otherwise the catch-all
+        }
+
+        private void OnClosedEvent(byte[] body)
+        {
+            var code = RoomWire.DecodeCode(body);
+            lock (_gate) { if (_code == null || _code != code) return; _code = null; _members.Clear(); }
+            Closed?.Invoke();
         }
     }
 
@@ -188,30 +163,5 @@ namespace SetNet.Rooms
     {
         /// <summary>Enables rooms on a client and returns the driver (create/join/leave/broadcast + events).</summary>
         public static RoomsClient UseRooms(this BaseClient client) => new RoomsClient(client);
-    }
-
-    /// <summary>Auto-discovered client handler for room command replies (correlated).</summary>
-    [MessageHandler(RoomTypes.Reply)]
-    public sealed class RoomReplyHandler : IClientMessageHandler<byte[]>
-    {
-        /// <inheritdoc/>
-        public Task HandleAsync(byte[] data)
-        {
-            var reply = RoomReply.Decode(data);
-            RoomRegistry.Complete(reply.CorrelationId, reply);
-            return Task.CompletedTask;
-        }
-    }
-
-    /// <summary>Auto-discovered client handler for room push events; routes to the matching <see cref="RoomsClient"/>.</summary>
-    [MessageHandler(RoomTypes.Event)]
-    public sealed class RoomEventHandler : IClientMessageHandler<byte[]>
-    {
-        /// <inheritdoc/>
-        public Task HandleAsync(byte[] data)
-        {
-            RoomRegistry.DispatchEvent(RoomEvent.Decode(data));
-            return Task.CompletedTask;
-        }
     }
 }

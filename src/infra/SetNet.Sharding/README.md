@@ -67,7 +67,7 @@ cluster.On<NodesChanged>(msg => sharding.UpdateNodes(msg.Nodes));   // atomic sw
 
 ## Notes
 
-- **Reserved wire types 65490 / 65491.** Don't reuse them.
+- Rides the unified **SetNet.Protocol** messaging layer on the `Channels.Sharding` channel (all modules share one envelope wire type, `65447`) — no per-module wire ids to reserve. Serializer-agnostic: the control protocol is hand-framed `byte[]`, your payloads use your `SetNetSerializer`.
 - **Deterministic everywhere.** The ring hashes with FNV-1a over `NodeId` — the same node list yields the same ring on every node and across restarts. Keep `NodeId`s stable; renaming one remaps its keys.
 - **Directory, not proxy.** Clients are *told* where to go and connect there themselves (cheap, no extra hop). If you need transparent forwarding instead, put [`SetNet.Gateway`](https://www.nuget.org/packages/SetNet.Gateway) in front and use `ShardRing` inside its backend selector.
 - **Consistency is yours.** The package doesn't gossip membership — push `UpdateNodes` to all nodes together (via `SetNet.Cluster`, config rollout, orchestrator). During a brief divergence two nodes may answer differently; design flows to re-query on connect failure.

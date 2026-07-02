@@ -4,6 +4,16 @@ SetNet is a small core plus optional **companion packages** added by composition
 (unless noted) and is wired by an `xxxRuntime.Enable()` call + `server.UseXxx()` / `client.UseXxx()` extensions,
 so the core stays lean and users pull only what they need.
 
+**Unified messaging (`SetNet.Protocol`, in core).** Every command/reply/event companion module below speaks the
+same three verbs over one shared envelope wire id (`ProtocolTypes.Envelope`), demultiplexed by a per-module
+`Channels.X` id + an `op`: correlated **request/reply** (`client.RequestAsync`/`RequestRawAsync`), **fire-and-forget**
+(`client.PostAsync`/`PostRawAsync`), and **server push** (`client.On<T>`/`OnRaw` ↔ `peer.PublishRawAsync`), with the
+server side handled by an auto-discovered `[ProtocolChannel(Channels.X)] IChannelService`. This means no per-module
+wire-type reservations and one shared correlation/subscription mechanism instead of each module hand-rolling its own.
+A handful of modules with a different message shape stay off it and keep their own reserved ids: `SetNet.Rpc`,
+`SetNet.StateSync` (+ `.Rpc`), `SetNet.Voice`, `SetNet.Fragmentation`, `SetNet.Multiplex`, `SetNet.Streams`,
+`SetNet.Cluster`, `SetNet.Auth`, `SetNet.ProofOfWork`.
+
 ## Shipped
 
 Grouped by purpose (mirrors the `src/<category>/` layout). Each depends only on `SetNet` unless noted.
@@ -114,6 +124,7 @@ Grouped by purpose (mirrors the `src/<category>/` layout). Each depends only on 
 ### Core extension points already in place (for composition packages)
 - `SetNetSerializer.Use/Serialize/Deserialize` — pluggable serialization.
 - Auto-discovered typed **and** `byte[]` handlers (`IServer/ClientMessageHandler<T>`) via `[MessageHandler]`.
+- **Unified messaging protocol** (`SetNet.Protocol`, in core): `client.RequestAsync/PostAsync/On<T>` + server `[ProtocolChannel] IChannelService` + `peer.PublishRawAsync` — one envelope wire id, per-module `Channels`, shared correlation + subscription registries. The composition layer most game modules build on.
 - `BaseClient/BasePeer.SendAsync<T>` and `SendRawAsync` — **public**.
 - `BaseSocket.OnRawFrame` (intercept/consume) + `SendRawAsync` — relay/proxy primitive.
 - `BaseServer.InboundAuthorizer` + `BaseSocket.AllowInbound` — per-frame inbound gate.

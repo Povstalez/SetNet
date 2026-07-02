@@ -3,9 +3,7 @@ using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Threading.Tasks;
 using SetNet.Core;
-using SetNet.Core.Transport;
-using SetNet.Data;
-using SetNet.Data.Attributes;
+using SetNet.Protocol;
 
 namespace SetNet.Rooms
 {
@@ -47,19 +45,19 @@ namespace SetNet.Rooms
             if (!MemberRoom.TryRemove(peer.CurrentPeerInfo.Id, out var room)) return;
             room.Members.TryRemove(peer.CurrentPeerInfo.Id, out _);
             var remaining = new List<BasePeer>(room.Members.Values);
-            await NotifyOthersAsync(room, peer, new RoomEvent(room.Code, RoomEventType.PlayerLeft, PlayerId(peer), Array.Empty<byte>())).ConfigureAwait(false);
+            await NotifyOthersAsync(room, peer, (ushort)RoomEvt.PlayerLeft,
+                RoomWire.EncodePlayer(room.Code, PlayerId(peer))).ConfigureAwait(false);
             Hooks?.RaiseLeft(room.Code, peer, remaining);
             if (room.Count == 0) await Store.RemoveAsync(room).ConfigureAwait(false);
         }
 
-        /// <summary>Sends an event to every member except <paramref name="except"/> (best-effort).</summary>
-        public async Task NotifyOthersAsync(Room room, BasePeer except, RoomEvent evt)
+        /// <summary>Pushes an event (op + body) to every member except <paramref name="except"/> (best-effort).</summary>
+        public async Task NotifyOthersAsync(Room room, BasePeer except, ushort evtOp, byte[] body)
         {
-            var bytes = evt.Encode();
             foreach (var member in room.Members)
             {
                 if (member.Key == except.CurrentPeerInfo.Id) continue;
-                try { await member.Value.SendAsync(RoomTypes.Event, bytes, DeliveryMethod.Reliable).ConfigureAwait(false); }
+                try { await member.Value.PublishRawAsync(Channels.Rooms, evtOp, body).ConfigureAwait(false); }
                 catch { /* member dropping; skip */ }
             }
         }
@@ -73,9 +71,10 @@ namespace SetNet.Rooms
     }
 
     /// <summary>
-    /// Server-side rooms entry point. Call <see cref="UseRooms"/> once after constructing your server; it wires the
-    /// auto-discovered command handler and auto-removes a peer from its room on disconnect (via the core
-    /// <see cref="BaseServer.PeerDisconnected"/> event). No base class needed.
+    /// Server-side rooms entry point. Call <see cref="UseRooms"/> once after constructing your server; it registers
+    /// the room state and auto-removes a peer from its room on disconnect (via the core
+    /// <see cref="BaseServer.PeerDisconnected"/> event). Room traffic rides the unified protocol on the
+    /// <see cref="Channels.Rooms"/> channel — no per-module wire types. No base class needed.
     /// </summary>
     public static class RoomServer
     {
@@ -109,61 +108,62 @@ namespace SetNet.Rooms
             => server != null && _servers.TryGetValue(server, out var state) ? state : null;
     }
 
-    /// <summary>Auto-discovered handler for room commands (create/join/leave/broadcast). Serializer-agnostic (byte[]).</summary>
-    [MessageHandler(RoomTypes.Command)]
-    public sealed class RoomServerHandler : IServerMessageHandler<byte[]>
+    /// <summary>
+    /// Auto-discovered channel service for room commands (create/join/leave/broadcast). Replaces the former
+    /// hand-framed <c>[MessageHandler]</c> classes and correlation plumbing: the unified protocol handles
+    /// correlation and reply framing, so this only implements the room logic and dispatches on the op.
+    /// </summary>
+    [ProtocolChannel(Channels.Rooms)]
+    public sealed class RoomsChannelService : IChannelService
     {
         /// <inheritdoc/>
-        public async Task HandleAsync(BasePeer peer, byte[] data)
+        public async Task HandleAsync(ChannelRequest request)
         {
-            var cmd = RoomCommand.Decode(data);
-            var state = RoomServer.Get(peer.CurrentPeerInfo.Server);
-            if (state == null)
-            {
-                await ReplyAsync(peer, RoomReply.Fail(cmd.CorrelationId, "rooms are not configured on this server")).ConfigureAwait(false);
-                return;
-            }
+            var state = RoomServer.Get(request.Peer.CurrentPeerInfo.Server);
+            if (state == null) throw new ProtocolException("rooms are not configured on this server");
+            var peer = request.Peer;
 
-            switch (cmd.Op)
+            switch ((RoomOp)request.Op)
             {
                 case RoomOp.Create:
                 {
                     await state.LeaveAsync(peer).ConfigureAwait(false);   // one room per peer
-                    var room = await state.Store.CreateAsync(cmd.MaxPlayers).ConfigureAwait(false);
+                    var room = await state.Store.CreateAsync(RoomWire.DecodeCreate(request.RawBody)).ConfigureAwait(false);
                     state.AddMember(room, peer);
-                    await ReplyAsync(peer, RoomReply.Ok(cmd.CorrelationId, room.Code, RoomServerState.PlayerId(peer), state.MemberIds(room))).ConfigureAwait(false);
+                    await request.ReplyRawAsync(
+                        RoomWire.EncodeReply(room.Code, RoomServerState.PlayerId(peer), state.MemberIds(room))).ConfigureAwait(false);
                     break;
                 }
                 case RoomOp.Join:
                 {
-                    var room = await state.Store.GetAsync(cmd.Code).ConfigureAwait(false);
-                    if (room == null) { await ReplyAsync(peer, RoomReply.Fail(cmd.CorrelationId, "room not found")).ConfigureAwait(false); break; }
-                    if (room.IsFull) { await ReplyAsync(peer, RoomReply.Fail(cmd.CorrelationId, "room full")).ConfigureAwait(false); break; }
+                    var room = await state.Store.GetAsync(RoomWire.DecodeJoin(request.RawBody)).ConfigureAwait(false);
+                    if (room == null) throw new ProtocolException("room not found");
+                    if (room.IsFull) throw new ProtocolException("room full");
                     await state.LeaveAsync(peer).ConfigureAwait(false);
                     state.AddMember(room, peer);
-                    await state.NotifyOthersAsync(room, peer,
-                        new RoomEvent(room.Code, RoomEventType.PlayerJoined, RoomServerState.PlayerId(peer), Array.Empty<byte>())).ConfigureAwait(false);
-                    await ReplyAsync(peer, RoomReply.Ok(cmd.CorrelationId, room.Code, RoomServerState.PlayerId(peer), state.MemberIds(room))).ConfigureAwait(false);
+                    await state.NotifyOthersAsync(room, peer, (ushort)RoomEvt.PlayerJoined,
+                        RoomWire.EncodePlayer(room.Code, RoomServerState.PlayerId(peer))).ConfigureAwait(false);
+                    await request.ReplyRawAsync(
+                        RoomWire.EncodeReply(room.Code, RoomServerState.PlayerId(peer), state.MemberIds(room))).ConfigureAwait(false);
                     break;
                 }
                 case RoomOp.Leave:
                 {
                     await state.LeaveAsync(peer).ConfigureAwait(false);
-                    if (cmd.CorrelationId != 0)
-                        await ReplyAsync(peer, RoomReply.Ok(cmd.CorrelationId, "", RoomServerState.PlayerId(peer), Array.Empty<string>())).ConfigureAwait(false);
+                    if (request.ExpectsReply) await request.ReplyRawAsync(Array.Empty<byte>()).ConfigureAwait(false);
                     break;
                 }
                 case RoomOp.Broadcast:
                 {
                     if (state.MemberRoom.TryGetValue(peer.CurrentPeerInfo.Id, out var room))
-                        await state.NotifyOthersAsync(room, peer,
-                            new RoomEvent(room.Code, RoomEventType.Message, RoomServerState.PlayerId(peer), cmd.Payload)).ConfigureAwait(false);
+                    {
+                        var (messageType, payload) = RoomWire.UnframeBroadcast(request.RawBody);
+                        await state.NotifyOthersAsync(room, peer, (ushort)RoomEvt.Message,
+                            RoomWire.EncodeMessage(room.Code, RoomServerState.PlayerId(peer), messageType, payload)).ConfigureAwait(false);
+                    }
                     break;
                 }
             }
         }
-
-        private static Task ReplyAsync(BasePeer peer, RoomReply reply)
-            => peer.SendAsync(RoomTypes.Reply, reply.Encode(), DeliveryMethod.Reliable);
     }
 }

@@ -67,7 +67,7 @@ await trade.ConfirmAsync();             // when both confirm → items swap
 
 ## Notes
 
-- **Reserved wire types 65484 / 65485 / 65486.** Don't reuse them.
+- Rides the unified **SetNet.Protocol** messaging layer on the `Channels.Trade` channel (all modules share one envelope wire type, `65447`) — no per-module wire ids to reserve. Serializer-agnostic: the control protocol is hand-framed `byte[]`, your payloads use your `SetNetSerializer`.
 - **Two-phase by design.** Editing any offer clears both ready and confirm flags, so a partner always re-approves the exact final offer. In the confirming phase offers are locked — to change something, cancel and restart.
 - **Atomicity.** The swap revokes everything first (via `Inventory.TryRevokeAsync`) and only then grants; a shortfall triggers a full rollback + cancel. For a multi-node cluster, back `SetNet.Inventory` with a transactional store so the revoke/grant sequence is durable.
 - **One trade per player.** A player already in a trade can't be proposed to; a disconnect auto-cancels their trade with nothing moved.

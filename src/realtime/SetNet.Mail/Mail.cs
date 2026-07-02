@@ -3,30 +3,18 @@ using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
-using System.Threading;
 using System.Threading.Tasks;
 using SetNet.Core;
-using SetNet.Core.Transport;
-using SetNet.Data;
-using SetNet.Data.Attributes;
 using SetNet.Inventory;
+using SetNet.Protocol;
 
 namespace SetNet.Mail
 {
-    /// <summary>Reserved wire types for the mail service. Don't reuse these ids for application messages.</summary>
-    public static class MailTypes
-    {
-        /// <summary>Client → server: send/list/read/claim/delete command.</summary>
-        public const ushort Command = ushort.MaxValue - 52;   // 65483
+    /// <summary>Command operations (client → server) within the Mail protocol channel.</summary>
+    internal enum MailOp : ushort { Send = 1, List = 2, Read = 3, Claim = 4, Delete = 5 }
 
-        /// <summary>Server → client: correlated reply.</summary>
-        public const ushort Reply = ushort.MaxValue - 53;     // 65482
-
-        /// <summary>Server → client: push event when new mail arrives while online.</summary>
-        public const ushort Event = ushort.MaxValue - 54;     // 65481
-    }
-
-    internal enum MailOp : byte { Send = 0, List = 1, Read = 2, Claim = 3, Delete = 4 }
+    /// <summary>Push events (server → client) within the Mail protocol channel.</summary>
+    internal enum MailEvt : ushort { Received = 10 }
 
     /// <summary>Thrown when a mail operation fails (unknown message, missing attachments, timeout).</summary>
     public sealed class MailException : Exception
@@ -165,90 +153,80 @@ namespace SetNet.Mail
 
     // ---- wire ----
 
+    /// <summary>Decoded mail command body (op and correlation live in the protocol envelope).</summary>
     internal sealed class MailCommand
     {
-        public int CorrelationId;
-        public MailOp Op;
         public string ToKey = "";
         public string MessageId = "";
         public string Subject = "";
         public byte[] Body = Array.Empty<byte>();
         public List<MailAttachment> Attachments = new List<MailAttachment>();
-
-        public byte[] Encode()
-        {
-            using var ms = new MemoryStream();
-            using var w = new BinaryWriter(ms);
-            w.Write(CorrelationId);
-            w.Write((byte)Op);
-            w.Write(ToKey ?? "");
-            w.Write(MessageId ?? "");
-            w.Write(Subject ?? "");
-            w.Write(Body?.Length ?? 0);
-            if (Body != null) w.Write(Body);
-            MailCodec.WriteAttachments(w, Attachments);
-            return ms.ToArray();
-        }
-
-        public static MailCommand Decode(byte[] data)
-        {
-            using var ms = new MemoryStream(data);
-            using var r = new BinaryReader(ms);
-            var cmd = new MailCommand
-            {
-                CorrelationId = r.ReadInt32(),
-                Op = (MailOp)r.ReadByte(),
-                ToKey = r.ReadString(),
-                MessageId = r.ReadString(),
-                Subject = r.ReadString(),
-            };
-            var len = r.ReadInt32();
-            cmd.Body = len > 0 ? r.ReadBytes(len) : Array.Empty<byte>();
-            cmd.Attachments = MailCodec.ReadAttachments(r);
-            return cmd;
-        }
     }
 
-    internal sealed class MailReply
-    {
-        public int CorrelationId;
-        public bool Success;
-        public string Error = "";
-        public string MessageId = "";           // Send: new id
-        public List<MailMessage> Messages = new List<MailMessage>();   // List / Read
-
-        public byte[] Encode()
-        {
-            using var ms = new MemoryStream();
-            using var w = new BinaryWriter(ms);
-            w.Write(CorrelationId);
-            w.Write(Success);
-            w.Write(Error ?? "");
-            w.Write(MessageId ?? "");
-            w.Write(Messages.Count);
-            foreach (var m in Messages) MailCodec.WriteMessage(w, m);
-            return ms.ToArray();
-        }
-
-        public static MailReply Decode(byte[] data)
-        {
-            using var ms = new MemoryStream(data);
-            using var r = new BinaryReader(ms);
-            var reply = new MailReply
-            {
-                CorrelationId = r.ReadInt32(),
-                Success = r.ReadBoolean(),
-                Error = r.ReadString(),
-                MessageId = r.ReadString(),
-            };
-            var count = r.ReadInt32();
-            for (var i = 0; i < count; i++) reply.Messages.Add(MailCodec.ReadMessage(r));
-            return reply;
-        }
-    }
-
+    /// <summary>Body codecs for the Mail channel (payload only; op/correlation are in the envelope).</summary>
     internal static class MailCodec
     {
+        public static byte[] EncodeCommand(MailCommand cmd)
+        {
+            using var ms = new MemoryStream();
+            using var w = new BinaryWriter(ms);
+            w.Write(cmd.ToKey ?? "");
+            w.Write(cmd.MessageId ?? "");
+            w.Write(cmd.Subject ?? "");
+            w.Write(cmd.Body?.Length ?? 0);
+            if (cmd.Body != null) w.Write(cmd.Body);
+            WriteAttachments(w, cmd.Attachments);
+            return ms.ToArray();
+        }
+
+        public static MailCommand DecodeCommand(byte[] data)
+        {
+            using var ms = new MemoryStream(data);
+            using var r = new BinaryReader(ms);
+            var cmd = new MailCommand { ToKey = r.ReadString(), MessageId = r.ReadString(), Subject = r.ReadString() };
+            var len = r.ReadInt32();
+            cmd.Body = len > 0 ? r.ReadBytes(len) : Array.Empty<byte>();
+            cmd.Attachments = ReadAttachments(r);
+            return cmd;
+        }
+
+        public static byte[] EncodeReply(string messageId, List<MailMessage> messages)
+        {
+            using var ms = new MemoryStream();
+            using var w = new BinaryWriter(ms);
+            w.Write(messageId ?? "");
+            w.Write(messages?.Count ?? 0);
+            if (messages != null) foreach (var m in messages) WriteMessage(w, m);
+            return ms.ToArray();
+        }
+
+        public static (string messageId, List<MailMessage> messages) DecodeReply(byte[] data)
+        {
+            if (data == null || data.Length == 0) return ("", new List<MailMessage>());
+            using var ms = new MemoryStream(data);
+            using var r = new BinaryReader(ms);
+            var id = r.ReadString();
+            var count = r.ReadInt32();
+            var list = new List<MailMessage>(count);
+            for (var i = 0; i < count; i++) list.Add(ReadMessage(r));
+            return (id, list);
+        }
+
+        public static byte[] EncodeMessage(MailMessage m)
+        {
+            using var ms = new MemoryStream();
+            using var w = new BinaryWriter(ms);
+            WriteMessage(w, m);
+            return ms.ToArray();
+        }
+
+        public static MailMessage DecodeMessage(byte[] data)
+        {
+            using var ms = new MemoryStream(data);
+            using var r = new BinaryReader(ms);
+            return ReadMessage(r);
+        }
+
         public static void WriteAttachments(BinaryWriter w, List<MailAttachment> attachments)
         {
             w.Write(attachments?.Count ?? 0);
@@ -291,30 +269,16 @@ namespace SetNet.Mail
 
     // ---- client ----
 
-    internal static class MailRegistry
-    {
-        private static int _counter;
-        private static readonly ConcurrentDictionary<int, TaskCompletionSource<MailReply>> Pending
-            = new ConcurrentDictionary<int, TaskCompletionSource<MailReply>>();
-        private static readonly ConcurrentDictionary<MailClient, byte> Clients
-            = new ConcurrentDictionary<MailClient, byte>();
-
-        public static int NextId() => Interlocked.Increment(ref _counter);
-        public static void Register(int id, TaskCompletionSource<MailReply> tcs) => Pending[id] = tcs;
-        public static void Remove(int id) => Pending.TryRemove(id, out _);
-        public static void Complete(int id, MailReply reply) { if (Pending.TryGetValue(id, out var tcs)) tcs.TrySetResult(reply); }
-        public static void RegisterClient(MailClient c) => Clients[c] = 0;
-        public static void DispatchEvent(MailMessage m) { foreach (var c in Clients.Keys) c.OnReceived(m); }
-    }
-
     /// <summary>
     /// Client-side mail driver, attached by <see cref="MailClientExtensions.UseMail"/>. Send mail (with optional item
     /// attachments) to another player whether they're online or not, list and read your mailbox, and claim
     /// attachments into your inventory. New mail that arrives while you're online is pushed via <see cref="Received"/>.
+    /// Rides the unified protocol on the <see cref="Channels.Mail"/> channel.
     /// </summary>
     public sealed class MailClient
     {
         private readonly BaseClient _client;
+        private readonly IDisposable _subscription;
 
         /// <summary>Raised when a new message arrives while this client is connected.</summary>
         public event Action<MailMessage>? Received;
@@ -322,7 +286,8 @@ namespace SetNet.Mail
         internal MailClient(BaseClient client)
         {
             _client = client ?? throw new ArgumentNullException(nameof(client));
-            MailRegistry.RegisterClient(this);
+            _subscription = _client.OnRaw(Channels.Mail, (ushort)MailEvt.Received,
+                body => Received?.Invoke(MailCodec.DecodeMessage(body)));
         }
 
         /// <summary>Sends mail to another player by key. Attachments are escrowed from your inventory now and delivered on claim; returns the new message id.</summary>
@@ -330,62 +295,48 @@ namespace SetNet.Mail
         {
             var cmd = new MailCommand
             {
-                Op = MailOp.Send,
                 ToKey = toPlayerKey,
                 Subject = subject ?? "",
                 Body = body ?? Array.Empty<byte>(),
                 Attachments = attachments?.ToList() ?? new List<MailAttachment>(),
             };
-            var reply = await SendCommand(cmd).ConfigureAwait(false);
-            return reply.MessageId;
+            var (messageId, _) = await SendCommand(MailOp.Send, cmd).ConfigureAwait(false);
+            return messageId;
         }
 
         /// <summary>Lists your mailbox (bodies included; attachments listed but not yet claimed).</summary>
         public async Task<IReadOnlyList<MailMessage>> ListAsync()
         {
-            var reply = await SendCommand(new MailCommand { Op = MailOp.List }).ConfigureAwait(false);
-            return reply.Messages;
+            var (_, messages) = await SendCommand(MailOp.List, new MailCommand()).ConfigureAwait(false);
+            return messages;
         }
 
         /// <summary>Marks a message read and returns it.</summary>
         public async Task<MailMessage> ReadAsync(string messageId)
         {
-            var reply = await SendCommand(new MailCommand { Op = MailOp.Read, MessageId = messageId }).ConfigureAwait(false);
-            if (reply.Messages.Count == 0) throw new MailException("No such message.");
-            return reply.Messages[0];
+            var (_, messages) = await SendCommand(MailOp.Read, new MailCommand { MessageId = messageId }).ConfigureAwait(false);
+            if (messages.Count == 0) throw new MailException("No such message.");
+            return messages[0];
         }
 
         /// <summary>Claims a message's attachments into your inventory (idempotent — claiming twice grants once).</summary>
         public Task ClaimAsync(string messageId)
-            => SendCommand(new MailCommand { Op = MailOp.Claim, MessageId = messageId });
+            => SendCommand(MailOp.Claim, new MailCommand { MessageId = messageId });
 
         /// <summary>Deletes a message. Unclaimed attachments are returned to the sender.</summary>
         public Task DeleteAsync(string messageId)
-            => SendCommand(new MailCommand { Op = MailOp.Delete, MessageId = messageId });
+            => SendCommand(MailOp.Delete, new MailCommand { MessageId = messageId });
 
-        private async Task<MailReply> SendCommand(MailCommand cmd)
+        private async Task<(string messageId, List<MailMessage> messages)> SendCommand(MailOp op, MailCommand cmd)
         {
-            var id = MailRegistry.NextId();
-            cmd.CorrelationId = id;
-            var tcs = new TaskCompletionSource<MailReply>(TaskCreationOptions.RunContinuationsAsynchronously);
-            MailRegistry.Register(id, tcs);
             try
             {
-                await _client.SendAsync(MailTypes.Command, cmd.Encode(), DeliveryMethod.Reliable).ConfigureAwait(false);
-                using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
-                using (timeout.Token.Register(() => tcs.TrySetCanceled()))
-                {
-                    MailReply reply;
-                    try { reply = await tcs.Task.ConfigureAwait(false); }
-                    catch (OperationCanceledException) { throw new MailException("Mail command timed out."); }
-                    if (!reply.Success) throw new MailException(reply.Error);
-                    return reply;
-                }
+                var body = await _client.RequestRawAsync(Channels.Mail, (ushort)op, MailCodec.EncodeCommand(cmd)).ConfigureAwait(false);
+                return MailCodec.DecodeReply(body);
             }
-            finally { MailRegistry.Remove(id); }
+            catch (ProtocolException ex) { throw new MailException(ex.Message); }
+            catch (TimeoutException) { throw new MailException("Mail command timed out."); }
         }
-
-        internal void OnReceived(MailMessage m) => Received?.Invoke(m);
     }
 
     // ---- server ----
@@ -444,29 +395,26 @@ namespace SetNet.Mail
             return message.Id;
         }
 
-        internal async Task OnCommand(BasePeer peer, MailCommand cmd)
+        internal async Task HandleAsync(ChannelRequest request)
         {
-            var me = _options.PlayerKey(peer);
-            switch (cmd.Op)
+            var me = _options.PlayerKey(request.Peer);
+            var cmd = MailCodec.DecodeCommand(request.RawBody);
+            switch ((MailOp)request.Op)
             {
-                case MailOp.Send: await Send(peer, me, cmd); break;
-                case MailOp.List: await ListReply(peer, me, cmd.CorrelationId); break;
-                case MailOp.Read: await Read(peer, me, cmd); break;
-                case MailOp.Claim: await Claim(peer, me, cmd); break;
-                case MailOp.Delete: await Delete(peer, me, cmd); break;
+                case MailOp.Send: await Send(request, me, cmd); break;
+                case MailOp.List: await ListReply(request, me); break;
+                case MailOp.Read: await Read(request, me, cmd); break;
+                case MailOp.Claim: await Claim(request, me, cmd); break;
+                case MailOp.Delete: await Delete(request, me, cmd); break;
             }
         }
 
-        private async Task Send(BasePeer peer, string me, MailCommand cmd)
+        private async Task Send(ChannelRequest request, string me, MailCommand cmd)
         {
-            if (string.IsNullOrEmpty(cmd.ToKey) || cmd.ToKey == me)
-            { await Reply(peer, cmd.CorrelationId, false, "Invalid recipient."); return; }
-            if (cmd.Body.Length > _options.MaxBodyBytes)
-            { await Reply(peer, cmd.CorrelationId, false, "Body too large."); return; }
-            if (cmd.Attachments.Count > _options.MaxAttachments)
-            { await Reply(peer, cmd.CorrelationId, false, "Too many attachments."); return; }
-            if (cmd.Attachments.Count > 0 && _inventory == null)
-            { await Reply(peer, cmd.CorrelationId, false, "Attachments require a configured inventory."); return; }
+            if (string.IsNullOrEmpty(cmd.ToKey) || cmd.ToKey == me) throw new ProtocolException("Invalid recipient.");
+            if (cmd.Body.Length > _options.MaxBodyBytes) throw new ProtocolException("Body too large.");
+            if (cmd.Attachments.Count > _options.MaxAttachments) throw new ProtocolException("Too many attachments.");
+            if (cmd.Attachments.Count > 0 && _inventory == null) throw new ProtocolException("Attachments require a configured inventory.");
 
             // Escrow attachments out of the sender's inventory now so they can't be duped; roll back on any shortfall.
             var escrowed = new List<MailAttachment>();
@@ -477,8 +425,7 @@ namespace SetNet.Mail
                 else
                 {
                     foreach (var back in escrowed) await _inventory!.GrantAsync(me, back.ItemId, back.Count).ConfigureAwait(false);
-                    await Reply(peer, cmd.CorrelationId, false, $"You don't have {a.Count} × {a.ItemId}.");
-                    return;
+                    throw new ProtocolException($"You don't have {a.Count} × {a.ItemId}.");
                 }
             }
 
@@ -491,7 +438,7 @@ namespace SetNet.Mail
                 SentUnixMs = NowMs(),
             };
             await Deliver(cmd.ToKey, message).ConfigureAwait(false);
-            await Reply(peer, cmd.CorrelationId, true, "", message.Id);
+            await request.ReplyRawAsync(MailCodec.EncodeReply(message.Id, new List<MailMessage>())).ConfigureAwait(false);
         }
 
         private async Task Deliver(string recipientKey, MailMessage message)
@@ -499,43 +446,42 @@ namespace SetNet.Mail
             await _store.AddAsync(recipientKey, message).ConfigureAwait(false);
             if (_online.TryGetValue(recipientKey, out var recipientPeer))
             {
-                using var ms = new MemoryStream();
-                using (var w = new BinaryWriter(ms)) MailCodec.WriteMessage(w, message);
-                try { await recipientPeer.SendAsync(MailTypes.Event, ms.ToArray(), DeliveryMethod.Reliable).ConfigureAwait(false); } catch { /* dropped */ }
+                try { await recipientPeer.PublishRawAsync(Channels.Mail, (ushort)MailEvt.Received, MailCodec.EncodeMessage(message)).ConfigureAwait(false); }
+                catch { /* dropped */ }
             }
         }
 
-        private async Task ListReply(BasePeer peer, string me, int correlationId)
+        private async Task ListReply(ChannelRequest request, string me)
         {
             var list = await _store.ListAsync(me).ConfigureAwait(false);
-            await Reply(peer, correlationId, true, "", "", list.ToList());
+            await request.ReplyRawAsync(MailCodec.EncodeReply("", list.ToList())).ConfigureAwait(false);
         }
 
-        private async Task Read(BasePeer peer, string me, MailCommand cmd)
+        private async Task Read(ChannelRequest request, string me, MailCommand cmd)
         {
             var message = await _store.GetAsync(me, cmd.MessageId).ConfigureAwait(false);
-            if (message == null) { await Reply(peer, cmd.CorrelationId, false, "No such message."); return; }
+            if (message == null) throw new ProtocolException("No such message.");
             if (!message.Read) { message.Read = true; await _store.UpdateAsync(me, message).ConfigureAwait(false); }
-            await Reply(peer, cmd.CorrelationId, true, "", message.Id, new List<MailMessage> { message });
+            await request.ReplyRawAsync(MailCodec.EncodeReply(message.Id, new List<MailMessage> { message })).ConfigureAwait(false);
         }
 
-        private async Task Claim(BasePeer peer, string me, MailCommand cmd)
+        private async Task Claim(ChannelRequest request, string me, MailCommand cmd)
         {
             var message = await _store.GetAsync(me, cmd.MessageId).ConfigureAwait(false);
-            if (message == null) { await Reply(peer, cmd.CorrelationId, false, "No such message."); return; }
+            if (message == null) throw new ProtocolException("No such message.");
             if (!message.Claimed && message.Attachments.Count > 0)
             {
-                if (_inventory == null) { await Reply(peer, cmd.CorrelationId, false, "Inventory not configured."); return; }
+                if (_inventory == null) throw new ProtocolException("Inventory not configured.");
                 foreach (var a in message.Attachments)
                     await _inventory.GrantAsync(me, a.ItemId, a.Count).ConfigureAwait(false);
             }
             message.Claimed = true;
             message.Read = true;
             await _store.UpdateAsync(me, message).ConfigureAwait(false);
-            await Reply(peer, cmd.CorrelationId, true, "", message.Id);
+            await request.ReplyRawAsync(MailCodec.EncodeReply(message.Id, new List<MailMessage>())).ConfigureAwait(false);
         }
 
-        private async Task Delete(BasePeer peer, string me, MailCommand cmd)
+        private async Task Delete(ChannelRequest request, string me, MailCommand cmd)
         {
             var message = await _store.GetAsync(me, cmd.MessageId).ConfigureAwait(false);
             // Return unclaimed attachments to the sender so items are never destroyed by a delete.
@@ -544,51 +490,24 @@ namespace SetNet.Mail
                     await _inventory.GrantAsync(message.From, a.ItemId, a.Count).ConfigureAwait(false);
 
             await _store.DeleteAsync(me, cmd.MessageId).ConfigureAwait(false);
-            await Reply(peer, cmd.CorrelationId, true, "", cmd.MessageId);
+            await request.ReplyRawAsync(MailCodec.EncodeReply(cmd.MessageId, new List<MailMessage>())).ConfigureAwait(false);
         }
 
         private static long NowMs() => DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-
-        private static Task Reply(BasePeer peer, int corr, bool ok, string err, string messageId = "", List<MailMessage>? messages = null)
-        {
-            var reply = new MailReply { CorrelationId = corr, Success = ok, Error = err, MessageId = messageId, Messages = messages ?? new List<MailMessage>() };
-            try { return peer.SendAsync(MailTypes.Reply, reply.Encode(), DeliveryMethod.Reliable); } catch { return Task.CompletedTask; }
-        }
     }
 
-    // ---- auto-discovered handlers ----
+    // ---- auto-discovered channel service ----
 
-    /// <summary>Auto-discovered server handler for mail commands.</summary>
-    [MessageHandler(MailTypes.Command)]
-    public sealed class MailCommandHandler : IServerMessageHandler<byte[]>
+    /// <summary>Auto-discovered channel service for mail commands.</summary>
+    [ProtocolChannel(Channels.Mail)]
+    public sealed class MailChannelService : IChannelService
     {
         /// <inheritdoc/>
-        public Task HandleAsync(BasePeer peer, byte[] data)
+        public Task HandleAsync(ChannelRequest request)
         {
-            var hub = MailServer.For(peer.CurrentPeerInfo.Server);
-            return hub?.OnCommand(peer, MailCommand.Decode(data)) ?? Task.CompletedTask;
-        }
-    }
-
-    /// <summary>Auto-discovered client handler for correlated mail replies.</summary>
-    [MessageHandler(MailTypes.Reply)]
-    public sealed class MailReplyHandler : IClientMessageHandler<byte[]>
-    {
-        /// <inheritdoc/>
-        public Task HandleAsync(byte[] data) { var r = MailReply.Decode(data); MailRegistry.Complete(r.CorrelationId, r); return Task.CompletedTask; }
-    }
-
-    /// <summary>Auto-discovered client handler for new-mail push events.</summary>
-    [MessageHandler(MailTypes.Event)]
-    public sealed class MailEventHandler : IClientMessageHandler<byte[]>
-    {
-        /// <inheritdoc/>
-        public Task HandleAsync(byte[] data)
-        {
-            using var ms = new MemoryStream(data);
-            using var r = new BinaryReader(ms);
-            MailRegistry.DispatchEvent(MailCodec.ReadMessage(r));
-            return Task.CompletedTask;
+            var hub = MailServer.For(request.Peer.CurrentPeerInfo.Server);
+            if (hub == null) throw new ProtocolException("mail is not configured on this server");
+            return hub.HandleAsync(request);
         }
     }
 
@@ -612,10 +531,10 @@ namespace SetNet.Mail
         public static MailClient UseMail(this BaseClient client) => new MailClient(client);
     }
 
-    /// <summary>One-time bootstrap so the mail handlers are discovered. Call at startup.</summary>
+    /// <summary>One-time bootstrap so the mail channel service is discovered. Call at startup.</summary>
     public static class MailRuntime
     {
         /// <summary>Ensures the mail layer is discoverable.</summary>
-        public static void Enable() { _ = MailTypes.Command; }
+        public static void Enable() { _ = typeof(MailChannelService); }
     }
 }

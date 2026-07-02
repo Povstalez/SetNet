@@ -49,7 +49,7 @@ await vendor.SellAsync("blacksmith", "old_dagger", 2);
 
 ## Notes
 
-- **Reserved wire types 65473 / 65474.** Don't reuse them.
+- Rides the unified **SetNet.Protocol** messaging layer on the `Channels.Vendor` channel (all modules share one envelope wire type, `65447`) — no per-module wire ids to reserve. Serializer-agnostic: the control protocol is hand-framed `byte[]`, your payloads use your `SetNetSerializer`.
 - **Atomic settlement.** Buy: reserve stock → `Wallet.TryWithdraw` → `Inventory.Grant` (stock refunded if the charge fails). Sell: `Inventory.TryRevoke` → `Wallet.Deposit`. No dupes, no free items.
 - **Prices & stock are server-owned.** Clients can only transact against the catalog you `Define`. `sellPrice: 0` means the vendor won't buy; `stock: -1` is unlimited (sells don't restock).
 - Resulting wallet/inventory changes reach clients via their [`SetNet.Wallet`](https://www.nuget.org/packages/SetNet.Wallet) / [`SetNet.Inventory`](https://www.nuget.org/packages/SetNet.Inventory) `Changed` subscriptions.

@@ -3,31 +3,18 @@ using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
-using System.Threading;
 using System.Threading.Tasks;
 using SetNet.Core;
-using SetNet.Core.Transport;
-using SetNet.Data;
-using SetNet.Data.Attributes;
 using SetNet.Inventory;
+using SetNet.Protocol;
 
 namespace SetNet.Trade
 {
-    /// <summary>Reserved wire types for the trade service. Don't reuse these ids for application messages.</summary>
-    public static class TradeTypes
-    {
-        /// <summary>Client → server: propose/offer/ready/confirm/cancel command.</summary>
-        public const ushort Command = ushort.MaxValue - 49;   // 65486
+    /// <summary>Command operations (client → server) within the Trade protocol channel.</summary>
+    internal enum TradeOp : ushort { Propose = 1, Offer = 2, Ready = 3, Confirm = 4, Cancel = 5 }
 
-        /// <summary>Server → client: correlated reply.</summary>
-        public const ushort Reply = ushort.MaxValue - 50;     // 65485
-
-        /// <summary>Server → client: push event (requested/updated/completed/cancelled).</summary>
-        public const ushort Event = ushort.MaxValue - 51;     // 65484
-    }
-
-    internal enum TradeOp : byte { Propose = 0, Offer = 1, Ready = 2, Confirm = 3, Cancel = 4 }
-    internal enum TradeEventType : byte { Requested = 0, Updated = 1, Completed = 2, Cancelled = 3 }
+    /// <summary>Push events (server → client) within the Trade protocol channel.</summary>
+    internal enum TradeEvt : ushort { Requested = 10, Updated = 11, Completed = 12, Cancelled = 13 }
 
     /// <summary>The lifecycle stage of a trade.</summary>
     public enum TradeState
@@ -85,83 +72,20 @@ namespace SetNet.Trade
 
     // ---- wire ----
 
+    /// <summary>Decoded trade command body (the op and correlation live in the protocol envelope).</summary>
     internal sealed class TradeCommand
     {
-        public int CorrelationId;
-        public TradeOp Op;
         public string TradeId = "";
         public string TargetKey = "";     // Propose
         public string ItemId = "";        // Offer
         public long Count;                // Offer (0 removes)
         public bool Flag;                 // Ready value
-
-        public byte[] Encode()
-        {
-            using var ms = new MemoryStream();
-            using var w = new BinaryWriter(ms);
-            w.Write(CorrelationId);
-            w.Write((byte)Op);
-            w.Write(TradeId ?? "");
-            w.Write(TargetKey ?? "");
-            w.Write(ItemId ?? "");
-            w.Write(Count);
-            w.Write(Flag);
-            return ms.ToArray();
-        }
-
-        public static TradeCommand Decode(byte[] data)
-        {
-            using var ms = new MemoryStream(data);
-            using var r = new BinaryReader(ms);
-            return new TradeCommand
-            {
-                CorrelationId = r.ReadInt32(),
-                Op = (TradeOp)r.ReadByte(),
-                TradeId = r.ReadString(),
-                TargetKey = r.ReadString(),
-                ItemId = r.ReadString(),
-                Count = r.ReadInt64(),
-                Flag = r.ReadBoolean(),
-            };
-        }
-    }
-
-    internal sealed class TradeReply
-    {
-        public int CorrelationId;
-        public bool Success;
-        public string Error = "";
-        public string TradeId = "";
-
-        public byte[] Encode()
-        {
-            using var ms = new MemoryStream();
-            using var w = new BinaryWriter(ms);
-            w.Write(CorrelationId);
-            w.Write(Success);
-            w.Write(Error ?? "");
-            w.Write(TradeId ?? "");
-            return ms.ToArray();
-        }
-
-        public static TradeReply Decode(byte[] data)
-        {
-            using var ms = new MemoryStream(data);
-            using var r = new BinaryReader(ms);
-            return new TradeReply
-            {
-                CorrelationId = r.ReadInt32(),
-                Success = r.ReadBoolean(),
-                Error = r.ReadString(),
-                TradeId = r.ReadString(),
-            };
-        }
     }
 
     /// <summary>A trade event carrying a full view rendered for the recipient (so the client needs no local state).</summary>
     internal sealed class TradeEvent
     {
-        public TradeEventType Type;
+        public TradeEvt Type;
         public string TradeId = "";
         public string RecipientKey = "";
         public string PartnerKey = "";
@@ -171,29 +95,86 @@ namespace SetNet.Trade
         public TradeState State;
         public string Reason = "";
 
-        public byte[] Encode()
+        public TradeView ToView() => new TradeView
+        {
+            TradeId = TradeId,
+            PartnerKey = PartnerKey,
+            YourOffer = YourOffer,
+            PartnerOffer = PartnerOffer,
+            YouReady = YouReady,
+            PartnerReady = PartnerReady,
+            YouConfirmed = YouConfirmed,
+            PartnerConfirmed = PartnerConfirmed,
+            State = State,
+        };
+    }
+
+    /// <summary>Body codecs for the Trade channel (payload only; op/correlation are in the envelope).</summary>
+    internal static class TradeWire
+    {
+        public static byte[] EncodeCommand(TradeCommand cmd)
         {
             using var ms = new MemoryStream();
             using var w = new BinaryWriter(ms);
-            w.Write((byte)Type);
-            w.Write(TradeId ?? "");
-            w.Write(RecipientKey ?? "");
-            w.Write(PartnerKey ?? "");
-            WriteStacks(w, YourOffer);
-            WriteStacks(w, PartnerOffer);
-            w.Write(YouReady); w.Write(PartnerReady); w.Write(YouConfirmed); w.Write(PartnerConfirmed);
-            w.Write((byte)State);
-            w.Write(Reason ?? "");
+            w.Write(cmd.TradeId ?? "");
+            w.Write(cmd.TargetKey ?? "");
+            w.Write(cmd.ItemId ?? "");
+            w.Write(cmd.Count);
+            w.Write(cmd.Flag);
             return ms.ToArray();
         }
 
-        public static TradeEvent Decode(byte[] data)
+        public static TradeCommand DecodeCommand(byte[] data)
+        {
+            using var ms = new MemoryStream(data);
+            using var r = new BinaryReader(ms);
+            return new TradeCommand
+            {
+                TradeId = r.ReadString(),
+                TargetKey = r.ReadString(),
+                ItemId = r.ReadString(),
+                Count = r.ReadInt64(),
+                Flag = r.ReadBoolean(),
+            };
+        }
+
+        public static byte[] EncodeReply(string tradeId)
+        {
+            using var ms = new MemoryStream();
+            using var w = new BinaryWriter(ms);
+            w.Write(tradeId ?? "");
+            return ms.ToArray();
+        }
+
+        public static string DecodeReply(byte[] data)
+        {
+            if (data == null || data.Length == 0) return "";
+            using var ms = new MemoryStream(data);
+            using var r = new BinaryReader(ms);
+            return r.ReadString();
+        }
+
+        public static byte[] EncodeEvent(TradeEvent e)
+        {
+            using var ms = new MemoryStream();
+            using var w = new BinaryWriter(ms);
+            w.Write(e.TradeId ?? "");
+            w.Write(e.RecipientKey ?? "");
+            w.Write(e.PartnerKey ?? "");
+            WriteStacks(w, e.YourOffer);
+            WriteStacks(w, e.PartnerOffer);
+            w.Write(e.YouReady); w.Write(e.PartnerReady); w.Write(e.YouConfirmed); w.Write(e.PartnerConfirmed);
+            w.Write((byte)e.State);
+            w.Write(e.Reason ?? "");
+            return ms.ToArray();
+        }
+
+        public static TradeEvent DecodeEvent(byte[] data)
         {
             using var ms = new MemoryStream(data);
             using var r = new BinaryReader(ms);
             return new TradeEvent
             {
-                Type = (TradeEventType)r.ReadByte(),
                 TradeId = r.ReadString(),
                 RecipientKey = r.ReadString(),
                 PartnerKey = r.ReadString(),
@@ -221,50 +202,22 @@ namespace SetNet.Trade
             for (var i = 0; i < count; i++) list.Add(new ItemStack(r.ReadString(), r.ReadInt64()));
             return list;
         }
-
-        public TradeView ToView() => new TradeView
-        {
-            TradeId = TradeId,
-            PartnerKey = PartnerKey,
-            YourOffer = YourOffer,
-            PartnerOffer = PartnerOffer,
-            YouReady = YouReady,
-            PartnerReady = PartnerReady,
-            YouConfirmed = YouConfirmed,
-            PartnerConfirmed = PartnerConfirmed,
-            State = State,
-        };
     }
 
     // ---- client ----
-
-    internal static class TradeRegistry
-    {
-        private static int _counter;
-        private static readonly ConcurrentDictionary<int, TaskCompletionSource<TradeReply>> Pending
-            = new ConcurrentDictionary<int, TaskCompletionSource<TradeReply>>();
-        private static readonly ConcurrentDictionary<TradeClient, byte> Clients
-            = new ConcurrentDictionary<TradeClient, byte>();
-
-        public static int NextId() => Interlocked.Increment(ref _counter);
-        public static void Register(int id, TaskCompletionSource<TradeReply> tcs) => Pending[id] = tcs;
-        public static void Remove(int id) => Pending.TryRemove(id, out _);
-        public static void Complete(int id, TradeReply reply) { if (Pending.TryGetValue(id, out var tcs)) tcs.TrySetResult(reply); }
-        public static void RegisterClient(TradeClient c) => Clients[c] = 0;
-        public static void DispatchEvent(TradeEvent evt) { foreach (var c in Clients.Keys) c.OnEvent(evt); }
-    }
 
     /// <summary>
     /// Client-side trade driver, attached by <see cref="TradeClientExtensions.UseTrade"/>. Proposes a trade to
     /// another player, edits offers, and drives the two-phase confirm. The server is authoritative: items only move
     /// when <b>both</b> sides mark ready and then <b>both</b> confirm — the second phase locks the offers, so nobody
-    /// can swap in a worse offer at the last instant.
+    /// can swap in a worse offer at the last instant. Rides the unified protocol on the <see cref="Channels.Trade"/> channel.
     /// </summary>
     public sealed class TradeClient
     {
         private readonly BaseClient _client;
         private readonly string? _selfKey;
         private readonly object _gate = new object();
+        private readonly List<IDisposable> _subscriptions = new List<IDisposable>();
         private string? _tradeId;
 
         /// <summary>The id of the trade this client is currently in, or null.</summary>
@@ -286,35 +239,38 @@ namespace SetNet.Trade
         {
             _client = client ?? throw new ArgumentNullException(nameof(client));
             _selfKey = selfKey;
-            TradeRegistry.RegisterClient(this);
+            _subscriptions.Add(_client.OnRaw(Channels.Trade, (ushort)TradeEvt.Requested, b => OnEvent(TradeEvt.Requested, b)));
+            _subscriptions.Add(_client.OnRaw(Channels.Trade, (ushort)TradeEvt.Updated, b => OnEvent(TradeEvt.Updated, b)));
+            _subscriptions.Add(_client.OnRaw(Channels.Trade, (ushort)TradeEvt.Completed, b => OnEvent(TradeEvt.Completed, b)));
+            _subscriptions.Add(_client.OnRaw(Channels.Trade, (ushort)TradeEvt.Cancelled, b => OnEvent(TradeEvt.Cancelled, b)));
         }
 
         /// <summary>Proposes a trade with another player (by their player key); returns the trade id.</summary>
         public async Task<string> ProposeAsync(string targetPlayerKey)
         {
-            var reply = await SendCommand(new TradeCommand { Op = TradeOp.Propose, TargetKey = targetPlayerKey }).ConfigureAwait(false);
-            lock (_gate) _tradeId = reply.TradeId;
-            return reply.TradeId;
+            var tradeId = await SendCommand(TradeOp.Propose, new TradeCommand { TargetKey = targetPlayerKey }).ConfigureAwait(false);
+            lock (_gate) _tradeId = tradeId;
+            return tradeId;
         }
 
         /// <summary>Adds/updates an offered item on your side (count 0 removes it). Editing resets both ready/confirm flags.</summary>
         public Task OfferAsync(string itemId, long count)
-            => SendCommand(new TradeCommand { Op = TradeOp.Offer, TradeId = Require(), ItemId = itemId, Count = count });
+            => SendCommand(TradeOp.Offer, new TradeCommand { TradeId = Require(), ItemId = itemId, Count = count });
 
         /// <summary>Marks (or clears) your ready flag. When both sides are ready the trade advances to confirming.</summary>
         public Task SetReadyAsync(bool ready)
-            => SendCommand(new TradeCommand { Op = TradeOp.Ready, TradeId = Require(), Flag = ready });
+            => SendCommand(TradeOp.Ready, new TradeCommand { TradeId = Require(), Flag = ready });
 
         /// <summary>Confirms your side during the confirming phase. When both confirm, the server swaps the items.</summary>
         public Task ConfirmAsync()
-            => SendCommand(new TradeCommand { Op = TradeOp.Confirm, TradeId = Require() });
+            => SendCommand(TradeOp.Confirm, new TradeCommand { TradeId = Require() });
 
         /// <summary>Cancels the trade. Tolerant of a dropped connection (the server auto-cancels on disconnect).</summary>
         public async Task CancelAsync()
         {
             var id = TradeId;
             if (id == null) return;
-            try { await SendCommand(new TradeCommand { Op = TradeOp.Cancel, TradeId = id }).ConfigureAwait(false); }
+            try { await SendCommand(TradeOp.Cancel, new TradeCommand { TradeId = id }).ConfigureAwait(false); }
             catch { /* already gone */ }
             lock (_gate) _tradeId = null;
         }
@@ -326,30 +282,22 @@ namespace SetNet.Trade
             return id;
         }
 
-        private async Task<TradeReply> SendCommand(TradeCommand cmd)
+        private async Task<string> SendCommand(TradeOp op, TradeCommand cmd)
         {
-            var id = TradeRegistry.NextId();
-            cmd.CorrelationId = id;
-            var tcs = new TaskCompletionSource<TradeReply>(TaskCreationOptions.RunContinuationsAsynchronously);
-            TradeRegistry.Register(id, tcs);
             try
             {
-                await _client.SendAsync(TradeTypes.Command, cmd.Encode(), DeliveryMethod.Reliable).ConfigureAwait(false);
-                using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
-                using (timeout.Token.Register(() => tcs.TrySetCanceled()))
-                {
-                    TradeReply reply;
-                    try { reply = await tcs.Task.ConfigureAwait(false); }
-                    catch (OperationCanceledException) { throw new TradeException("Trade command timed out."); }
-                    if (!reply.Success) throw new TradeException(reply.Error);
-                    return reply;
-                }
+                var body = await _client.RequestRawAsync(Channels.Trade, (ushort)op, TradeWire.EncodeCommand(cmd)).ConfigureAwait(false);
+                return TradeWire.DecodeReply(body);
             }
-            finally { TradeRegistry.Remove(id); }
+            catch (ProtocolException ex) { throw new TradeException(ex.Message); }
+            catch (TimeoutException) { throw new TradeException("Trade command timed out."); }
         }
 
-        internal void OnEvent(TradeEvent evt)
+        private void OnEvent(TradeEvt type, byte[] body)
         {
+            var evt = TradeWire.DecodeEvent(body);
+            evt.Type = type;
+
             // Co-located clients share the static dispatch; when a self key is known, drop events addressed to a
             // different player (the routing that keeps two clients in one process from crossing perspectives).
             if (_selfKey != null && evt.RecipientKey != _selfKey) return;
@@ -357,19 +305,19 @@ namespace SetNet.Trade
             lock (_gate)
             {
                 // Accept a Requested event for a new trade; otherwise only events for my current trade.
-                if (evt.Type == TradeEventType.Requested) _tradeId = evt.TradeId;
+                if (type == TradeEvt.Requested) _tradeId = evt.TradeId;
                 else if (_tradeId == null || _tradeId != evt.TradeId) return;
 
-                if (evt.Type == TradeEventType.Completed || evt.Type == TradeEventType.Cancelled) _tradeId = null;
+                if (type == TradeEvt.Completed || type == TradeEvt.Cancelled) _tradeId = null;
             }
 
             var view = evt.ToView();
-            switch (evt.Type)
+            switch (type)
             {
-                case TradeEventType.Requested: TradeRequested?.Invoke(evt.PartnerKey, view); break;
-                case TradeEventType.Updated: Updated?.Invoke(view); break;
-                case TradeEventType.Completed: Completed?.Invoke(view); break;
-                case TradeEventType.Cancelled: Cancelled?.Invoke(evt.Reason); break;
+                case TradeEvt.Requested: TradeRequested?.Invoke(evt.PartnerKey, view); break;
+                case TradeEvt.Updated: Updated?.Invoke(view); break;
+                case TradeEvt.Completed: Completed?.Invoke(view); break;
+                case TradeEvt.Cancelled: Cancelled?.Invoke(evt.Reason); break;
             }
         }
     }
@@ -420,57 +368,53 @@ namespace SetNet.Trade
         internal static TradeServer? For(BaseServer? server)
             => server != null && Servers.TryGetValue(server, out var s) ? s : null;
 
-        internal async Task OnCommand(BasePeer peer, TradeCommand cmd)
+        internal async Task HandleAsync(ChannelRequest request)
         {
-            var me = _inventory.KeyOf(peer);
-            switch (cmd.Op)
+            var me = _inventory.KeyOf(request.Peer);
+            var cmd = TradeWire.DecodeCommand(request.RawBody);
+            switch ((TradeOp)request.Op)
             {
-                case TradeOp.Propose: await Propose(peer, me, cmd); break;
-                case TradeOp.Offer: await Mutate(peer, me, cmd, session => ApplyOffer(session, me, cmd.ItemId, cmd.Count)); break;
-                case TradeOp.Ready: await Mutate(peer, me, cmd, session => ApplyReady(session, me, cmd.Flag)); break;
-                case TradeOp.Confirm: await Confirm(peer, me, cmd); break;
-                case TradeOp.Cancel: await Cancel(peer, me, cmd); break;
+                case TradeOp.Propose: await Propose(request, me, cmd); break;
+                case TradeOp.Offer: await Mutate(request, me, cmd, session => ApplyOffer(session, me, cmd.ItemId, cmd.Count)); break;
+                case TradeOp.Ready: await Mutate(request, me, cmd, session => ApplyReady(session, me, cmd.Flag)); break;
+                case TradeOp.Confirm: await Confirm(request, me, cmd); break;
+                case TradeOp.Cancel: await Cancel(request, me, cmd); break;
             }
         }
 
-        private async Task Propose(BasePeer peer, string me, TradeCommand cmd)
+        private async Task Propose(ChannelRequest request, string me, TradeCommand cmd)
         {
             var target = cmd.TargetKey ?? "";
-            if (string.IsNullOrEmpty(target) || target == me)
-            { await Reply(peer, cmd.CorrelationId, false, "Invalid trade target.", ""); return; }
+            if (string.IsNullOrEmpty(target) || target == me) throw new ProtocolException("Invalid trade target.");
             var targetPeer = _inventory.PeerFor(target);
-            if (targetPeer == null)
-            { await Reply(peer, cmd.CorrelationId, false, "That player is offline.", ""); return; }
-            if (_byPlayer.ContainsKey(me) || _byPlayer.ContainsKey(target))
-            { await Reply(peer, cmd.CorrelationId, false, "A participant is already trading.", ""); return; }
+            if (targetPeer == null) throw new ProtocolException("That player is offline.");
+            if (_byPlayer.ContainsKey(me) || _byPlayer.ContainsKey(target)) throw new ProtocolException("A participant is already trading.");
 
             var session = new TradeSession { Id = Guid.NewGuid().ToString("N"), A = me, B = target };
-            if (!_sessions.TryAdd(session.Id, session))
-            { await Reply(peer, cmd.CorrelationId, false, "Could not create trade.", ""); return; }
+            if (!_sessions.TryAdd(session.Id, session)) throw new ProtocolException("Could not create trade.");
             _byPlayer[me] = session.Id;
             _byPlayer[target] = session.Id;
 
-            await Reply(peer, cmd.CorrelationId, true, "", session.Id);
+            await request.ReplyRawAsync(TradeWire.EncodeReply(session.Id)).ConfigureAwait(false);
             // Invite the target; show the proposer its (empty) open trade — so only the invitee sees "requested".
-            await PushOne(session, session.B, TradeEventType.Requested, "");
-            await PushOne(session, session.A, TradeEventType.Updated, "");
+            await PushOne(session, session.B, TradeEvt.Requested, "").ConfigureAwait(false);
+            await PushOne(session, session.A, TradeEvt.Updated, "").ConfigureAwait(false);
         }
 
-        private async Task Mutate(BasePeer peer, string me, TradeCommand cmd, Func<TradeSession, string?> apply)
+        private async Task Mutate(ChannelRequest request, string me, TradeCommand cmd, Func<TradeSession, string?> apply)
         {
-            if (!TryGetMySession(me, cmd.TradeId, out var session))
-            { await Reply(peer, cmd.CorrelationId, false, "No such trade.", ""); return; }
+            if (!TryGetMySession(me, cmd.TradeId, out var session)) throw new ProtocolException("No such trade.");
 
             string? error;
             lock (session.Gate)
             {
-                if (session.State != TradeState.Open) { error = "Trade is locked; cancel to change it."; }
+                if (session.State != TradeState.Open) error = "Trade is locked; cancel to change it.";
                 else error = apply(session);
             }
-            if (error != null) { await Reply(peer, cmd.CorrelationId, false, error, session.Id); return; }
+            if (error != null) throw new ProtocolException(error);
 
-            await Reply(peer, cmd.CorrelationId, true, "", session.Id);
-            await PushBoth(session, TradeEventType.Updated, "");
+            await request.ReplyRawAsync(TradeWire.EncodeReply(session.Id)).ConfigureAwait(false);
+            await PushBoth(session, TradeEvt.Updated, "").ConfigureAwait(false);
         }
 
         private static string? ApplyOffer(TradeSession session, string me, string itemId, long count)
@@ -491,24 +435,22 @@ namespace SetNet.Trade
             return null;
         }
 
-        private async Task Confirm(BasePeer peer, string me, TradeCommand cmd)
+        private async Task Confirm(ChannelRequest request, string me, TradeCommand cmd)
         {
-            if (!TryGetMySession(me, cmd.TradeId, out var session))
-            { await Reply(peer, cmd.CorrelationId, false, "No such trade.", ""); return; }
+            if (!TryGetMySession(me, cmd.TradeId, out var session)) throw new ProtocolException("No such trade.");
 
             bool bothConfirmed;
             lock (session.Gate)
             {
-                if (session.State != TradeState.Confirming)
-                { _ = Reply(peer, cmd.CorrelationId, false, "Both sides must be ready first.", session.Id); return; }
+                if (session.State != TradeState.Confirming) throw new ProtocolException("Both sides must be ready first.");
                 if (session.IsA(me)) session.ConfirmA = true; else session.ConfirmB = true;
                 bothConfirmed = session.ConfirmA && session.ConfirmB;
             }
 
-            await Reply(peer, cmd.CorrelationId, true, "", session.Id);
-            if (!bothConfirmed) { await PushBoth(session, TradeEventType.Updated, ""); return; }
+            await request.ReplyRawAsync(TradeWire.EncodeReply(session.Id)).ConfigureAwait(false);
+            if (!bothConfirmed) { await PushBoth(session, TradeEvt.Updated, "").ConfigureAwait(false); return; }
 
-            await ExecuteSwap(session);
+            await ExecuteSwap(session).ConfigureAwait(false);
         }
 
         /// <summary>Revokes both sides' offers atomically, then grants them crossed over; rolls back on any shortfall.</summary>
@@ -537,7 +479,7 @@ namespace SetNet.Trade
                 foreach (var r in revoked) await _inventory.GrantAsync(r.Player, r.Item, r.Count).ConfigureAwait(false);
                 Remove(session);
                 lock (session.Gate) session.State = TradeState.Cancelled;
-                await PushBoth(session, TradeEventType.Cancelled, "A participant no longer has the offered items.");
+                await PushBoth(session, TradeEvt.Cancelled, "A participant no longer has the offered items.").ConfigureAwait(false);
                 return;
             }
 
@@ -547,17 +489,17 @@ namespace SetNet.Trade
 
             Remove(session);
             lock (session.Gate) session.State = TradeState.Completed;
-            await PushBoth(session, TradeEventType.Completed, "");
+            await PushBoth(session, TradeEvt.Completed, "").ConfigureAwait(false);
         }
 
-        private async Task Cancel(BasePeer peer, string me, TradeCommand cmd)
+        private async Task Cancel(ChannelRequest request, string me, TradeCommand cmd)
         {
             if (!TryGetMySession(me, cmd.TradeId, out var session))
-            { await Reply(peer, cmd.CorrelationId, true, "", ""); return; }   // already gone — treat as success
-            await Reply(peer, cmd.CorrelationId, true, "", session.Id);
+            { await request.ReplyRawAsync(TradeWire.EncodeReply("")).ConfigureAwait(false); return; }   // already gone — treat as success
+            await request.ReplyRawAsync(TradeWire.EncodeReply(session.Id)).ConfigureAwait(false);
             Remove(session);
             lock (session.Gate) session.State = TradeState.Cancelled;
-            await PushBoth(session, TradeEventType.Cancelled, "Cancelled by a participant.");
+            await PushBoth(session, TradeEvt.Cancelled, "Cancelled by a participant.").ConfigureAwait(false);
         }
 
         private void CancelForPlayer(string playerKey, string reason)
@@ -565,7 +507,7 @@ namespace SetNet.Trade
             if (!_byPlayer.TryGetValue(playerKey, out var tradeId) || !_sessions.TryGetValue(tradeId, out var session)) return;
             Remove(session);
             lock (session.Gate) session.State = TradeState.Cancelled;
-            _ = PushBoth(session, TradeEventType.Cancelled, reason);
+            _ = PushBoth(session, TradeEvt.Cancelled, reason);
         }
 
         private void Remove(TradeSession session)
@@ -583,13 +525,13 @@ namespace SetNet.Trade
         }
 
         /// <summary>Renders and pushes a per-recipient view to each participant that's online.</summary>
-        private async Task PushBoth(TradeSession session, TradeEventType type, string reason)
+        private async Task PushBoth(TradeSession session, TradeEvt type, string reason)
         {
             await PushOne(session, session.A, type, reason).ConfigureAwait(false);
             await PushOne(session, session.B, type, reason).ConfigureAwait(false);
         }
 
-        private async Task PushOne(TradeSession session, string recipient, TradeEventType type, string reason)
+        private async Task PushOne(TradeSession session, string recipient, TradeEvt type, string reason)
         {
             var peer = _inventory.PeerFor(recipient);
             if (peer == null) return;
@@ -617,44 +559,23 @@ namespace SetNet.Trade
                 YouConfirmed = youConfirmed, PartnerConfirmed = partnerConfirmed,
                 State = state, Reason = reason,
             };
-            try { await peer.SendAsync(TradeTypes.Event, evt.Encode(), DeliveryMethod.Reliable).ConfigureAwait(false); } catch { /* dropped */ }
+            try { await peer.PublishRawAsync(Channels.Trade, (ushort)type, TradeWire.EncodeEvent(evt)).ConfigureAwait(false); } catch { /* dropped */ }
         }
+    }
 
-        private static Task Reply(BasePeer peer, int corr, bool ok, string err, string tradeId)
+    // ---- auto-discovered channel service ----
+
+    /// <summary>Auto-discovered channel service for trade commands.</summary>
+    [ProtocolChannel(Channels.Trade)]
+    public sealed class TradeChannelService : IChannelService
+    {
+        /// <inheritdoc/>
+        public Task HandleAsync(ChannelRequest request)
         {
-            var reply = new TradeReply { CorrelationId = corr, Success = ok, Error = err, TradeId = tradeId };
-            try { return peer.SendAsync(TradeTypes.Reply, reply.Encode(), DeliveryMethod.Reliable); } catch { return Task.CompletedTask; }
+            var hub = TradeServer.For(request.Peer.CurrentPeerInfo.Server);
+            if (hub == null) throw new ProtocolException("trade is not configured on this server");
+            return hub.HandleAsync(request);
         }
-    }
-
-    // ---- auto-discovered handlers ----
-
-    /// <summary>Auto-discovered server handler for trade commands.</summary>
-    [MessageHandler(TradeTypes.Command)]
-    public sealed class TradeCommandHandler : IServerMessageHandler<byte[]>
-    {
-        /// <inheritdoc/>
-        public Task HandleAsync(BasePeer peer, byte[] data)
-        {
-            var hub = TradeServer.For(peer.CurrentPeerInfo.Server);
-            return hub?.OnCommand(peer, TradeCommand.Decode(data)) ?? Task.CompletedTask;
-        }
-    }
-
-    /// <summary>Auto-discovered client handler for correlated trade replies.</summary>
-    [MessageHandler(TradeTypes.Reply)]
-    public sealed class TradeReplyHandler : IClientMessageHandler<byte[]>
-    {
-        /// <inheritdoc/>
-        public Task HandleAsync(byte[] data) { var r = TradeReply.Decode(data); TradeRegistry.Complete(r.CorrelationId, r); return Task.CompletedTask; }
-    }
-
-    /// <summary>Auto-discovered client handler for trade push events.</summary>
-    [MessageHandler(TradeTypes.Event)]
-    public sealed class TradeEventHandler : IClientMessageHandler<byte[]>
-    {
-        /// <inheritdoc/>
-        public Task HandleAsync(byte[] data) { TradeRegistry.DispatchEvent(TradeEvent.Decode(data)); return Task.CompletedTask; }
     }
 
     // ---- composition entry points ----
@@ -682,10 +603,10 @@ namespace SetNet.Trade
         public static TradeClient UseTrade(this BaseClient client, string? selfPlayerKey = null) => new TradeClient(client, selfPlayerKey);
     }
 
-    /// <summary>One-time bootstrap so the trade handlers are discovered. Call at startup.</summary>
+    /// <summary>One-time bootstrap so the trade channel service is discovered. Call at startup.</summary>
     public static class TradeRuntime
     {
         /// <summary>Ensures the trade layer is discoverable.</summary>
-        public static void Enable() { _ = TradeTypes.Command; }
+        public static void Enable() { _ = typeof(TradeChannelService); }
     }
 }

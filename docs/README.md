@@ -19,7 +19,7 @@ SetNet is a **small core** (`SetNet`) plus **optional companion packages** you p
 
 1. `XxxRuntime.Enable()` once at startup (so the package's auto-discovered handlers are found), and register a serializer (`SetNetSerializer.Use(...)`).
 2. `server.UseXxx(...)` and/or `client.UseXxx(...)` to attach the feature.
-3. Use the returned driver / events. Everything runs alongside your normal `[MessageHandler]` messages on the same connection — packages never conflict (each owns a reserved wire-type range; see [MODULES.md](MODULES.md)).
+3. Use the returned driver / events. Everything runs alongside your normal `[MessageHandler]` messages on the same connection — packages never conflict (the command/reply/event packages share the one **`SetNet.Protocol`** envelope, demultiplexed by a per-module `Channels` id; a few shape-different packages keep their own reserved ids — see [MODULES.md](MODULES.md)).
 
 ## Which package do I need?
 
@@ -84,7 +84,7 @@ Rule of thumb: **register a typed `On<T>` handler / use the typed `<T>` overload
 
 ## Reserved wire types
 
-Companion packages claim ids from the top of the `ushort` range so they never collide with your application message types (number yours from `0` upward). The reserved block is currently the range **65498–65535** — the full map is in [MODULES.md](MODULES.md).
+Companion packages claim ids from the top of the `ushort` range so they never collide with your application message types (number yours from `0` upward). Most game/command packages now share a **single** envelope id — `SetNet.Protocol`'s `ProtocolTypes.Envelope` (**65447**) — and are demultiplexed by a per-module `Channels` id + `op`, so there are no longer per-package wire-type triples to reserve. The remaining reserved ids belong to the shape-different packages (`SetNet.Rpc`, `SetNet.StateSync`(+`.Rpc`), `SetNet.Voice`, `SetNet.Fragmentation`, `SetNet.Multiplex`, `SetNet.Streams`, `SetNet.Cluster`, `SetNet.Auth`, `SetNet.ProofOfWork`) plus the core system types (65533–65535) — the full map is in [MODULES.md](MODULES.md).
 
 ## Installing from GitHub Packages
 

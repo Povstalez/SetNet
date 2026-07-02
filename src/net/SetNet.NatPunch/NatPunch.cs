@@ -9,26 +9,27 @@ using System.Security.Cryptography;
 using System.Threading;
 using System.Threading.Tasks;
 using SetNet.Core;
-using SetNet.Core.Transport;
-using SetNet.Data;
-using SetNet.Data.Attributes;
+using SetNet.Protocol;
 
 namespace SetNet.NatPunch
 {
-    /// <summary>Reserved wire types for the NAT punch-through coordinator. Don't reuse these ids for application messages.</summary>
-    public static class NatPunchTypes
+    /// <summary>Command operations (client → server) within the NatPunch protocol channel.</summary>
+    internal enum NatPunchOp : ushort
     {
-        /// <summary>Client → server: register/punch/cancel command.</summary>
-        public const ushort Command = ushort.MaxValue - 38;   // 65497
-
-        /// <summary>Server → client: correlated reply to a register/punch/cancel command.</summary>
-        public const ushort Reply = ushort.MaxValue - 39;     // 65496
-
-        /// <summary>Server → client: push event carrying the counterpart's endpoint candidates.</summary>
-        public const ushort Event = ushort.MaxValue - 40;     // 65495
+        /// <summary>Register a punch session as the host.</summary>
+        Register = 1,
+        /// <summary>Request a punch against a registered session as the guest.</summary>
+        Punch = 2,
+        /// <summary>Unregister this host's session.</summary>
+        Cancel = 3,
     }
 
-    internal enum NatPunchOp : byte { Register = 0, Punch = 1, Cancel = 2 }
+    /// <summary>Push events (server → client) within the NatPunch protocol channel.</summary>
+    internal enum NatPunchEvt : ushort
+    {
+        /// <summary>The counterpart's endpoint candidates.</summary>
+        Target = 10,
+    }
 
     /// <summary>Thrown when a NAT punch register/punch command fails (unknown code, timeout).</summary>
     public sealed class NatPunchException : Exception
@@ -55,110 +56,79 @@ namespace SetNet.NatPunch
 
     // ---- wire ----
 
-    internal sealed class NatPunchCommand
+    /// <summary>
+    /// Body codecs for the NatPunch channel. The unified protocol envelope already carries kind/channel/op/correlation,
+    /// so these encode only the payload fields — hand-framed as <c>byte[]</c> to stay serializer-agnostic.
+    /// </summary>
+    internal static class NatPunchWire
     {
-        public int CorrelationId;
-        public NatPunchOp Op;
-        public string Code = "";
-        public int UdpPort;
-        public string[] PrivateEndPoints = Array.Empty<string>();
-
-        public byte[] Encode()
+        /// <summary>Register/Punch/Cancel command body: [session code][udp port][private endpoints].</summary>
+        public static byte[] EncodeCommand(string code, int udpPort, string[] privateEndPoints)
         {
             using var ms = new MemoryStream();
             using var w = new BinaryWriter(ms);
-            w.Write(CorrelationId);
-            w.Write((byte)Op);
-            w.Write(Code ?? "");
-            w.Write(UdpPort);
-            w.Write(PrivateEndPoints.Length);
-            foreach (var ep in PrivateEndPoints) w.Write(ep ?? "");
+            w.Write(code ?? "");
+            w.Write(udpPort);
+            w.Write(privateEndPoints?.Length ?? 0);
+            if (privateEndPoints != null) foreach (var ep in privateEndPoints) w.Write(ep ?? "");
             return ms.ToArray();
         }
 
-        public static NatPunchCommand Decode(byte[] data)
+        /// <summary>Reads a Register/Punch/Cancel command body.</summary>
+        public static (string code, int udpPort, string[] privateEndPoints) DecodeCommand(byte[] body)
         {
-            using var ms = new MemoryStream(data);
+            using var ms = new MemoryStream(body);
             using var r = new BinaryReader(ms);
-            var cmd = new NatPunchCommand
-            {
-                CorrelationId = r.ReadInt32(),
-                Op = (NatPunchOp)r.ReadByte(),
-                Code = r.ReadString(),
-                UdpPort = r.ReadInt32(),
-            };
+            var code = r.ReadString();
+            var udpPort = r.ReadInt32();
             var count = r.ReadInt32();
-            cmd.PrivateEndPoints = new string[count];
-            for (var i = 0; i < count; i++) cmd.PrivateEndPoints[i] = r.ReadString();
-            return cmd;
+            var privates = new string[count];
+            for (var i = 0; i < count; i++) privates[i] = r.ReadString();
+            return (code, udpPort, privates);
         }
-    }
 
-    internal sealed class NatPunchReply
-    {
-        public int CorrelationId;
-        public bool Success;
-        public string Error = "";
-        public string Code = "";
-
-        public byte[] Encode()
+        /// <summary>Register/Punch reply body: the assigned/joined session code.</summary>
+        public static byte[] EncodeReply(string code)
         {
             using var ms = new MemoryStream();
-            using var w = new BinaryWriter(ms);
-            w.Write(CorrelationId);
-            w.Write(Success);
-            w.Write(Error ?? "");
-            w.Write(Code ?? "");
+            using (var w = new BinaryWriter(ms)) w.Write(code ?? "");
             return ms.ToArray();
         }
 
-        public static NatPunchReply Decode(byte[] data)
+        /// <summary>Reads a Register/Punch reply body.</summary>
+        public static string DecodeReply(byte[] body)
         {
-            using var ms = new MemoryStream(data);
+            if (body == null || body.Length == 0) return "";
+            using var ms = new MemoryStream(body);
             using var r = new BinaryReader(ms);
-            return new NatPunchReply
-            {
-                CorrelationId = r.ReadInt32(),
-                Success = r.ReadBoolean(),
-                Error = r.ReadString(),
-                Code = r.ReadString(),
-            };
+            return r.ReadString();
         }
-    }
 
-    internal sealed class NatPunchEvent
-    {
-        public string Code = "";
-        public bool IsHost;
-        public string PublicEndPoint = "";
-        public string[] PrivateEndPoints = Array.Empty<string>();
-
-        public byte[] Encode()
+        /// <summary>Target event body: [session code][is host][public endpoint][private endpoints].</summary>
+        public static byte[] EncodeTarget(string code, bool isHost, string publicEndPoint, string[] privateEndPoints)
         {
             using var ms = new MemoryStream();
             using var w = new BinaryWriter(ms);
-            w.Write(Code ?? "");
-            w.Write(IsHost);
-            w.Write(PublicEndPoint ?? "");
-            w.Write(PrivateEndPoints.Length);
-            foreach (var ep in PrivateEndPoints) w.Write(ep ?? "");
+            w.Write(code ?? "");
+            w.Write(isHost);
+            w.Write(publicEndPoint ?? "");
+            w.Write(privateEndPoints?.Length ?? 0);
+            if (privateEndPoints != null) foreach (var ep in privateEndPoints) w.Write(ep ?? "");
             return ms.ToArray();
         }
 
-        public static NatPunchEvent Decode(byte[] data)
+        /// <summary>Reads a target event body.</summary>
+        public static (string code, bool isHost, string publicEndPoint, string[] privateEndPoints) DecodeTarget(byte[] body)
         {
-            using var ms = new MemoryStream(data);
+            using var ms = new MemoryStream(body);
             using var r = new BinaryReader(ms);
-            var evt = new NatPunchEvent
-            {
-                Code = r.ReadString(),
-                IsHost = r.ReadBoolean(),
-                PublicEndPoint = r.ReadString(),
-            };
+            var code = r.ReadString();
+            var isHost = r.ReadBoolean();
+            var publicEp = r.ReadString();
             var count = r.ReadInt32();
-            evt.PrivateEndPoints = new string[count];
-            for (var i = 0; i < count; i++) evt.PrivateEndPoints[i] = r.ReadString();
-            return evt;
+            var privates = new string[count];
+            for (var i = 0; i < count; i++) privates[i] = r.ReadString();
+            return (code, isHost, publicEp, privates);
         }
     }
 
@@ -182,46 +152,31 @@ namespace SetNet.NatPunch
             return new IPEndPoint(addr, port);
         }
 
-        public static NatPunchTarget ToTarget(NatPunchEvent evt)
+        public static NatPunchTarget ToTarget(string publicEndPoint, string[] privateEndPoints, bool isHost)
         {
             var privates = new List<IPEndPoint>();
-            foreach (var p in evt.PrivateEndPoints)
+            foreach (var p in privateEndPoints)
             {
                 var parsed = Parse(p);
                 if (parsed != null) privates.Add(parsed);
             }
             return new NatPunchTarget
             {
-                PublicEndPoint = Parse(evt.PublicEndPoint),
+                PublicEndPoint = Parse(publicEndPoint),
                 PrivateEndPoints = privates,
-                IsHost = evt.IsHost,
+                IsHost = isHost,
             };
         }
     }
 
-    // ---- client-side plumbing ----
-
-    internal static class NatPunchRegistry
-    {
-        private static int _counter;
-        private static readonly ConcurrentDictionary<int, TaskCompletionSource<NatPunchReply>> Pending
-            = new ConcurrentDictionary<int, TaskCompletionSource<NatPunchReply>>();
-        private static readonly ConcurrentDictionary<NatPunchClient, byte> Clients
-            = new ConcurrentDictionary<NatPunchClient, byte>();
-
-        public static int NextId() => Interlocked.Increment(ref _counter);
-        public static void Register(int id, TaskCompletionSource<NatPunchReply> tcs) => Pending[id] = tcs;
-        public static void Remove(int id) => Pending.TryRemove(id, out _);
-        public static void Complete(int id, NatPunchReply reply) { if (Pending.TryGetValue(id, out var tcs)) tcs.TrySetResult(reply); }
-        public static void RegisterClient(NatPunchClient c) => Clients[c] = 0;
-        public static void DispatchEvent(NatPunchEvent evt) { foreach (var c in Clients.Keys) c.OnEvent(evt); }
-    }
+    // ---- client ----
 
     /// <summary>
     /// Client-side NAT punch-through driver, attached by <see cref="NatPunchClientExtensions.UseNatPunch"/>.
     /// The host registers a punch session and shares the returned code out of band (chat, lobby, invite); the guest
     /// calls <see cref="PunchAsync"/> with that code. The coordinator then pushes each side the other's endpoint
-    /// candidates and both run <see cref="NatPuncher.TryPunchAsync"/> simultaneously to open the UDP path.
+    /// candidates and both run <see cref="NatPuncher.TryPunchAsync"/> simultaneously to open the UDP path. Rides the
+    /// unified protocol on the <see cref="Channels.NatPunch"/> channel.
     /// <para>
     /// The public candidate is the server-observed source IP plus the client-reported UDP port, which works for
     /// full-cone / port-preserving NATs (the common home-router case). Symmetric NATs randomize ports per
@@ -235,6 +190,7 @@ namespace SetNet.NatPunch
         private string? _code;
         private bool _isHost;
         private TaskCompletionSource<NatPunchTarget>? _waitingTarget;
+        private readonly List<IDisposable> _subscriptions = new List<IDisposable>();
 
         /// <summary>The code of the session this client registered or punched, or null.</summary>
         public string? Code { get { lock (_gate) return _code; } }
@@ -245,7 +201,7 @@ namespace SetNet.NatPunch
         internal NatPunchClient(BaseClient client)
         {
             _client = client ?? throw new ArgumentNullException(nameof(client));
-            NatPunchRegistry.RegisterClient(this);
+            _subscriptions.Add(_client.OnRaw(Channels.NatPunch, (ushort)NatPunchEvt.Target, OnTargetEvent));
         }
 
         /// <summary>
@@ -254,10 +210,9 @@ namespace SetNet.NatPunch
         /// </summary>
         public async Task<string> RegisterAsync(int udpPort)
         {
-            var reply = await SendCommand(NatPunchOp.Register, "", udpPort).ConfigureAwait(false);
-            if (!reply.Success) throw new NatPunchException(reply.Error);
-            lock (_gate) { _code = reply.Code; _isHost = true; }
-            return reply.Code;
+            var code = NatPunchWire.DecodeReply(await SendCommand((ushort)NatPunchOp.Register, "", udpPort).ConfigureAwait(false));
+            lock (_gate) { _code = code; _isHost = true; }
+            return code;
         }
 
         /// <summary>
@@ -269,8 +224,8 @@ namespace SetNet.NatPunch
             var tcs = new TaskCompletionSource<NatPunchTarget>(TaskCreationOptions.RunContinuationsAsynchronously);
             lock (_gate) { _code = code; _isHost = false; _waitingTarget = tcs; }
 
-            var reply = await SendCommand(NatPunchOp.Punch, code, udpPort).ConfigureAwait(false);
-            if (!reply.Success) { lock (_gate) _waitingTarget = null; throw new NatPunchException(reply.Error); }
+            try { await SendCommand((ushort)NatPunchOp.Punch, code, udpPort).ConfigureAwait(false); }
+            catch { lock (_gate) _waitingTarget = null; throw; }
 
             using var timeout = new CancellationTokenSource(timeoutMs);
             using (timeout.Token.Register(() => tcs.TrySetCanceled()))
@@ -284,7 +239,7 @@ namespace SetNet.NatPunch
         /// <summary>Unregisters this host's session. Tolerant of a dropped connection (the server auto-removes it).</summary>
         public async Task CancelAsync()
         {
-            try { await SendCommand(NatPunchOp.Cancel, "", 0).ConfigureAwait(false); }
+            try { await SendCommand((ushort)NatPunchOp.Cancel, "", 0).ConfigureAwait(false); }
             catch { /* already disconnected — server cleans up */ }
             lock (_gate) _code = null;
         }
@@ -307,43 +262,27 @@ namespace SetNet.NatPunch
             finally { TargetReceived -= Handler; }
         }
 
-        private async Task<NatPunchReply> SendCommand(NatPunchOp op, string code, int udpPort)
+        /// <summary>Sends a NAT punch command and maps protocol failures back to the public <see cref="NatPunchException"/>.</summary>
+        private async Task<byte[]> SendCommand(ushort op, string code, int udpPort)
         {
-            var id = NatPunchRegistry.NextId();
-            var tcs = new TaskCompletionSource<NatPunchReply>(TaskCreationOptions.RunContinuationsAsynchronously);
-            NatPunchRegistry.Register(id, tcs);
-            try
-            {
-                var cmd = new NatPunchCommand
-                {
-                    CorrelationId = id,
-                    Op = op,
-                    Code = code,
-                    UdpPort = udpPort,
-                    PrivateEndPoints = udpPort > 0 ? NatPuncher.GetPrivateEndPoints(udpPort) : Array.Empty<string>(),
-                };
-                await _client.SendAsync(NatPunchTypes.Command, cmd.Encode(), DeliveryMethod.Reliable).ConfigureAwait(false);
-
-                using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
-                using (timeout.Token.Register(() => tcs.TrySetCanceled()))
-                {
-                    try { return await tcs.Task.ConfigureAwait(false); }
-                    catch (OperationCanceledException) { throw new NatPunchException("NAT punch command timed out."); }
-                }
-            }
-            finally { NatPunchRegistry.Remove(id); }
+            var body = NatPunchWire.EncodeCommand(code, udpPort,
+                udpPort > 0 ? NatPuncher.GetPrivateEndPoints(udpPort) : Array.Empty<string>());
+            try { return await _client.RequestRawAsync(Channels.NatPunch, op, body).ConfigureAwait(false); }
+            catch (ProtocolException ex) { throw new NatPunchException(ex.Message); }
+            catch (TimeoutException) { throw new NatPunchException("NAT punch command timed out."); }
         }
 
-        internal void OnEvent(NatPunchEvent evt)
+        private void OnTargetEvent(byte[] body)
         {
+            var (code, isHost, publicEp, privates) = NatPunchWire.DecodeTarget(body);
             TaskCompletionSource<NatPunchTarget>? waiting;
             lock (_gate)
             {
-                if (_code == null || _code != evt.Code) return;    // not my session
-                if (evt.IsHost == _isHost) return;                 // my own candidates echoed to a co-located client — not for me
+                if (_code == null || _code != code) return;    // not my session
+                if (isHost == _isHost) return;                 // my own candidates echoed to a co-located client — not for me
                 waiting = _waitingTarget;
             }
-            var target = EndPointCodec.ToTarget(evt);
+            var target = EndPointCodec.ToTarget(publicEp, privates, isHost);
             waiting?.TrySetResult(target);
             TargetReceived?.Invoke(target);
         }
@@ -398,46 +337,46 @@ namespace SetNet.NatPunch
             server.PeerDisconnected += peer => RemoveOwned(state, peer);
         }
 
-        internal static async Task OnCommand(BasePeer peer, NatPunchCommand cmd)
-        {
-            var server = peer.CurrentPeerInfo.Server;
-            if (server == null || !Servers.TryGetValue(server, out var state)) return;
+        internal static NatPunchServerState? For(BaseServer? server)
+            => server != null && Servers.TryGetValue(server, out var state) ? state : null;
 
-            switch (cmd.Op)
+        internal static async Task OnCommand(ChannelRequest request, NatPunchServerState state)
+        {
+            var peer = request.Peer;
+            var (code, udpPort, privateEndPoints) = NatPunchWire.DecodeCommand(request.RawBody);
+
+            switch ((NatPunchOp)request.Op)
             {
                 case NatPunchOp.Register:
                 {
-                    if (cmd.UdpPort < 1 || cmd.UdpPort > ushort.MaxValue)
-                    { await Reply(peer, cmd.CorrelationId, false, "Invalid UDP port.", "").ConfigureAwait(false); break; }
+                    if (udpPort < 1 || udpPort > ushort.MaxValue) throw new ProtocolException("Invalid UDP port.");
 
-                    var publicEp = ObservedEndPoint(peer, cmd.UdpPort);
+                    var publicEp = ObservedEndPoint(peer, udpPort);
                     var session = state.Allocate(peer);
                     session.HostPublic = publicEp;
-                    session.HostPrivate = cmd.PrivateEndPoints;
+                    session.HostPrivate = privateEndPoints;
                     state.Owned[peer.CurrentPeerInfo.Id] = session.Code;
-                    await Reply(peer, cmd.CorrelationId, true, "", session.Code).ConfigureAwait(false);
+                    await request.ReplyRawAsync(NatPunchWire.EncodeReply(session.Code)).ConfigureAwait(false);
                     break;
                 }
                 case NatPunchOp.Punch:
                 {
-                    if (!state.Sessions.TryGetValue(cmd.Code ?? "", out var session))
-                    { await Reply(peer, cmd.CorrelationId, false, "No such punch session.", "").ConfigureAwait(false); break; }
-                    if (cmd.UdpPort < 1 || cmd.UdpPort > ushort.MaxValue)
-                    { await Reply(peer, cmd.CorrelationId, false, "Invalid UDP port.", "").ConfigureAwait(false); break; }
+                    if (!state.Sessions.TryGetValue(code ?? "", out var session)) throw new ProtocolException("No such punch session.");
+                    if (udpPort < 1 || udpPort > ushort.MaxValue) throw new ProtocolException("Invalid UDP port.");
 
-                    var guestPublic = ObservedEndPoint(peer, cmd.UdpPort);
-                    await Reply(peer, cmd.CorrelationId, true, "", session.Code).ConfigureAwait(false);
+                    var guestPublic = ObservedEndPoint(peer, udpPort);
+                    await request.ReplyRawAsync(NatPunchWire.EncodeReply(session.Code)).ConfigureAwait(false);
 
                     // Push both sides the counterpart's candidates at (nearly) the same time so they punch simultaneously.
-                    var toHost = new NatPunchEvent { Code = session.Code, IsHost = false, PublicEndPoint = guestPublic, PrivateEndPoints = cmd.PrivateEndPoints };
-                    var toGuest = new NatPunchEvent { Code = session.Code, IsHost = true, PublicEndPoint = session.HostPublic, PrivateEndPoints = session.HostPrivate };
+                    var toHost = NatPunchWire.EncodeTarget(session.Code, false, guestPublic, privateEndPoints);
+                    var toGuest = NatPunchWire.EncodeTarget(session.Code, true, session.HostPublic, session.HostPrivate);
                     await Send(session.Host, toHost).ConfigureAwait(false);
                     await Send(peer, toGuest).ConfigureAwait(false);
                     break;
                 }
                 case NatPunchOp.Cancel:
                     RemoveOwned(state, peer);
-                    await Reply(peer, cmd.CorrelationId, true, "", "").ConfigureAwait(false);
+                    if (request.ExpectsReply) await request.ReplyRawAsync(NatPunchWire.EncodeReply("")).ConfigureAwait(false);
                     break;
             }
         }
@@ -460,17 +399,11 @@ namespace SetNet.NatPunch
                 state.Sessions.TryRemove(code, out _);
         }
 
-        private static Task Send(BasePeer peer, NatPunchEvent evt)
+        private static Task Send(BasePeer peer, byte[] body)
         {
-            // Sent via SendAsync (serializer-wrapped) to match the auto-discovered IClientMessageHandler<byte[]> invoker.
-            try { return peer.SendAsync(NatPunchTypes.Event, evt.Encode(), DeliveryMethod.Reliable); }
+            // Pushed via PublishRawAsync (which SendAsyncs the envelope byte[]) so the client's OnRaw subscription decodes it.
+            try { return peer.PublishRawAsync(Channels.NatPunch, (ushort)NatPunchEvt.Target, body); }
             catch { return Task.CompletedTask; }
-        }
-
-        private static Task Reply(BasePeer peer, int corr, bool ok, string err, string code)
-        {
-            var reply = new NatPunchReply { CorrelationId = corr, Success = ok, Error = err, Code = code };
-            return peer.SendAsync(NatPunchTypes.Reply, reply.Encode(), DeliveryMethod.Reliable);
         }
     }
 
@@ -590,30 +523,23 @@ namespace SetNet.NatPunch
         }
     }
 
-    // ---- auto-discovered handlers ----
+    // ---- auto-discovered channel service ----
 
-    /// <summary>Auto-discovered server handler for NAT punch commands.</summary>
-    [MessageHandler(NatPunchTypes.Command)]
-    public sealed class NatPunchCommandHandler : IServerMessageHandler<byte[]>
+    /// <summary>
+    /// Auto-discovered channel service for NAT punch commands (register/punch/cancel). Replaces the former hand-framed
+    /// <c>[MessageHandler]</c> classes and correlation plumbing: the unified protocol handles correlation and reply
+    /// framing, so this only implements the coordinator logic and dispatches on the op.
+    /// </summary>
+    [ProtocolChannel(Channels.NatPunch)]
+    public sealed class NatPunchChannelService : IChannelService
     {
         /// <inheritdoc/>
-        public Task HandleAsync(BasePeer peer, byte[] data) => NatPunchServer.OnCommand(peer, NatPunchCommand.Decode(data));
-    }
-
-    /// <summary>Auto-discovered client handler for correlated NAT punch replies.</summary>
-    [MessageHandler(NatPunchTypes.Reply)]
-    public sealed class NatPunchReplyHandler : IClientMessageHandler<byte[]>
-    {
-        /// <inheritdoc/>
-        public Task HandleAsync(byte[] data) { var r = NatPunchReply.Decode(data); NatPunchRegistry.Complete(r.CorrelationId, r); return Task.CompletedTask; }
-    }
-
-    /// <summary>Auto-discovered client handler for NAT punch target events.</summary>
-    [MessageHandler(NatPunchTypes.Event)]
-    public sealed class NatPunchEventHandler : IClientMessageHandler<byte[]>
-    {
-        /// <inheritdoc/>
-        public Task HandleAsync(byte[] data) { NatPunchRegistry.DispatchEvent(NatPunchEvent.Decode(data)); return Task.CompletedTask; }
+        public Task HandleAsync(ChannelRequest request)
+        {
+            var state = NatPunchServer.For(request.Peer.CurrentPeerInfo.Server);
+            if (state == null) throw new ProtocolException("NAT punch is not configured on this server");
+            return NatPunchServer.OnCommand(request, state);
+        }
     }
 
     // ---- composition entry points ----
@@ -636,10 +562,10 @@ namespace SetNet.NatPunch
         public static NatPunchClient UseNatPunch(this BaseClient client) => new NatPunchClient(client);
     }
 
-    /// <summary>One-time bootstrap so the NAT punch handlers are discovered. Call at startup.</summary>
+    /// <summary>One-time bootstrap so the NAT punch channel service is discovered. Call at startup.</summary>
     public static class NatPunchRuntime
     {
         /// <summary>Ensures the NAT punch layer is discoverable.</summary>
-        public static void Enable() { _ = NatPunchTypes.Command; }
+        public static void Enable() { _ = typeof(NatPunchChannelService); }
     }
 }

@@ -59,7 +59,7 @@ await effects.WatchAsync("mob:dragon#7");    // the boss I'm fighting
 
 ## Notes
 
-- **Reserved wire types 65448 / 65449 / 65450.** Don't reuse them.
+- Rides the unified **SetNet.Protocol** messaging layer on the `Channels.StatusEffects` channel (all modules share one envelope wire type, `65447`) — no per-module wire ids to reserve. Serializer-agnostic: the control protocol is hand-framed `byte[]`, your payloads use your `SetNetSerializer`.
 - **Target keys are arbitrary.** A player key (the affected player gets pushes automatically) or an entity id like `"mob:dragon#7"` (no peer — read via `GetAsync`, or let nearby players `WatchAsync` it). By default the player key is the connection id; override `StatusEffectOptions.TargetKey`.
 - **Stacking policies.** `Refresh` resets duration and keeps the higher stack count; `Stack` adds stacks up to `MaxStacks` and refreshes; `Ignore` drops a re-application while one is active. Unregistered effects default to single-stack refresh.
 - **Effects are just data here.** The `Magnitude` and stack count are yours to interpret in combat/stat code. Pair with [`SetNet.StateSync`](https://www.nuget.org/packages/SetNet.StateSync) if you also replicate entity transforms, and drive interest (who watches a mob) from your spatial logic.

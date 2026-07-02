@@ -2,27 +2,17 @@ using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
-using System.Threading;
 using System.Threading.Tasks;
 using SetNet.Core;
-using SetNet.Core.Transport;
-using SetNet.Data;
-using SetNet.Data.Attributes;
+using SetNet.Protocol;
 
 namespace SetNet.Inventory
 {
-    /// <summary>Reserved wire types for the inventory service. Don't reuse these ids for application messages.</summary>
-    public static class InventoryTypes
-    {
-        /// <summary>Client → server: query command.</summary>
-        public const ushort Command = ushort.MaxValue - 46;   // 65489
+    /// <summary>Command operations (client → server) within the Inventory protocol channel.</summary>
+    internal enum InventoryOp : ushort { Query = 1 }
 
-        /// <summary>Server → client: correlated reply (an inventory snapshot).</summary>
-        public const ushort Reply = ushort.MaxValue - 47;     // 65488
-
-        /// <summary>Server → client: push event when the peer's inventory changes.</summary>
-        public const ushort Event = ushort.MaxValue - 48;     // 65487
-    }
+    /// <summary>Push events (server → client) within the Inventory protocol channel.</summary>
+    internal enum InventoryEvt : ushort { Changed = 10 }
 
     /// <summary>Thrown when an inventory operation fails (query timeout).</summary>
     public sealed class InventoryException : Exception
@@ -127,54 +117,39 @@ namespace SetNet.Inventory
 
     internal static class InventoryCodec
     {
-        public static byte[] EncodeSnapshot(int correlationId, IReadOnlyList<ItemStack> stacks)
+        public static byte[] EncodeStacks(IReadOnlyList<ItemStack> stacks)
         {
             using var ms = new MemoryStream();
             using var w = new BinaryWriter(ms);
-            w.Write(correlationId);
             w.Write(stacks.Count);
             foreach (var s in stacks) { w.Write(s.ItemId ?? ""); w.Write(s.Count); }
             return ms.ToArray();
         }
 
-        public static (int Correlation, List<ItemStack> Stacks) DecodeSnapshot(byte[] data)
+        public static List<ItemStack> DecodeStacks(byte[] data)
         {
+            if (data == null || data.Length == 0) return new List<ItemStack>();
             using var ms = new MemoryStream(data);
             using var r = new BinaryReader(ms);
-            var corr = r.ReadInt32();
             var count = r.ReadInt32();
             var stacks = new List<ItemStack>(count);
             for (var i = 0; i < count; i++) stacks.Add(new ItemStack(r.ReadString(), r.ReadInt64()));
-            return (corr, stacks);
+            return stacks;
         }
     }
 
     // ---- client ----
 
-    internal static class InventoryRegistry
-    {
-        private static int _counter;
-        private static readonly ConcurrentDictionary<int, TaskCompletionSource<List<ItemStack>>> Pending
-            = new ConcurrentDictionary<int, TaskCompletionSource<List<ItemStack>>>();
-        private static readonly ConcurrentDictionary<InventoryClient, byte> Clients
-            = new ConcurrentDictionary<InventoryClient, byte>();
-
-        public static int NextId() => Interlocked.Increment(ref _counter);
-        public static void Register(int id, TaskCompletionSource<List<ItemStack>> tcs) => Pending[id] = tcs;
-        public static void Remove(int id) => Pending.TryRemove(id, out _);
-        public static void Complete(int id, List<ItemStack> stacks) { if (Pending.TryGetValue(id, out var tcs)) tcs.TrySetResult(stacks); }
-        public static void RegisterClient(InventoryClient c) => Clients[c] = 0;
-        public static void DispatchEvent(List<ItemStack> stacks) { foreach (var c in Clients.Keys) c.OnChanged(stacks); }
-    }
-
     /// <summary>
     /// Client-side inventory driver, attached by <see cref="InventoryClientExtensions.UseInventory"/>. Read-only by
     /// design (the server is authoritative): fetch the current inventory and subscribe to server-pushed changes.
-    /// Grants and revokes happen in server game logic via <see cref="InventoryServer"/>.
+    /// Grants and revokes happen in server game logic via <see cref="InventoryServer"/>. Rides the unified protocol
+    /// on the <see cref="Channels.Inventory"/> channel.
     /// </summary>
     public sealed class InventoryClient
     {
         private readonly BaseClient _client;
+        private readonly IDisposable _subscription;
 
         /// <summary>Raised whenever the server pushes an updated inventory snapshot for this player.</summary>
         public event Action<IReadOnlyList<ItemStack>>? Changed;
@@ -182,32 +157,21 @@ namespace SetNet.Inventory
         internal InventoryClient(BaseClient client)
         {
             _client = client ?? throw new ArgumentNullException(nameof(client));
-            InventoryRegistry.RegisterClient(this);
+            _subscription = _client.OnRaw(Channels.Inventory, (ushort)InventoryEvt.Changed,
+                body => Changed?.Invoke(InventoryCodec.DecodeStacks(body)));
         }
 
         /// <summary>Fetches this player's current inventory from the server.</summary>
         public async Task<IReadOnlyList<ItemStack>> GetAsync()
         {
-            var id = InventoryRegistry.NextId();
-            var tcs = new TaskCompletionSource<List<ItemStack>>(TaskCreationOptions.RunContinuationsAsynchronously);
-            InventoryRegistry.Register(id, tcs);
             try
             {
-                using var ms = new MemoryStream();
-                using (var w = new BinaryWriter(ms)) w.Write(id);
-                await _client.SendAsync(InventoryTypes.Command, ms.ToArray(), DeliveryMethod.Reliable).ConfigureAwait(false);
-
-                using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
-                using (timeout.Token.Register(() => tcs.TrySetCanceled()))
-                {
-                    try { return await tcs.Task.ConfigureAwait(false); }
-                    catch (OperationCanceledException) { throw new InventoryException("Inventory query timed out."); }
-                }
+                var body = await _client.RequestRawAsync(Channels.Inventory, (ushort)InventoryOp.Query, Array.Empty<byte>()).ConfigureAwait(false);
+                return InventoryCodec.DecodeStacks(body);
             }
-            finally { InventoryRegistry.Remove(id); }
+            catch (ProtocolException ex) { throw new InventoryException(ex.Message); }
+            catch (TimeoutException) { throw new InventoryException("Inventory query timed out."); }
         }
-
-        internal void OnChanged(List<ItemStack> stacks) => Changed?.Invoke(stacks);
     }
 
     // ---- server ----
@@ -281,49 +245,30 @@ namespace SetNet.Inventory
         {
             if (!_online.TryGetValue(playerKey, out var peer)) return;
             var stacks = await Store.GetAsync(playerKey).ConfigureAwait(false);
-            try { await peer.SendAsync(InventoryTypes.Event, InventoryCodec.EncodeSnapshot(0, stacks), DeliveryMethod.Reliable).ConfigureAwait(false); }
+            try { await peer.PublishRawAsync(Channels.Inventory, (ushort)InventoryEvt.Changed, InventoryCodec.EncodeStacks(stacks)).ConfigureAwait(false); }
             catch { /* peer dropped mid-push */ }
         }
 
-        internal async Task OnQuery(BasePeer peer, int correlationId)
+        internal async Task HandleQueryAsync(ChannelRequest request)
         {
-            var stacks = await Store.GetAsync(_options.PlayerKey(peer)).ConfigureAwait(false);
-            try { await peer.SendAsync(InventoryTypes.Reply, InventoryCodec.EncodeSnapshot(correlationId, stacks), DeliveryMethod.Reliable).ConfigureAwait(false); }
-            catch { /* peer dropped */ }
+            var stacks = await Store.GetAsync(_options.PlayerKey(request.Peer)).ConfigureAwait(false);
+            await request.ReplyRawAsync(InventoryCodec.EncodeStacks(stacks)).ConfigureAwait(false);
         }
     }
 
-    // ---- auto-discovered handlers ----
+    // ---- auto-discovered channel service ----
 
-    /// <summary>Auto-discovered server handler for inventory queries.</summary>
-    [MessageHandler(InventoryTypes.Command)]
-    public sealed class InventoryCommandHandler : IServerMessageHandler<byte[]>
+    /// <summary>Auto-discovered channel service for inventory queries.</summary>
+    [ProtocolChannel(Channels.Inventory)]
+    public sealed class InventoryChannelService : IChannelService
     {
         /// <inheritdoc/>
-        public Task HandleAsync(BasePeer peer, byte[] data)
+        public Task HandleAsync(ChannelRequest request)
         {
-            var hub = InventoryServer.For(peer.CurrentPeerInfo.Server);
-            if (hub == null) return Task.CompletedTask;
-            using var ms = new MemoryStream(data);
-            using var r = new BinaryReader(ms);
-            return hub.OnQuery(peer, r.ReadInt32());
+            var hub = InventoryServer.For(request.Peer.CurrentPeerInfo.Server);
+            if (hub == null) throw new ProtocolException("inventory is not configured on this server");
+            return hub.HandleQueryAsync(request);
         }
-    }
-
-    /// <summary>Auto-discovered client handler for correlated inventory snapshots.</summary>
-    [MessageHandler(InventoryTypes.Reply)]
-    public sealed class InventoryReplyHandler : IClientMessageHandler<byte[]>
-    {
-        /// <inheritdoc/>
-        public Task HandleAsync(byte[] data) { var (corr, stacks) = InventoryCodec.DecodeSnapshot(data); InventoryRegistry.Complete(corr, stacks); return Task.CompletedTask; }
-    }
-
-    /// <summary>Auto-discovered client handler for pushed inventory changes.</summary>
-    [MessageHandler(InventoryTypes.Event)]
-    public sealed class InventoryEventHandler : IClientMessageHandler<byte[]>
-    {
-        /// <inheritdoc/>
-        public Task HandleAsync(byte[] data) { var (_, stacks) = InventoryCodec.DecodeSnapshot(data); InventoryRegistry.DispatchEvent(stacks); return Task.CompletedTask; }
     }
 
     // ---- composition entry points ----
@@ -346,10 +291,10 @@ namespace SetNet.Inventory
         public static InventoryClient UseInventory(this BaseClient client) => new InventoryClient(client);
     }
 
-    /// <summary>One-time bootstrap so the inventory handlers are discovered. Call at startup.</summary>
+    /// <summary>One-time bootstrap so the inventory channel service is discovered. Call at startup.</summary>
     public static class InventoryRuntime
     {
         /// <summary>Ensures the inventory layer is discoverable.</summary>
-        public static void Enable() { _ = InventoryTypes.Command; }
+        public static void Enable() { _ = typeof(InventoryChannelService); }
     }
 }

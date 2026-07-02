@@ -5,24 +5,19 @@ using System.IO;
 using System.Text;
 using System.Threading.Tasks;
 using SetNet.Core;
-using SetNet.Core.Transport;
-using SetNet.Data;
-using SetNet.Data.Attributes;
+using SetNet.Protocol;
 using SetNet.Rooms;
 
 namespace SetNet.Rooms.HostMigration
 {
-    /// <summary>Reserved wire type for host-changed notifications (below the party range). Don't reuse.</summary>
-    public static class HostMigrationTypes
-    {
-        /// <summary>Server → client: the host of a room changed.</summary>
-        public const ushort HostChanged = ushort.MaxValue - 27;   // 65508
-    }
+    /// <summary>Push events (server → client) within the HostMigration protocol channel.</summary>
+    internal enum HostMigrationEvt : ushort { HostChanged = 10 }
 
     /// <summary>
     /// Host migration on top of [SetNet.Rooms]: designates the room's creator (first member) as host and, when the host
     /// leaves or disconnects, promotes the next remaining member and notifies the room. Uses the public
-    /// <c>server.RoomHooks()</c> room-lifecycle events; no relay, node-local (matching Rooms).
+    /// <c>server.RoomHooks()</c> room-lifecycle events; no relay, node-local (matching Rooms). Rides the unified
+    /// protocol on the <see cref="Channels.HostMigration"/> channel.
     /// </summary>
     public sealed class HostMigrationServer
     {
@@ -63,7 +58,7 @@ namespace SetNet.Rooms.HostMigration
             var wire = Encode(code, newHost.CurrentPeerInfo.Id.ToString("N"));
             foreach (var m in remaining)
             {
-                try { _ = m.SendAsync(HostMigrationTypes.HostChanged, wire, DeliveryMethod.Reliable); } catch { /* dropping */ }
+                try { _ = m.PublishRawAsync(Channels.HostMigration, (ushort)HostMigrationEvt.HostChanged, wire); } catch { /* dropping */ }
             }
         }
 
@@ -85,19 +80,19 @@ namespace SetNet.Rooms.HostMigration
     /// <summary>Client-side host-migration driver.</summary>
     public sealed class HostMigrationClient
     {
+        private readonly IDisposable _subscription;
+
         /// <summary>Raised when a room's host changes (args: room code, new host player id).</summary>
         public event Action<string, string>? HostChanged;
 
-        internal HostMigrationClient() => HostMigrationRegistry.RegisterClient(this);
-
-        internal void OnHostChanged(string code, string hostId) => HostChanged?.Invoke(code, hostId);
-    }
-
-    internal static class HostMigrationRegistry
-    {
-        private static readonly ConcurrentDictionary<HostMigrationClient, byte> Clients = new ConcurrentDictionary<HostMigrationClient, byte>();
-        public static void RegisterClient(HostMigrationClient c) => Clients[c] = 0;
-        public static void ForEachClient(Action<HostMigrationClient> action) { foreach (var c in Clients.Keys) action(c); }
+        internal HostMigrationClient(BaseClient client)
+        {
+            _subscription = client.OnRaw(Channels.HostMigration, (ushort)HostMigrationEvt.HostChanged, body =>
+            {
+                var (code, hostId) = HostMigrationServer.Decode(body);
+                HostChanged?.Invoke(code, hostId);
+            });
+        }
     }
 
     /// <summary>Attaches host migration by composition — no base class.</summary>
@@ -114,27 +109,14 @@ namespace SetNet.Rooms.HostMigration
         public static HostMigrationClient UseHostMigration(this BaseClient client)
         {
             if (client == null) throw new ArgumentNullException(nameof(client));
-            return new HostMigrationClient();
+            return new HostMigrationClient(client);
         }
     }
 
-    /// <summary>Auto-discovered client handler for host-changed notifications.</summary>
-    [MessageHandler(HostMigrationTypes.HostChanged)]
-    public sealed class HostChangedHandler : IClientMessageHandler<byte[]>
-    {
-        /// <inheritdoc/>
-        public Task HandleAsync(byte[] data)
-        {
-            var (code, hostId) = HostMigrationServer.Decode(data);
-            HostMigrationRegistry.ForEachClient(c => c.OnHostChanged(code, hostId));
-            return Task.CompletedTask;
-        }
-    }
-
-    /// <summary>One-time bootstrap so the host-migration handler is discovered. Call at startup.</summary>
+    /// <summary>One-time bootstrap so the host-migration layer is loaded. Call at startup.</summary>
     public static class HostMigrationRuntime
     {
         /// <summary>Ensures the host-migration layer is discoverable.</summary>
-        public static void Enable() { _ = HostMigrationTypes.HostChanged; }
+        public static void Enable() { _ = typeof(HostMigrationClient); }
     }
 }

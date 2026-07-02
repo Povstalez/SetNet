@@ -61,7 +61,7 @@ foreach (var s in await inventory.GetAsync())
 
 ## Notes
 
-- **Reserved wire types 65487 / 65488 / 65489.** Don't reuse them.
+- Rides the unified **SetNet.Protocol** messaging layer on the `Channels.Inventory` channel (all modules share one envelope wire type, `65447`) — no per-module wire ids to reserve. Serializer-agnostic: the control protocol is hand-framed `byte[]`, your payloads use your `SetNetSerializer`.
 - **Stackable by item id.** A stack is `(ItemId, Count)`. Per-instance data (unique weapons, durability) is out of scope — encode it into the item id (`"sword#<uuid>"`) so each instance is its own non-stacking stack.
 - **Use a stable player key.** The default key is the connection id, which changes on reconnect. With [`SetNet.Auth`](https://www.nuget.org/packages/SetNet.Auth), set `PlayerKey` to the authenticated account id so inventories persist and follow the player across nodes.
 - **Persistence.** The default `MemoryInventoryStore` is per-process. Implement `IInventoryStore` over Redis/SQL for durability and cluster sharing — keep `TryRevokeAsync` atomic (it's the anti-dupe guarantee).

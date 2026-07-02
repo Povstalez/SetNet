@@ -2,28 +2,16 @@ using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
-using System.Threading;
 using System.Threading.Tasks;
 using SetNet.Core;
-using SetNet.Core.Transport;
-using SetNet.Data;
-using SetNet.Data.Attributes;
 using SetNet.Inventory;
+using SetNet.Protocol;
 using SetNet.Wallet;
 
 namespace SetNet.Vendor
 {
-    /// <summary>Reserved wire types for the vendor service. Don't reuse these ids for application messages.</summary>
-    public static class VendorTypes
-    {
-        /// <summary>Client → server: list/buy/sell command.</summary>
-        public const ushort Command = ushort.MaxValue - 61;   // 65474
-
-        /// <summary>Server → client: correlated reply.</summary>
-        public const ushort Reply = ushort.MaxValue - 62;     // 65473
-    }
-
-    internal enum VendorOp : byte { List = 0, Buy = 1, Sell = 2 }
+    /// <summary>Command operations (client → server) within the Vendor protocol channel.</summary>
+    internal enum VendorOp : ushort { List = 1, Buy = 2, Sell = 3 }
 
     /// <summary>Thrown when a vendor operation fails (unknown vendor/item, out of stock, can't afford, timeout).</summary>
     public sealed class VendorException : Exception
@@ -65,62 +53,51 @@ namespace SetNet.Vendor
 
     // ---- wire ----
 
+    /// <summary>Body codecs for the Vendor channel (payload only; op/correlation are in the envelope).</summary>
     internal static class VendorCodec
     {
-        public static byte[] EncodeCommand(int corr, VendorOp op, string vendorId, string itemId, long count)
+        public static byte[] EncodeCommand(string vendorId, string itemId, long count)
         {
             using var ms = new MemoryStream();
             using var w = new BinaryWriter(ms);
-            w.Write(corr); w.Write((byte)op); w.Write(vendorId ?? ""); w.Write(itemId ?? ""); w.Write(count);
+            w.Write(vendorId ?? ""); w.Write(itemId ?? ""); w.Write(count);
             return ms.ToArray();
         }
 
-        public static (int Corr, VendorOp Op, string VendorId, string ItemId, long Count) DecodeCommand(byte[] data)
+        public static (string VendorId, string ItemId, long Count) DecodeCommand(byte[] data)
         {
             using var ms = new MemoryStream(data);
             using var r = new BinaryReader(ms);
-            return (r.ReadInt32(), (VendorOp)r.ReadByte(), r.ReadString(), r.ReadString(), r.ReadInt64());
+            return (r.ReadString(), r.ReadString(), r.ReadInt64());
         }
 
-        public static byte[] EncodeReply(int corr, bool ok, string error, List<VendorEntry> entries)
+        public static byte[] EncodeReply(List<VendorEntry> entries)
         {
             using var ms = new MemoryStream();
             using var w = new BinaryWriter(ms);
-            w.Write(corr); w.Write(ok); w.Write(error ?? "");
             w.Write(entries.Count);
             foreach (var e in entries) { w.Write(e.ItemId ?? ""); w.Write(e.Currency ?? ""); w.Write(e.BuyPrice); w.Write(e.SellPrice); w.Write(e.Stock); }
             return ms.ToArray();
         }
 
-        public static (int Corr, bool Ok, string Error, List<VendorEntry> Entries) DecodeReply(byte[] data)
+        public static List<VendorEntry> DecodeReply(byte[] data)
         {
+            if (data == null || data.Length == 0) return new List<VendorEntry>();
             using var ms = new MemoryStream(data);
             using var r = new BinaryReader(ms);
-            var corr = r.ReadInt32(); var ok = r.ReadBoolean(); var err = r.ReadString();
             var count = r.ReadInt32();
             var entries = new List<VendorEntry>(count);
             for (var i = 0; i < count; i++)
                 entries.Add(new VendorEntry { ItemId = r.ReadString(), Currency = r.ReadString(), BuyPrice = r.ReadInt64(), SellPrice = r.ReadInt64(), Stock = r.ReadInt64() });
-            return (corr, ok, err, entries);
+            return entries;
         }
-    }
-
-    internal static class VendorRegistry
-    {
-        private static int _counter;
-        private static readonly ConcurrentDictionary<int, TaskCompletionSource<(bool Ok, string Error, List<VendorEntry> Entries)>> Pending
-            = new ConcurrentDictionary<int, TaskCompletionSource<(bool, string, List<VendorEntry>)>>();
-
-        public static int NextId() => Interlocked.Increment(ref _counter);
-        public static void Register(int id, TaskCompletionSource<(bool, string, List<VendorEntry>)> tcs) => Pending[id] = tcs;
-        public static void Remove(int id) => Pending.TryRemove(id, out _);
-        public static void Complete(int id, (bool, string, List<VendorEntry>) r) { if (Pending.TryGetValue(id, out var tcs)) tcs.TrySetResult(r); }
     }
 
     /// <summary>
     /// Client-side vendor driver, attached by <see cref="VendorClientExtensions.UseVendor"/>. Browse an NPC shop's
     /// catalog and buy/sell items; the server debits/credits currency and moves items atomically. Inventory and
     /// wallet changes arrive through your <c>SetNet.Inventory</c> / <c>SetNet.Wallet</c> subscriptions.
+    /// Rides the unified protocol on the <see cref="Channels.Vendor"/> channel.
     /// </summary>
     public sealed class VendorClient
     {
@@ -129,11 +106,7 @@ namespace SetNet.Vendor
         internal VendorClient(BaseClient client) => _client = client ?? throw new ArgumentNullException(nameof(client));
 
         /// <summary>Lists a vendor's catalog (prices + stock).</summary>
-        public async Task<IReadOnlyList<VendorEntry>> ListAsync(string vendorId)
-        {
-            var (_, _, entries) = await Send(VendorOp.List, vendorId, "", 0).ConfigureAwait(false);
-            return entries;
-        }
+        public Task<IReadOnlyList<VendorEntry>> ListAsync(string vendorId) => Send(VendorOp.List, vendorId, "", 0);
 
         /// <summary>Buys <paramref name="count"/> of an item from the vendor; throws <see cref="VendorException"/> if out of stock or unaffordable.</summary>
         public Task BuyAsync(string vendorId, string itemId, long count = 1) => Consume(VendorOp.Buy, vendorId, itemId, count);
@@ -143,25 +116,15 @@ namespace SetNet.Vendor
 
         private async Task Consume(VendorOp op, string vendorId, string itemId, long count) { await Send(op, vendorId, itemId, Math.Max(1, count)).ConfigureAwait(false); }
 
-        private async Task<(bool Ok, string Error, List<VendorEntry> Entries)> Send(VendorOp op, string vendorId, string itemId, long count)
+        private async Task<IReadOnlyList<VendorEntry>> Send(VendorOp op, string vendorId, string itemId, long count)
         {
-            var id = VendorRegistry.NextId();
-            var tcs = new TaskCompletionSource<(bool, string, List<VendorEntry>)>(TaskCreationOptions.RunContinuationsAsynchronously);
-            VendorRegistry.Register(id, tcs);
             try
             {
-                await _client.SendAsync(VendorTypes.Command, VendorCodec.EncodeCommand(id, op, vendorId, itemId, count), DeliveryMethod.Reliable).ConfigureAwait(false);
-                using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
-                using (timeout.Token.Register(() => tcs.TrySetCanceled()))
-                {
-                    (bool Ok, string Error, List<VendorEntry> Entries) result;
-                    try { result = await tcs.Task.ConfigureAwait(false); }
-                    catch (OperationCanceledException) { throw new VendorException("Vendor command timed out."); }
-                    if (!result.Ok) throw new VendorException(result.Error);
-                    return result;
-                }
+                var body = await _client.RequestRawAsync(Channels.Vendor, (ushort)op, VendorCodec.EncodeCommand(vendorId, itemId, count)).ConfigureAwait(false);
+                return VendorCodec.DecodeReply(body);
             }
-            finally { VendorRegistry.Remove(id); }
+            catch (ProtocolException ex) { throw new VendorException(ex.Message); }
+            catch (TimeoutException) { throw new VendorException("Vendor command timed out."); }
         }
     }
 
@@ -195,41 +158,43 @@ namespace SetNet.Vendor
             return this;
         }
 
-        internal async Task OnCommand(BasePeer peer, byte[] data)
+        internal async Task HandleAsync(ChannelRequest request)
         {
-            var (corr, op, vendorId, itemId, count) = VendorCodec.DecodeCommand(data);
-            var me = _inventory.KeyOf(peer);
+            var (vendorId, itemId, count) = VendorCodec.DecodeCommand(request.RawBody);
+            var me = _inventory.KeyOf(request.Peer);
+            var op = (VendorOp)request.Op;
 
-            if (!_vendors.TryGetValue(vendorId ?? "", out var catalog)) { await Reply(peer, corr, false, "No such vendor.", null); return; }
+            if (!_vendors.TryGetValue(vendorId ?? "", out var catalog)) throw new ProtocolException("No such vendor.");
 
             if (op == VendorOp.List)
             {
-                await Reply(peer, corr, true, "", new List<VendorEntry>(catalog.Entries.Values)); return;
+                await request.ReplyRawAsync(VendorCodec.EncodeReply(new List<VendorEntry>(catalog.Entries.Values))).ConfigureAwait(false);
+                return;
             }
 
-            if (!catalog.Entries.TryGetValue(itemId ?? "", out var entry)) { await Reply(peer, corr, false, "Vendor doesn't stock that item.", null); return; }
-            if (count < 1) { await Reply(peer, corr, false, "Invalid quantity.", null); return; }
+            if (!catalog.Entries.TryGetValue(itemId ?? "", out var entry)) throw new ProtocolException("Vendor doesn't stock that item.");
+            if (count < 1) throw new ProtocolException("Invalid quantity.");
 
             if (op == VendorOp.Buy)
             {
-                if (entry.BuyPrice <= 0) { await Reply(peer, corr, false, "Item is not for sale.", null); return; }
+                if (entry.BuyPrice <= 0) throw new ProtocolException("Item is not for sale.");
                 // Reserve stock atomically before charging.
-                if (!TryTakeStock(entry, count)) { await Reply(peer, corr, false, "Out of stock.", null); return; }
+                if (!TryTakeStock(entry, count)) throw new ProtocolException("Out of stock.");
                 var total = entry.BuyPrice * count;
                 if (!await _wallet.TryWithdrawAsync(me, entry.Currency, total).ConfigureAwait(false))
                 {
                     ReturnStock(entry, count);   // refund the reservation
-                    await Reply(peer, corr, false, $"Not enough {entry.Currency}.", null); return;
+                    throw new ProtocolException($"Not enough {entry.Currency}.");
                 }
                 await _inventory.GrantAsync(me, entry.ItemId, count).ConfigureAwait(false);
-                await Reply(peer, corr, true, "", null);
+                await request.ReplyRawAsync(Array.Empty<byte>()).ConfigureAwait(false);
             }
             else // Sell
             {
-                if (entry.SellPrice <= 0) { await Reply(peer, corr, false, "Vendor won't buy that.", null); return; }
-                if (!await _inventory.TryRevokeAsync(me, entry.ItemId, count).ConfigureAwait(false)) { await Reply(peer, corr, false, "You don't have that many.", null); return; }
+                if (entry.SellPrice <= 0) throw new ProtocolException("Vendor won't buy that.");
+                if (!await _inventory.TryRevokeAsync(me, entry.ItemId, count).ConfigureAwait(false)) throw new ProtocolException("You don't have that many.");
                 await _wallet.DepositAsync(me, entry.Currency, entry.SellPrice * count).ConfigureAwait(false);
-                await Reply(peer, corr, true, "", null);
+                await request.ReplyRawAsync(Array.Empty<byte>()).ConfigureAwait(false);
             }
         }
 
@@ -249,33 +214,24 @@ namespace SetNet.Vendor
             if (entry.Stock < 0) return;
             lock (entry) entry.Stock += count;
         }
+    }
 
-        private static Task Reply(BasePeer peer, int corr, bool ok, string error, List<VendorEntry>? entries)
+    // ---- auto-discovered channel service ----
+
+    /// <summary>Auto-discovered channel service for vendor commands.</summary>
+    [ProtocolChannel(Channels.Vendor)]
+    public sealed class VendorChannelService : IChannelService
+    {
+        /// <inheritdoc/>
+        public Task HandleAsync(ChannelRequest request)
         {
-            try { return peer.SendAsync(VendorTypes.Reply, VendorCodec.EncodeReply(corr, ok, error, entries ?? new List<VendorEntry>()), DeliveryMethod.Reliable); }
-            catch { return Task.CompletedTask; }
+            var hub = VendorServer.For(request.Peer.CurrentPeerInfo.Server);
+            if (hub == null) throw new ProtocolException("vendor is not configured on this server");
+            return hub.HandleAsync(request);
         }
     }
 
-    /// <summary>Auto-discovered server handler for vendor commands.</summary>
-    [MessageHandler(VendorTypes.Command)]
-    public sealed class VendorCommandHandler : IServerMessageHandler<byte[]>
-    {
-        /// <inheritdoc/>
-        public Task HandleAsync(BasePeer peer, byte[] data)
-        {
-            var hub = VendorServer.For(peer.CurrentPeerInfo.Server);
-            return hub?.OnCommand(peer, data) ?? Task.CompletedTask;
-        }
-    }
-
-    /// <summary>Auto-discovered client handler for correlated vendor replies.</summary>
-    [MessageHandler(VendorTypes.Reply)]
-    public sealed class VendorReplyHandler : IClientMessageHandler<byte[]>
-    {
-        /// <inheritdoc/>
-        public Task HandleAsync(byte[] data) { var (corr, ok, err, entries) = VendorCodec.DecodeReply(data); VendorRegistry.Complete(corr, (ok, err, entries)); return Task.CompletedTask; }
-    }
+    // ---- composition entry points ----
 
     /// <summary>Attaches the vendor hub to a server by composition.</summary>
     public static class VendorServerExtensions
@@ -297,10 +253,10 @@ namespace SetNet.Vendor
         public static VendorClient UseVendor(this BaseClient client) => new VendorClient(client);
     }
 
-    /// <summary>One-time bootstrap so the vendor handlers are discovered. Call at startup.</summary>
+    /// <summary>One-time bootstrap so the vendor channel service is discovered. Call at startup.</summary>
     public static class VendorRuntime
     {
         /// <summary>Ensures the vendor layer is discoverable.</summary>
-        public static void Enable() { _ = VendorTypes.Command; }
+        public static void Enable() { _ = typeof(VendorChannelService); }
     }
 }

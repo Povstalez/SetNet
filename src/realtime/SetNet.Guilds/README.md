@@ -59,7 +59,7 @@ await guilds.BankWithdrawAsync("gold", 200);               // officer/leader onl
 
 ## Notes
 
-- **Reserved wire types 65456 / 65457 / 65458.** Don't reuse them.
+- Rides the unified **SetNet.Protocol** messaging layer on the `Channels.Guilds` channel (all modules share one envelope wire type, `65447`) — no per-module wire ids to reserve. Serializer-agnostic: the control protocol is hand-framed `byte[]`, your payloads use your `SetNetSerializer`.
 - **The bank is a keyed inventory.** It lives under `guild:<id>` in your `SetNet.Inventory` hub — deposits/withdrawals go through `TryRevokeAsync`/`GrantAsync`, so they're atomic and can't dupe. Persist it by using a durable `IInventoryStore`.
 - **Role rules.** Deposit: any member. Withdraw / kick: officer or leader (and you can't kick an equal/higher rank). Promote / transfer / disband: leader. Promoting someone to `Leader` transfers leadership (you become officer).
 - **Leaving.** A leader who leaves passes leadership to the highest-ranked remaining member; the last member leaving **disbands** the guild and gets the bank contents back (nothing is destroyed).

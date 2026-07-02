@@ -5,26 +5,15 @@ using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
 using SetNet.Core;
-using SetNet.Core.Transport;
-using SetNet.Data;
-using SetNet.Data.Attributes;
+using SetNet.Protocol;
 
 namespace SetNet.StatusEffects
 {
-    /// <summary>Reserved wire types for the status-effect service. Don't reuse these ids for application messages.</summary>
-    public static class StatusEffectTypes
-    {
-        /// <summary>Client → server: watch/unwatch/get command.</summary>
-        public const ushort Command = ushort.MaxValue - 85;   // 65450
+    /// <summary>Command operations (client → server) within the StatusEffects protocol channel.</summary>
+    internal enum StatusOp : ushort { Watch = 1, Unwatch = 2, Get = 3 }
 
-        /// <summary>Server → client: correlated reply (a target's effect list).</summary>
-        public const ushort Reply = ushort.MaxValue - 86;     // 65449
-
-        /// <summary>Server → client: push event when a watched target's effects change.</summary>
-        public const ushort Event = ushort.MaxValue - 87;     // 65448
-    }
-
-    internal enum StatusOp : byte { Watch = 0, Unwatch = 1, Get = 2 }
+    /// <summary>Push events (server → client) within the StatusEffects protocol channel.</summary>
+    internal enum StatusEvt : ushort { Changed = 10 }
 
     /// <summary>How re-applying an effect that's already present is resolved.</summary>
     public enum StackPolicy : byte
@@ -107,70 +96,80 @@ namespace SetNet.StatusEffects
 
     // ---- wire ----
 
+    /// <summary>Body codecs for the StatusEffects channel (payload only; op/correlation are in the envelope).</summary>
     internal static class StatusCodec
     {
-        public static byte[] EncodeList(int corr, string targetKey, IReadOnlyList<StatusEffect> effects)
+        public static byte[] EncodeEffects(IReadOnlyList<StatusEffect> effects)
         {
             using var ms = new MemoryStream();
             using var w = new BinaryWriter(ms);
-            w.Write(corr); w.Write(targetKey ?? "");
             w.Write(effects.Count);
             foreach (var e in effects) { w.Write(e.EffectId ?? ""); w.Write(e.Stacks); w.Write(e.Magnitude); w.Write(e.RemainingMs); w.Write(e.Source ?? ""); }
             return ms.ToArray();
         }
 
-        public static (int Corr, string TargetKey, List<StatusEffect> Effects) DecodeList(byte[] data)
+        public static List<StatusEffect> DecodeEffects(BinaryReader r)
         {
-            using var ms = new MemoryStream(data);
-            using var r = new BinaryReader(ms);
-            var corr = r.ReadInt32(); var target = r.ReadString();
             var count = r.ReadInt32();
             var list = new List<StatusEffect>(count);
             for (var i = 0; i < count; i++)
                 list.Add(new StatusEffect { EffectId = r.ReadString(), Stacks = r.ReadInt32(), Magnitude = r.ReadDouble(), RemainingMs = r.ReadInt64(), Source = r.ReadString() });
-            return (corr, target, list);
+            return list;
         }
 
-        public static byte[] EncodeCommand(int corr, StatusOp op, string targetKey)
+        public static List<StatusEffect> DecodeEffects(byte[] data)
+        {
+            if (data == null || data.Length == 0) return new List<StatusEffect>();
+            using var ms = new MemoryStream(data);
+            using var r = new BinaryReader(ms);
+            return DecodeEffects(r);
+        }
+
+        public static byte[] EncodeChanged(string targetKey, IReadOnlyList<StatusEffect> effects)
         {
             using var ms = new MemoryStream();
             using var w = new BinaryWriter(ms);
-            w.Write(corr); w.Write((byte)op); w.Write(targetKey ?? "");
+            w.Write(targetKey ?? "");
+            w.Write(effects.Count);
+            foreach (var e in effects) { w.Write(e.EffectId ?? ""); w.Write(e.Stacks); w.Write(e.Magnitude); w.Write(e.RemainingMs); w.Write(e.Source ?? ""); }
             return ms.ToArray();
         }
 
-        public static (int Corr, StatusOp Op, string TargetKey) DecodeCommand(byte[] data)
+        public static (string TargetKey, List<StatusEffect> Effects) DecodeChanged(byte[] data)
         {
             using var ms = new MemoryStream(data);
             using var r = new BinaryReader(ms);
-            return (r.ReadInt32(), (StatusOp)r.ReadByte(), r.ReadString());
+            var target = r.ReadString();
+            return (target, DecodeEffects(r));
         }
-    }
 
-    internal static class StatusRegistry
-    {
-        private static int _counter;
-        private static readonly ConcurrentDictionary<int, TaskCompletionSource<List<StatusEffect>>> Pending
-            = new ConcurrentDictionary<int, TaskCompletionSource<List<StatusEffect>>>();
-        private static readonly ConcurrentDictionary<StatusEffectClient, byte> Clients = new ConcurrentDictionary<StatusEffectClient, byte>();
+        public static byte[] EncodeCommand(string targetKey)
+        {
+            using var ms = new MemoryStream();
+            using var w = new BinaryWriter(ms);
+            w.Write(targetKey ?? "");
+            return ms.ToArray();
+        }
 
-        public static int NextId() => Interlocked.Increment(ref _counter);
-        public static void Register(int id, TaskCompletionSource<List<StatusEffect>> tcs) => Pending[id] = tcs;
-        public static void Remove(int id) => Pending.TryRemove(id, out _);
-        public static void Complete(int id, List<StatusEffect> effects) { if (Pending.TryGetValue(id, out var tcs)) tcs.TrySetResult(effects); }
-        public static void RegisterClient(StatusEffectClient c) => Clients[c] = 0;
-        public static void DispatchEvent(string targetKey, List<StatusEffect> effects) { foreach (var c in Clients.Keys) c.OnChanged(targetKey, effects); }
+        public static string DecodeCommand(byte[] data)
+        {
+            if (data == null || data.Length == 0) return "";
+            using var ms = new MemoryStream(data);
+            using var r = new BinaryReader(ms);
+            return r.ReadString();
+        }
     }
 
     /// <summary>
     /// Client-side status-effect driver, attached by <see cref="StatusEffectClientExtensions.UseStatusEffects"/>.
     /// Read the effects on any target key and <see cref="WatchAsync"/> a target (your own buffs, or an enemy's
     /// debuffs) to receive live updates via <see cref="Changed"/>. Effects are applied by server game logic; the
-    /// client only observes.
+    /// client only observes. Rides the unified protocol on the <see cref="Channels.StatusEffects"/> channel.
     /// </summary>
     public sealed class StatusEffectClient
     {
         private readonly BaseClient _client;
+        private readonly List<IDisposable> _subscriptions = new List<IDisposable>();
 
         /// <summary>Raised when a watched target's effect list changes (args: target key, current effects).</summary>
         public event Action<string, IReadOnlyList<StatusEffect>>? Changed;
@@ -178,7 +177,7 @@ namespace SetNet.StatusEffects
         internal StatusEffectClient(BaseClient client)
         {
             _client = client ?? throw new ArgumentNullException(nameof(client));
-            StatusRegistry.RegisterClient(this);
+            _subscriptions.Add(_client.OnRaw(Channels.StatusEffects, (ushort)StatusEvt.Changed, OnChanged));
         }
 
         /// <summary>Fetches a target's current effects.</summary>
@@ -192,23 +191,20 @@ namespace SetNet.StatusEffects
 
         private async Task<IReadOnlyList<StatusEffect>> Send(StatusOp op, string targetKey)
         {
-            var id = StatusRegistry.NextId();
-            var tcs = new TaskCompletionSource<List<StatusEffect>>(TaskCreationOptions.RunContinuationsAsynchronously);
-            StatusRegistry.Register(id, tcs);
             try
             {
-                await _client.SendAsync(StatusEffectTypes.Command, StatusCodec.EncodeCommand(id, op, targetKey), DeliveryMethod.Reliable).ConfigureAwait(false);
-                using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
-                using (timeout.Token.Register(() => tcs.TrySetCanceled()))
-                {
-                    try { return await tcs.Task.ConfigureAwait(false); }
-                    catch (OperationCanceledException) { throw new StatusEffectException("Status-effect command timed out."); }
-                }
+                var body = await _client.RequestRawAsync(Channels.StatusEffects, (ushort)op, StatusCodec.EncodeCommand(targetKey)).ConfigureAwait(false);
+                return StatusCodec.DecodeEffects(body);
             }
-            finally { StatusRegistry.Remove(id); }
+            catch (ProtocolException ex) { throw new StatusEffectException(ex.Message); }
+            catch (TimeoutException) { throw new StatusEffectException("Status-effect command timed out."); }
         }
 
-        internal void OnChanged(string targetKey, List<StatusEffect> effects) => Changed?.Invoke(targetKey, effects);
+        private void OnChanged(byte[] body)
+        {
+            var (target, effects) = StatusCodec.DecodeChanged(body);
+            Changed?.Invoke(target, effects);
+        }
     }
 
     // ---- server ----
@@ -361,11 +357,11 @@ namespace SetNet.StatusEffects
         private async Task Push(string targetKey)
         {
             var snapshot = Snapshot(targetKey);
-            var payload = StatusCodec.EncodeList(0, targetKey, snapshot);
+            var payload = StatusCodec.EncodeChanged(targetKey, snapshot);
 
             // The affected player (if online) always sees their own effects.
             if (_online.TryGetValue(targetKey, out var owner))
-                try { await owner.SendAsync(StatusEffectTypes.Event, payload, DeliveryMethod.Reliable).ConfigureAwait(false); } catch { }
+                try { await owner.PublishRawAsync(Channels.StatusEffects, (ushort)StatusEvt.Changed, payload).ConfigureAwait(false); } catch { }
 
             // Plus anyone explicitly watching this target (e.g. players fighting a boss).
             if (_watchers.TryGetValue(targetKey, out var set))
@@ -374,57 +370,46 @@ namespace SetNet.StatusEffects
                 foreach (var peer in peers)
                 {
                     if (ReferenceEquals(peer, _online.TryGetValue(targetKey, out var o) ? o : null)) continue;   // already pushed above
-                    try { await peer.SendAsync(StatusEffectTypes.Event, payload, DeliveryMethod.Reliable).ConfigureAwait(false); } catch { }
+                    try { await peer.PublishRawAsync(Channels.StatusEffects, (ushort)StatusEvt.Changed, payload).ConfigureAwait(false); } catch { }
                 }
             }
         }
 
-        internal async Task OnCommand(BasePeer peer, byte[] data)
+        internal async Task HandleAsync(ChannelRequest request)
         {
-            var (corr, op, targetKey) = StatusCodec.DecodeCommand(data);
-            switch (op)
+            var targetKey = StatusCodec.DecodeCommand(request.RawBody) ?? "";
+            switch ((StatusOp)request.Op)
             {
                 case StatusOp.Watch:
-                    _watchers.GetOrAdd(targetKey ?? "", _ => new HashSet<BasePeer>()).Add(peer);
+                    _watchers.GetOrAdd(targetKey, _ => new HashSet<BasePeer>()).Add(request.Peer);
                     break;
                 case StatusOp.Unwatch:
-                    if (_watchers.TryGetValue(targetKey ?? "", out var set)) lock (set) set.Remove(peer);
+                    if (_watchers.TryGetValue(targetKey, out var set)) lock (set) set.Remove(request.Peer);
                     break;
             }
-            try { await peer.SendAsync(StatusEffectTypes.Reply, StatusCodec.EncodeList(corr, targetKey, Snapshot(targetKey)), DeliveryMethod.Reliable).ConfigureAwait(false); } catch { }
+            await request.ReplyRawAsync(StatusCodec.EncodeEffects(Snapshot(targetKey))).ConfigureAwait(false);
         }
 
         /// <summary>Stops the expiry timer.</summary>
         public void Dispose() => _timer.Dispose();
     }
 
-    /// <summary>Auto-discovered server handler for status-effect commands.</summary>
-    [MessageHandler(StatusEffectTypes.Command)]
-    public sealed class StatusEffectCommandHandler : IServerMessageHandler<byte[]>
+    // ---- auto-discovered channel service ----
+
+    /// <summary>Auto-discovered channel service for status-effect commands.</summary>
+    [ProtocolChannel(Channels.StatusEffects)]
+    public sealed class StatusEffectChannelService : IChannelService
     {
         /// <inheritdoc/>
-        public Task HandleAsync(BasePeer peer, byte[] data)
+        public Task HandleAsync(ChannelRequest request)
         {
-            var hub = StatusEffectServer.For(peer.CurrentPeerInfo.Server);
-            return hub?.OnCommand(peer, data) ?? Task.CompletedTask;
+            var hub = StatusEffectServer.For(request.Peer.CurrentPeerInfo.Server);
+            if (hub == null) throw new ProtocolException("status effects is not configured on this server");
+            return hub.HandleAsync(request);
         }
     }
 
-    /// <summary>Auto-discovered client handler for correlated status-effect replies.</summary>
-    [MessageHandler(StatusEffectTypes.Reply)]
-    public sealed class StatusEffectReplyHandler : IClientMessageHandler<byte[]>
-    {
-        /// <inheritdoc/>
-        public Task HandleAsync(byte[] data) { var (corr, _, effects) = StatusCodec.DecodeList(data); StatusRegistry.Complete(corr, effects); return Task.CompletedTask; }
-    }
-
-    /// <summary>Auto-discovered client handler for pushed status-effect changes.</summary>
-    [MessageHandler(StatusEffectTypes.Event)]
-    public sealed class StatusEffectEventHandler : IClientMessageHandler<byte[]>
-    {
-        /// <inheritdoc/>
-        public Task HandleAsync(byte[] data) { var (_, target, effects) = StatusCodec.DecodeList(data); StatusRegistry.DispatchEvent(target, effects); return Task.CompletedTask; }
-    }
+    // ---- composition entry points ----
 
     /// <summary>Attaches the status-effect hub to a server by composition.</summary>
     public static class StatusEffectServerExtensions
@@ -444,10 +429,10 @@ namespace SetNet.StatusEffects
         public static StatusEffectClient UseStatusEffects(this BaseClient client) => new StatusEffectClient(client);
     }
 
-    /// <summary>One-time bootstrap so the status-effect handlers are discovered. Call at startup.</summary>
+    /// <summary>One-time bootstrap so the status-effect channel service is discovered. Call at startup.</summary>
     public static class StatusEffectRuntime
     {
         /// <summary>Ensures the status-effect layer is discoverable.</summary>
-        public static void Enable() { _ = StatusEffectTypes.Command; }
+        public static void Enable() { _ = typeof(StatusEffectChannelService); }
     }
 }

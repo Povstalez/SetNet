@@ -4,24 +4,6 @@ using System.Collections.Generic;
 namespace SetNet.Matchmaking
 {
     /// <summary>
-    /// Reserved wire type ids for the matchmaking protocol. These sit just below the rooms range
-    /// (65526/65527/65528) so the two packages can be used together without collisions. Don't reuse these ids.
-    /// </summary>
-    public static class MatchTypes
-    {
-        /// <summary>Server → client push event (a match was found for this player).</summary>
-        public const ushort Event = ushort.MaxValue - 12;     // 65523
-
-        /// <summary>Client → server command (enqueue / cancel).</summary>
-        public const ushort Command = ushort.MaxValue - 11;   // 65524
-
-        /// <summary>Server → client reply to a command (correlated).</summary>
-        public const ushort Reply = ushort.MaxValue - 10;     // 65525
-    }
-
-    internal enum MatchOp : byte { Enqueue = 0, Cancel = 1 }
-
-    /// <summary>
     /// Tunables for the server-side matchmaker. Out of the box (<see cref="UseSkill"/> = false) it forms matches by
     /// simple FIFO grouping within each queue; enable skill-based matching to group players of similar rating with an
     /// acceptance window that widens the longer a player waits (so nobody is stuck forever).

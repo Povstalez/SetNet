@@ -2,30 +2,18 @@ using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
-using System.Threading;
 using System.Threading.Tasks;
 using SetNet.Core;
-using SetNet.Core.Transport;
-using SetNet.Data;
-using SetNet.Data.Attributes;
 using SetNet.Inventory;
+using SetNet.Protocol;
 
 namespace SetNet.Quests
 {
-    /// <summary>Reserved wire types for the quest service. Don't reuse these ids for application messages.</summary>
-    public static class QuestTypes
-    {
-        /// <summary>Client → server: accept/abandon/claim/list command.</summary>
-        public const ushort Command = ushort.MaxValue - 71;   // 65464
+    /// <summary>Command operations (client → server) within the Quests protocol channel.</summary>
+    internal enum QuestOp : ushort { Accept = 1, Abandon = 2, Claim = 3, List = 4 }
 
-        /// <summary>Server → client: correlated reply.</summary>
-        public const ushort Reply = ushort.MaxValue - 72;     // 65463
-
-        /// <summary>Server → client: push event when a quest's progress changes.</summary>
-        public const ushort Event = ushort.MaxValue - 73;     // 65462
-    }
-
-    internal enum QuestOp : byte { Accept = 0, Abandon = 1, Claim = 2, List = 3 }
+    /// <summary>Push events (server → client) within the Quests protocol channel.</summary>
+    internal enum QuestEvt : ushort { Updated = 10 }
 
     /// <summary>Thrown when a quest operation fails (unknown quest, not accepted, not complete, timeout).</summary>
     public sealed class QuestException : Exception
@@ -170,36 +158,36 @@ namespace SetNet.Quests
 
     internal static class QuestCodec
     {
-        public static byte[] EncodeCommand(int corr, QuestOp op, string questId)
+        public static byte[] EncodeCommand(string questId)
         {
             using var ms = new MemoryStream();
             using var w = new BinaryWriter(ms);
-            w.Write(corr); w.Write((byte)op); w.Write(questId ?? "");
+            w.Write(questId ?? "");
             return ms.ToArray();
         }
 
-        public static (int Corr, QuestOp Op, string QuestId) DecodeCommand(byte[] data)
+        public static string DecodeCommand(byte[] data)
         {
+            if (data == null || data.Length == 0) return "";
             using var ms = new MemoryStream(data);
             using var r = new BinaryReader(ms);
-            return (r.ReadInt32(), (QuestOp)r.ReadByte(), r.ReadString());
+            return r.ReadString();
         }
 
-        public static byte[] EncodeReply(int corr, bool ok, string error, List<QuestView> views)
+        public static byte[] EncodeReply(List<QuestView> views)
         {
             using var ms = new MemoryStream();
             using var w = new BinaryWriter(ms);
-            w.Write(corr); w.Write(ok); w.Write(error ?? "");
             WriteViews(w, views);
             return ms.ToArray();
         }
 
-        public static (int Corr, bool Ok, string Error, List<QuestView> Views) DecodeReply(byte[] data)
+        public static List<QuestView> DecodeReply(byte[] data)
         {
+            if (data == null || data.Length == 0) return new List<QuestView>();
             using var ms = new MemoryStream(data);
             using var r = new BinaryReader(ms);
-            var corr = r.ReadInt32(); var ok = r.ReadBoolean(); var err = r.ReadString();
-            return (corr, ok, err, ReadViews(r));
+            return ReadViews(r);
         }
 
         public static byte[] EncodeEvent(QuestView view)
@@ -212,6 +200,7 @@ namespace SetNet.Quests
 
         public static QuestView DecodeEvent(byte[] data)
         {
+            if (data == null || data.Length == 0) return new QuestView();
             using var ms = new MemoryStream(data);
             using var r = new BinaryReader(ms);
             var views = ReadViews(r);
@@ -246,29 +235,16 @@ namespace SetNet.Quests
         }
     }
 
-    internal static class QuestRegistry
-    {
-        private static int _counter;
-        private static readonly ConcurrentDictionary<int, TaskCompletionSource<(bool Ok, string Error, List<QuestView> Views)>> Pending
-            = new ConcurrentDictionary<int, TaskCompletionSource<(bool, string, List<QuestView>)>>();
-        private static readonly ConcurrentDictionary<QuestClient, byte> Clients = new ConcurrentDictionary<QuestClient, byte>();
-
-        public static int NextId() => Interlocked.Increment(ref _counter);
-        public static void Register(int id, TaskCompletionSource<(bool, string, List<QuestView>)> tcs) => Pending[id] = tcs;
-        public static void Remove(int id) => Pending.TryRemove(id, out _);
-        public static void Complete(int id, (bool, string, List<QuestView>) r) { if (Pending.TryGetValue(id, out var tcs)) tcs.TrySetResult(r); }
-        public static void RegisterClient(QuestClient c) => Clients[c] = 0;
-        public static void DispatchEvent(QuestView v) { foreach (var c in Clients.Keys) c.OnUpdated(v); }
-    }
-
     /// <summary>
     /// Client-side quest driver, attached by <see cref="QuestClientExtensions.UseQuests"/>. Accept and abandon
     /// quests, claim rewards once complete, and watch objective progress via <see cref="Updated"/>. Progress itself
-    /// is reported by server game logic — the client only accepts, claims, and observes.
+    /// is reported by server game logic — the client only accepts, claims, and observes. Rides the unified protocol
+    /// on the <see cref="Channels.Quests"/> channel.
     /// </summary>
     public sealed class QuestClient
     {
         private readonly BaseClient _client;
+        private readonly List<IDisposable> _subscriptions = new List<IDisposable>();
 
         /// <summary>Raised when an accepted quest's progress or completion changes.</summary>
         public event Action<QuestView>? Updated;
@@ -276,7 +252,8 @@ namespace SetNet.Quests
         internal QuestClient(BaseClient client)
         {
             _client = client ?? throw new ArgumentNullException(nameof(client));
-            QuestRegistry.RegisterClient(this);
+            _subscriptions.Add(_client.OnRaw(Channels.Quests, (ushort)QuestEvt.Updated,
+                body => Updated?.Invoke(QuestCodec.DecodeEvent(body))));
         }
 
         /// <summary>Accepts a quest by id.</summary>
@@ -290,35 +267,20 @@ namespace SetNet.Quests
 
         /// <summary>Lists this player's accepted quests and their progress.</summary>
         public async Task<IReadOnlyList<QuestView>> ListAsync()
-        {
-            var (_, _, views) = await SendRaw(QuestOp.List, "").ConfigureAwait(false);
-            return views;
-        }
+            => await SendRaw(QuestOp.List, "").ConfigureAwait(false);
 
         private async Task Send(QuestOp op, string questId) { await SendRaw(op, questId).ConfigureAwait(false); }
 
-        private async Task<(bool Ok, string Error, List<QuestView> Views)> SendRaw(QuestOp op, string questId)
+        private async Task<List<QuestView>> SendRaw(QuestOp op, string questId)
         {
-            var id = QuestRegistry.NextId();
-            var tcs = new TaskCompletionSource<(bool, string, List<QuestView>)>(TaskCreationOptions.RunContinuationsAsynchronously);
-            QuestRegistry.Register(id, tcs);
             try
             {
-                await _client.SendAsync(QuestTypes.Command, QuestCodec.EncodeCommand(id, op, questId), DeliveryMethod.Reliable).ConfigureAwait(false);
-                using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
-                using (timeout.Token.Register(() => tcs.TrySetCanceled()))
-                {
-                    (bool Ok, string Error, List<QuestView> Views) result;
-                    try { result = await tcs.Task.ConfigureAwait(false); }
-                    catch (OperationCanceledException) { throw new QuestException("Quest command timed out."); }
-                    if (!result.Ok) throw new QuestException(result.Error);
-                    return result;
-                }
+                var body = await _client.RequestRawAsync(Channels.Quests, (ushort)op, QuestCodec.EncodeCommand(questId)).ConfigureAwait(false);
+                return QuestCodec.DecodeReply(body);
             }
-            finally { QuestRegistry.Remove(id); }
+            catch (ProtocolException ex) { throw new QuestException(ex.Message); }
+            catch (TimeoutException) { throw new QuestException("Quest command timed out."); }
         }
-
-        internal void OnUpdated(QuestView v) => Updated?.Invoke(v);
     }
 
     /// <summary>
@@ -450,55 +412,56 @@ namespace SetNet.Quests
             if (peer == null) return;
             var record = await _store.GetAsync(playerKey, questId).ConfigureAwait(false);
             if (record == null || !_defs.TryGetValue(questId, out var def)) return;
-            try { await peer.SendAsync(QuestTypes.Event, QuestCodec.EncodeEvent(ToView(def, record)), DeliveryMethod.Reliable).ConfigureAwait(false); } catch { }
+            try { await peer.PublishRawAsync(Channels.Quests, (ushort)QuestEvt.Updated, QuestCodec.EncodeEvent(ToView(def, record))).ConfigureAwait(false); } catch { }
         }
 
-        internal async Task OnCommand(BasePeer peer, byte[] data)
+        internal async Task HandleAsync(ChannelRequest request)
         {
-            var (corr, op, questId) = QuestCodec.DecodeCommand(data);
-            var playerKey = _inventory.KeyOf(peer);
-            switch (op)
+            var questId = QuestCodec.DecodeCommand(request.RawBody);
+            var playerKey = _inventory.KeyOf(request.Peer);
+            switch ((QuestOp)request.Op)
             {
-                case QuestOp.Accept: { var (ok, err) = await AcceptAsync(playerKey, questId).ConfigureAwait(false); await Reply(peer, corr, ok, err, new List<QuestView>()).ConfigureAwait(false); break; }
-                case QuestOp.Abandon: { var (ok, err) = await AbandonAsync(playerKey, questId).ConfigureAwait(false); await Reply(peer, corr, ok, err, new List<QuestView>()).ConfigureAwait(false); break; }
-                case QuestOp.Claim: { var (ok, err) = await ClaimAsync(playerKey, questId).ConfigureAwait(false); await Reply(peer, corr, ok, err, new List<QuestView>()).ConfigureAwait(false); break; }
-                case QuestOp.List: await Reply(peer, corr, true, "", await ViewsAsync(playerKey).ConfigureAwait(false)).ConfigureAwait(false); break;
+                case QuestOp.Accept:
+                {
+                    var (ok, err) = await AcceptAsync(playerKey, questId).ConfigureAwait(false);
+                    if (!ok) throw new ProtocolException(err);
+                    await request.ReplyRawAsync(QuestCodec.EncodeReply(new List<QuestView>())).ConfigureAwait(false);
+                    break;
+                }
+                case QuestOp.Abandon:
+                {
+                    var (ok, err) = await AbandonAsync(playerKey, questId).ConfigureAwait(false);
+                    if (!ok) throw new ProtocolException(err);
+                    await request.ReplyRawAsync(QuestCodec.EncodeReply(new List<QuestView>())).ConfigureAwait(false);
+                    break;
+                }
+                case QuestOp.Claim:
+                {
+                    var (ok, err) = await ClaimAsync(playerKey, questId).ConfigureAwait(false);
+                    if (!ok) throw new ProtocolException(err);
+                    await request.ReplyRawAsync(QuestCodec.EncodeReply(new List<QuestView>())).ConfigureAwait(false);
+                    break;
+                }
+                case QuestOp.List:
+                    await request.ReplyRawAsync(QuestCodec.EncodeReply(await ViewsAsync(playerKey).ConfigureAwait(false))).ConfigureAwait(false);
+                    break;
+                default:
+                    throw new ProtocolException("Unknown quest operation.");
             }
         }
+    }
 
-        private static Task Reply(BasePeer peer, int corr, bool ok, string error, List<QuestView> views)
+    /// <summary>Auto-discovered channel service for quest commands.</summary>
+    [ProtocolChannel(Channels.Quests)]
+    public sealed class QuestChannelService : IChannelService
+    {
+        /// <inheritdoc/>
+        public Task HandleAsync(ChannelRequest request)
         {
-            try { return peer.SendAsync(QuestTypes.Reply, QuestCodec.EncodeReply(corr, ok, error, views), DeliveryMethod.Reliable); }
-            catch { return Task.CompletedTask; }
+            var hub = QuestServer.For(request.Peer.CurrentPeerInfo.Server);
+            if (hub == null) throw new ProtocolException("quests are not configured on this server");
+            return hub.HandleAsync(request);
         }
-    }
-
-    /// <summary>Auto-discovered server handler for quest commands.</summary>
-    [MessageHandler(QuestTypes.Command)]
-    public sealed class QuestCommandHandler : IServerMessageHandler<byte[]>
-    {
-        /// <inheritdoc/>
-        public Task HandleAsync(BasePeer peer, byte[] data)
-        {
-            var hub = QuestServer.For(peer.CurrentPeerInfo.Server);
-            return hub?.OnCommand(peer, data) ?? Task.CompletedTask;
-        }
-    }
-
-    /// <summary>Auto-discovered client handler for correlated quest replies.</summary>
-    [MessageHandler(QuestTypes.Reply)]
-    public sealed class QuestReplyHandler : IClientMessageHandler<byte[]>
-    {
-        /// <inheritdoc/>
-        public Task HandleAsync(byte[] data) { var (corr, ok, err, views) = QuestCodec.DecodeReply(data); QuestRegistry.Complete(corr, (ok, err, views)); return Task.CompletedTask; }
-    }
-
-    /// <summary>Auto-discovered client handler for pushed quest updates.</summary>
-    [MessageHandler(QuestTypes.Event)]
-    public sealed class QuestEventHandler : IClientMessageHandler<byte[]>
-    {
-        /// <inheritdoc/>
-        public Task HandleAsync(byte[] data) { QuestRegistry.DispatchEvent(QuestCodec.DecodeEvent(data)); return Task.CompletedTask; }
     }
 
     /// <summary>Attaches the quest hub to a server by composition.</summary>
@@ -520,10 +483,10 @@ namespace SetNet.Quests
         public static QuestClient UseQuests(this BaseClient client) => new QuestClient(client);
     }
 
-    /// <summary>One-time bootstrap so the quest handlers are discovered. Call at startup.</summary>
+    /// <summary>One-time bootstrap so the quest channel service is discovered. Call at startup.</summary>
     public static class QuestRuntime
     {
         /// <summary>Ensures the quest layer is discoverable.</summary>
-        public static void Enable() { _ = QuestTypes.Command; }
+        public static void Enable() { _ = typeof(QuestChannelService); }
     }
 }

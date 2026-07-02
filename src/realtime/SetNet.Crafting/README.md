@@ -45,7 +45,7 @@ await crafting.CraftAsync("iron_sword");        // throws CraftingException if i
 
 ## Notes
 
-- **Reserved wire types 65467 / 65468.** Don't reuse them.
+- Rides the unified **SetNet.Protocol** messaging layer on the `Channels.Crafting` channel (all modules share one envelope wire type, `65447`) — no per-module wire ids to reserve. Serializer-agnostic: the control protocol is hand-framed `byte[]`, your payloads use your `SetNetSerializer`.
 - **Atomic.** Inputs are revoked before outputs are granted; a shortfall rolls back everything taken.
 - **Server owns recipes.** Clients can only craft what the server registered; `ListAsync` just mirrors the book for UI.
 - Resulting inventory changes arrive via the client's [`SetNet.Inventory`](https://www.nuget.org/packages/SetNet.Inventory) `Changed` subscription.

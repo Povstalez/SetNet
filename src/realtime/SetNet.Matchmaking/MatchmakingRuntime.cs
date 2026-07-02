@@ -11,7 +11,7 @@ namespace SetNet.Matchmaking
         /// <summary>Ensures the matchmaking layer is discoverable. Call once at startup.</summary>
         public static void Enable()
         {
-            _ = MatchTypes.Command;
+            _ = typeof(MatchmakingChannelService);
         }
     }
 }

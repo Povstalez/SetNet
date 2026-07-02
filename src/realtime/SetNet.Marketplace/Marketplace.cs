@@ -6,28 +6,17 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using SetNet.Core;
-using SetNet.Core.Transport;
-using SetNet.Data;
-using SetNet.Data.Attributes;
 using SetNet.Inventory;
+using SetNet.Protocol;
 using SetNet.Wallet;
 
 namespace SetNet.Marketplace
 {
-    /// <summary>Reserved wire types for the marketplace service. Don't reuse these ids for application messages.</summary>
-    public static class MarketplaceTypes
-    {
-        /// <summary>Client → server: post/cancel/book/my-orders command.</summary>
-        public const ushort Command = ushort.MaxValue - 82;   // 65453
+    /// <summary>Command operations (client → server) within the Marketplace protocol channel.</summary>
+    internal enum MarketOp : ushort { PostBuy = 1, PostSell = 2, Cancel = 3, Book = 4, MyOrders = 5 }
 
-        /// <summary>Server → client: correlated reply.</summary>
-        public const ushort Reply = ushort.MaxValue - 83;     // 65452
-
-        /// <summary>Server → client: push event when one of your orders fills.</summary>
-        public const ushort Event = ushort.MaxValue - 84;     // 65451
-    }
-
-    internal enum MarketOp : byte { PostBuy = 0, PostSell = 1, Cancel = 2, Book = 3, MyOrders = 4 }
+    /// <summary>Push events (server → client) within the Marketplace protocol channel.</summary>
+    internal enum MarketEvt : ushort { Filled = 10 }
 
     /// <summary>Thrown when a marketplace operation fails (insufficient funds/items, unknown order, timeout).</summary>
     public sealed class MarketplaceException : Exception
@@ -108,6 +97,21 @@ namespace SetNet.Marketplace
 
         /// <summary>Price the trade executed at (the resting order's price).</summary>
         public long Price { get; internal set; }
+
+        internal byte[] Encode()
+        {
+            using var ms = new MemoryStream();
+            using var w = new BinaryWriter(ms);
+            w.Write(OrderId ?? ""); w.Write(ItemId ?? ""); w.Write(Currency ?? ""); w.Write((byte)Side); w.Write(Quantity); w.Write(Price);
+            return ms.ToArray();
+        }
+
+        internal static MarketFill Decode(byte[] data)
+        {
+            using var ms = new MemoryStream(data);
+            using var r = new BinaryReader(ms);
+            return new MarketFill { OrderId = r.ReadString(), ItemId = r.ReadString(), Currency = r.ReadString(), Side = (OrderSide)r.ReadByte(), Quantity = r.ReadInt64(), Price = r.ReadInt64() };
+        }
     }
 
     // ---- internal order book ----
@@ -141,10 +145,9 @@ namespace SetNet.Marketplace
 
     // ---- wire ----
 
+    /// <summary>Decoded marketplace command body (the op and correlation live in the protocol envelope).</summary>
     internal sealed class MarketCommand
     {
-        public int CorrelationId;
-        public MarketOp Op;
         public string OrderId = "";
         public string ItemId = "";
         public string Currency = "gold";
@@ -155,7 +158,7 @@ namespace SetNet.Marketplace
         {
             using var ms = new MemoryStream();
             using var w = new BinaryWriter(ms);
-            w.Write(CorrelationId); w.Write((byte)Op); w.Write(OrderId ?? ""); w.Write(ItemId ?? ""); w.Write(Currency ?? ""); w.Write(Price); w.Write(Quantity);
+            w.Write(OrderId ?? ""); w.Write(ItemId ?? ""); w.Write(Currency ?? ""); w.Write(Price); w.Write(Quantity);
             return ms.ToArray();
         }
 
@@ -165,17 +168,15 @@ namespace SetNet.Marketplace
             using var r = new BinaryReader(ms);
             return new MarketCommand
             {
-                CorrelationId = r.ReadInt32(), Op = (MarketOp)r.ReadByte(), OrderId = r.ReadString(), ItemId = r.ReadString(),
+                OrderId = r.ReadString(), ItemId = r.ReadString(),
                 Currency = r.ReadString(), Price = r.ReadInt64(), Quantity = r.ReadInt64(),
             };
         }
     }
 
+    /// <summary>Decoded marketplace reply body (payload only; op/correlation are in the envelope).</summary>
     internal sealed class MarketReply
     {
-        public int CorrelationId;
-        public bool Success;
-        public string Error = "";
         public string OrderId = "";
         public MarketBook Book = new MarketBook();
         public List<MarketOrder> Orders = new List<MarketOrder>();
@@ -184,7 +185,7 @@ namespace SetNet.Marketplace
         {
             using var ms = new MemoryStream();
             using var w = new BinaryWriter(ms);
-            w.Write(CorrelationId); w.Write(Success); w.Write(Error ?? ""); w.Write(OrderId ?? "");
+            w.Write(OrderId ?? "");
             WriteLevels(w, Book.Buys); WriteLevels(w, Book.Sells);
             w.Write(Orders.Count);
             foreach (var o in Orders) { w.Write(o.Id ?? ""); w.Write(o.ItemId ?? ""); w.Write(o.Currency ?? ""); w.Write((byte)o.Side); w.Write(o.Price); w.Write(o.Quantity); }
@@ -193,9 +194,11 @@ namespace SetNet.Marketplace
 
         public static MarketReply Decode(byte[] data)
         {
+            var reply = new MarketReply();
+            if (data == null || data.Length == 0) return reply;
             using var ms = new MemoryStream(data);
             using var r = new BinaryReader(ms);
-            var reply = new MarketReply { CorrelationId = r.ReadInt32(), Success = r.ReadBoolean(), Error = r.ReadString(), OrderId = r.ReadString() };
+            reply.OrderId = r.ReadString();
             reply.Book.Buys = ReadLevels(r); reply.Book.Sells = ReadLevels(r);
             var oc = r.ReadInt32();
             for (var i = 0; i < oc; i++) reply.Orders.Add(new MarketOrder { Id = r.ReadString(), ItemId = r.ReadString(), Currency = r.ReadString(), Side = (OrderSide)r.ReadByte(), Price = r.ReadInt64(), Quantity = r.ReadInt64() });
@@ -217,30 +220,17 @@ namespace SetNet.Marketplace
         }
     }
 
-    internal static class MarketRegistry
-    {
-        private static int _counter;
-        private static readonly ConcurrentDictionary<int, TaskCompletionSource<MarketReply>> Pending
-            = new ConcurrentDictionary<int, TaskCompletionSource<MarketReply>>();
-        private static readonly ConcurrentDictionary<MarketplaceClient, byte> Clients = new ConcurrentDictionary<MarketplaceClient, byte>();
-
-        public static int NextId() => Interlocked.Increment(ref _counter);
-        public static void Register(int id, TaskCompletionSource<MarketReply> tcs) => Pending[id] = tcs;
-        public static void Remove(int id) => Pending.TryRemove(id, out _);
-        public static void Complete(int id, MarketReply reply) { if (Pending.TryGetValue(id, out var tcs)) tcs.TrySetResult(reply); }
-        public static void RegisterClient(MarketplaceClient c) => Clients[c] = 0;
-        public static void DispatchEvent(MarketFill fill) { foreach (var c in Clients.Keys) c.OnFill(fill); }
-    }
-
     /// <summary>
     /// Client-side marketplace driver, attached by <see cref="MarketplaceClientExtensions.UseMarketplace"/>. Post
     /// limit buy/sell orders (items/currency escrowed immediately); crossing orders match instantly at the resting
     /// order's price, the rest rests on the book. Fills arrive via <see cref="Filled"/>. Unlike an auction, this is
     /// a continuous double-sided order book — trades happen the moment prices cross, not on a timer.
+    /// Rides the unified protocol on the <see cref="Channels.Marketplace"/> channel.
     /// </summary>
     public sealed class MarketplaceClient
     {
         private readonly BaseClient _client;
+        private readonly List<IDisposable> _subscriptions = new List<IDisposable>();
 
         /// <summary>Raised each time one of your orders (partially) fills.</summary>
         public event Action<MarketFill>? Filled;
@@ -248,51 +238,38 @@ namespace SetNet.Marketplace
         internal MarketplaceClient(BaseClient client)
         {
             _client = client ?? throw new ArgumentNullException(nameof(client));
-            MarketRegistry.RegisterClient(this);
+            _subscriptions.Add(_client.OnRaw(Channels.Marketplace, (ushort)MarketEvt.Filled, b => Filled?.Invoke(MarketFill.Decode(b))));
         }
 
         /// <summary>Posts a limit buy order (escrows <c>price × quantity</c> currency); returns the order id.</summary>
         public async Task<string> PostBuyAsync(string itemId, long quantity, long price, string currency = "gold")
-            => (await Send(new MarketCommand { Op = MarketOp.PostBuy, ItemId = itemId, Quantity = quantity, Price = price, Currency = currency }).ConfigureAwait(false)).OrderId;
+            => (await Send(MarketOp.PostBuy, new MarketCommand { ItemId = itemId, Quantity = quantity, Price = price, Currency = currency }).ConfigureAwait(false)).OrderId;
 
         /// <summary>Posts a limit sell order (escrows <paramref name="quantity"/> items); returns the order id.</summary>
         public async Task<string> PostSellAsync(string itemId, long quantity, long price, string currency = "gold")
-            => (await Send(new MarketCommand { Op = MarketOp.PostSell, ItemId = itemId, Quantity = quantity, Price = price, Currency = currency }).ConfigureAwait(false)).OrderId;
+            => (await Send(MarketOp.PostSell, new MarketCommand { ItemId = itemId, Quantity = quantity, Price = price, Currency = currency }).ConfigureAwait(false)).OrderId;
 
         /// <summary>Cancels an open order and returns its remaining escrow.</summary>
-        public Task CancelAsync(string orderId) => Send(new MarketCommand { Op = MarketOp.Cancel, OrderId = orderId });
+        public Task CancelAsync(string orderId) => Send(MarketOp.Cancel, new MarketCommand { OrderId = orderId });
 
         /// <summary>Fetches the aggregated order book for an item.</summary>
         public async Task<MarketBook> GetBookAsync(string itemId, string currency = "gold")
-            => (await Send(new MarketCommand { Op = MarketOp.Book, ItemId = itemId, Currency = currency }).ConfigureAwait(false)).Book;
+            => (await Send(MarketOp.Book, new MarketCommand { ItemId = itemId, Currency = currency }).ConfigureAwait(false)).Book;
 
         /// <summary>Lists your open orders across all items.</summary>
         public async Task<IReadOnlyList<MarketOrder>> MyOrdersAsync()
-            => (await Send(new MarketCommand { Op = MarketOp.MyOrders }).ConfigureAwait(false)).Orders;
+            => (await Send(MarketOp.MyOrders, new MarketCommand()).ConfigureAwait(false)).Orders;
 
-        private async Task<MarketReply> Send(MarketCommand cmd)
+        private async Task<MarketReply> Send(MarketOp op, MarketCommand cmd)
         {
-            var id = MarketRegistry.NextId();
-            cmd.CorrelationId = id;
-            var tcs = new TaskCompletionSource<MarketReply>(TaskCreationOptions.RunContinuationsAsynchronously);
-            MarketRegistry.Register(id, tcs);
             try
             {
-                await _client.SendAsync(MarketplaceTypes.Command, cmd.Encode(), DeliveryMethod.Reliable).ConfigureAwait(false);
-                using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
-                using (timeout.Token.Register(() => tcs.TrySetCanceled()))
-                {
-                    MarketReply reply;
-                    try { reply = await tcs.Task.ConfigureAwait(false); }
-                    catch (OperationCanceledException) { throw new MarketplaceException("Marketplace command timed out."); }
-                    if (!reply.Success) throw new MarketplaceException(reply.Error);
-                    return reply;
-                }
+                var body = await _client.RequestRawAsync(Channels.Marketplace, (ushort)op, cmd.Encode()).ConfigureAwait(false);
+                return MarketReply.Decode(body);
             }
-            finally { MarketRegistry.Remove(id); }
+            catch (ProtocolException ex) { throw new MarketplaceException(ex.Message); }
+            catch (TimeoutException) { throw new MarketplaceException("Marketplace command timed out."); }
         }
-
-        internal void OnFill(MarketFill fill) => Filled?.Invoke(fill);
     }
 
     /// <summary>
@@ -320,42 +297,40 @@ namespace SetNet.Marketplace
 
         internal static MarketplaceServer? For(BaseServer? server) => server != null && Servers.TryGetValue(server, out var s) ? s : null;
 
-        private static string BookKey(string itemId, string currency) => (itemId ?? "") + "" + (currency ?? "gold");
+        private static string BookKey(string itemId, string currency) => (itemId ?? "") + "" + (currency ?? "gold");
         private Book GetBook(string itemId, string currency) => _books.GetOrAdd(BookKey(itemId, currency), _ => new Book());
 
-        internal async Task OnCommand(BasePeer peer, MarketCommand cmd)
+        internal Task HandleAsync(ChannelRequest request)
         {
-            var me = _inventory.KeyOf(peer);
-            try
+            var me = _inventory.KeyOf(request.Peer);
+            var cmd = MarketCommand.Decode(request.RawBody);
+            switch ((MarketOp)request.Op)
             {
-                switch (cmd.Op)
-                {
-                    case MarketOp.PostBuy: await Post(peer, me, cmd, isBuy: true); break;
-                    case MarketOp.PostSell: await Post(peer, me, cmd, isBuy: false); break;
-                    case MarketOp.Cancel: await Cancel(peer, me, cmd); break;
-                    case MarketOp.Book: await BookReply(peer, cmd); break;
-                    case MarketOp.MyOrders: await MyOrders(peer, me, cmd); break;
-                }
+                case MarketOp.PostBuy: return Post(request, me, cmd, isBuy: true);
+                case MarketOp.PostSell: return Post(request, me, cmd, isBuy: false);
+                case MarketOp.Cancel: return Cancel(request, me, cmd);
+                case MarketOp.Book: return BookReply(request, cmd);
+                case MarketOp.MyOrders: return MyOrders(request, me);
+                default: return Task.CompletedTask;
             }
-            catch (MarketplaceException ex) { await Reply(peer, cmd.CorrelationId, false, ex.Message, ""); }
         }
 
-        private async Task Post(BasePeer peer, string me, MarketCommand cmd, bool isBuy)
+        private async Task Post(ChannelRequest request, string me, MarketCommand cmd, bool isBuy)
         {
             var currency = string.IsNullOrEmpty(cmd.Currency) ? "gold" : cmd.Currency;
             if (string.IsNullOrEmpty(cmd.ItemId) || cmd.Quantity <= 0 || cmd.Price <= 0)
-            { await Reply(peer, cmd.CorrelationId, false, "Invalid order.", ""); return; }
+                throw new ProtocolException("Invalid order.");
 
             // Escrow the full resource up front so resting quantity is always covered.
             if (isBuy)
             {
                 if (!await _wallet.TryWithdrawAsync(me, currency, cmd.Price * cmd.Quantity).ConfigureAwait(false))
-                { await Reply(peer, cmd.CorrelationId, false, $"Not enough {currency}.", ""); return; }
+                    throw new ProtocolException($"Not enough {currency}.");
             }
             else
             {
                 if (!await _inventory.TryRevokeAsync(me, cmd.ItemId, cmd.Quantity).ConfigureAwait(false))
-                { await Reply(peer, cmd.CorrelationId, false, "You don't have that many.", ""); return; }
+                    throw new ProtocolException("You don't have that many.");
             }
 
             var order = new Order
@@ -370,7 +345,7 @@ namespace SetNet.Marketplace
             lock (book.Gate) fills = Match(book, order, out rests);
             if (rests) _orderIndex[order.Id] = book;
 
-            await Reply(peer, cmd.CorrelationId, true, "", order.Id);
+            await request.ReplyRawAsync(new MarketReply { OrderId = order.Id }.Encode()).ConfigureAwait(false);
             foreach (var fill in fills) await Execute(fill).ConfigureAwait(false);
         }
 
@@ -433,14 +408,14 @@ namespace SetNet.Marketplace
             await Notify(fill.Seller, new MarketFill { OrderId = fill.SellOrderId, ItemId = fill.ItemId, Currency = fill.Currency, Side = OrderSide.Sell, Quantity = fill.Quantity, Price = fill.TradePrice }).ConfigureAwait(false);
         }
 
-        private async Task Cancel(BasePeer peer, string me, MarketCommand cmd)
+        private async Task Cancel(ChannelRequest request, string me, MarketCommand cmd)
         {
-            if (!_orderIndex.TryGetValue(cmd.OrderId ?? "", out var book)) throw new MarketplaceException("No such open order.");
+            if (!_orderIndex.TryGetValue(cmd.OrderId ?? "", out var book)) throw new ProtocolException("No such open order.");
             Order? removed = null;
             lock (book.Gate)
             {
                 removed = book.Buys.FirstOrDefault(o => o.Id == cmd.OrderId) ?? book.Sells.FirstOrDefault(o => o.Id == cmd.OrderId);
-                if (removed == null || removed.Owner != me) throw new MarketplaceException("Not your order.");
+                if (removed == null || removed.Owner != me) throw new ProtocolException("Not your order.");
                 (removed.IsBuy ? book.Buys : book.Sells).Remove(removed);
             }
             _orderIndex.TryRemove(removed.Id, out _);
@@ -448,10 +423,10 @@ namespace SetNet.Marketplace
             // Return the remaining escrow.
             if (removed.IsBuy) await _wallet.DepositAsync(me, removed.Currency, removed.Price * removed.Quantity).ConfigureAwait(false);
             else await _inventory.GrantAsync(me, removed.ItemId, removed.Quantity).ConfigureAwait(false);
-            await Reply(peer, cmd.CorrelationId, true, "", removed.Id);
+            await request.ReplyRawAsync(new MarketReply { OrderId = removed.Id }.Encode()).ConfigureAwait(false);
         }
 
-        private Task BookReply(BasePeer peer, MarketCommand cmd)
+        private Task BookReply(ChannelRequest request, MarketCommand cmd)
         {
             var book = GetBook(cmd.ItemId, string.IsNullOrEmpty(cmd.Currency) ? "gold" : cmd.Currency);
             var view = new MarketBook();
@@ -460,7 +435,7 @@ namespace SetNet.Marketplace
                 view.Buys = Aggregate(book.Buys, descending: true);
                 view.Sells = Aggregate(book.Sells, descending: false);
             }
-            return Reply(peer, cmd.CorrelationId, true, "", "", view);
+            return request.ReplyRawAsync(new MarketReply { Book = view }.Encode());
         }
 
         private static List<MarketLevel> Aggregate(List<Order> side, bool descending)
@@ -472,67 +447,40 @@ namespace SetNet.Marketplace
             return levels.ToList();
         }
 
-        private Task MyOrders(BasePeer peer, string me, MarketCommand cmd)
+        private Task MyOrders(ChannelRequest request, string me)
         {
             var mine = new List<MarketOrder>();
             foreach (var book in _books.Values)
                 lock (book.Gate)
                     foreach (var o in book.Buys.Concat(book.Sells))
                         if (o.Owner == me) mine.Add(new MarketOrder { Id = o.Id, ItemId = o.ItemId, Currency = o.Currency, Side = o.IsBuy ? OrderSide.Buy : OrderSide.Sell, Price = o.Price, Quantity = o.Quantity });
-            return Reply(peer, cmd.CorrelationId, true, "", "", orders: mine);
+            return request.ReplyRawAsync(new MarketReply { Orders = mine }.Encode());
         }
 
         private Task Notify(string playerKey, MarketFill fill)
         {
             var peer = _inventory.PeerFor(playerKey);
             if (peer == null) return Task.CompletedTask;
-            using var ms = new MemoryStream();
-            using (var w = new BinaryWriter(ms))
-            { w.Write(fill.OrderId ?? ""); w.Write(fill.ItemId ?? ""); w.Write(fill.Currency ?? ""); w.Write((byte)fill.Side); w.Write(fill.Quantity); w.Write(fill.Price); }
-            try { return peer.SendAsync(MarketplaceTypes.Event, ms.ToArray(), DeliveryMethod.Reliable); } catch { return Task.CompletedTask; }
-        }
-
-        private static Task Reply(BasePeer peer, int corr, bool ok, string error, string orderId, MarketBook? book = null, List<MarketOrder>? orders = null)
-        {
-            var reply = new MarketReply { CorrelationId = corr, Success = ok, Error = error, OrderId = orderId, Book = book ?? new MarketBook(), Orders = orders ?? new List<MarketOrder>() };
-            try { return peer.SendAsync(MarketplaceTypes.Reply, reply.Encode(), DeliveryMethod.Reliable); } catch { return Task.CompletedTask; }
+            try { return peer.PublishRawAsync(Channels.Marketplace, (ushort)MarketEvt.Filled, fill.Encode()); } catch { return Task.CompletedTask; }
         }
     }
 
-    /// <summary>Auto-discovered server handler for marketplace commands.</summary>
-    [MessageHandler(MarketplaceTypes.Command)]
-    public sealed class MarketplaceCommandHandler : IServerMessageHandler<byte[]>
+    // ---- auto-discovered channel service ----
+
+    /// <summary>Auto-discovered channel service for marketplace commands.</summary>
+    [ProtocolChannel(Channels.Marketplace)]
+    public sealed class MarketplaceChannelService : IChannelService
     {
         /// <inheritdoc/>
-        public Task HandleAsync(BasePeer peer, byte[] data)
+        public Task HandleAsync(ChannelRequest request)
         {
-            var hub = MarketplaceServer.For(peer.CurrentPeerInfo.Server);
-            return hub?.OnCommand(peer, MarketCommand.Decode(data)) ?? Task.CompletedTask;
+            var hub = MarketplaceServer.For(request.Peer.CurrentPeerInfo.Server);
+            if (hub == null) throw new ProtocolException("marketplace is not configured on this server");
+            return hub.HandleAsync(request);
         }
     }
 
-    /// <summary>Auto-discovered client handler for correlated marketplace replies.</summary>
-    [MessageHandler(MarketplaceTypes.Reply)]
-    public sealed class MarketplaceReplyHandler : IClientMessageHandler<byte[]>
-    {
-        /// <inheritdoc/>
-        public Task HandleAsync(byte[] data) { var r = MarketReply.Decode(data); MarketRegistry.Complete(r.CorrelationId, r); return Task.CompletedTask; }
-    }
-
-    /// <summary>Auto-discovered client handler for fill push events.</summary>
-    [MessageHandler(MarketplaceTypes.Event)]
-    public sealed class MarketplaceEventHandler : IClientMessageHandler<byte[]>
-    {
-        /// <inheritdoc/>
-        public Task HandleAsync(byte[] data)
-        {
-            using var ms = new MemoryStream(data);
-            using var r = new BinaryReader(ms);
-            var fill = new MarketFill { OrderId = r.ReadString(), ItemId = r.ReadString(), Currency = r.ReadString(), Side = (OrderSide)r.ReadByte(), Quantity = r.ReadInt64(), Price = r.ReadInt64() };
-            MarketRegistry.DispatchEvent(fill);
-            return Task.CompletedTask;
-        }
-    }
+    // ---- composition entry points ----
 
     /// <summary>Attaches the marketplace to a server by composition.</summary>
     public static class MarketplaceServerExtensions
@@ -554,10 +502,10 @@ namespace SetNet.Marketplace
         public static MarketplaceClient UseMarketplace(this BaseClient client) => new MarketplaceClient(client);
     }
 
-    /// <summary>One-time bootstrap so the marketplace handlers are discovered. Call at startup.</summary>
+    /// <summary>One-time bootstrap so the marketplace channel service is discovered. Call at startup.</summary>
     public static class MarketplaceRuntime
     {
         /// <summary>Ensures the marketplace layer is discoverable.</summary>
-        public static void Enable() { _ = MarketplaceTypes.Command; }
+        public static void Enable() { _ = typeof(MarketplaceChannelService); }
     }
 }

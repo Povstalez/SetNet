@@ -10,7 +10,7 @@ namespace SetNet.Rooms
         /// <summary>Ensures the rooms layer is discoverable. Call once at startup.</summary>
         public static void Enable()
         {
-            _ = RoomTypes.Command;
+            _ = typeof(RoomsChannelService);
         }
     }
 }

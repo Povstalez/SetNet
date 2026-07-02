@@ -6,8 +6,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using SetNet.Core;
 using SetNet.Core.Transport;
-using SetNet.Data;
-using SetNet.Data.Attributes;
+using SetNet.Protocol;
 using SetNet.Rooms;
 
 namespace SetNet.Matchmaking
@@ -144,8 +143,8 @@ namespace SetNet.Matchmaking
 
             foreach (var t in group)
             {
-                var evt = new MatchEvent(t.PlayerId, queue, room.Code, players);
-                try { await t.Peer.SendAsync(MatchTypes.Event, evt.Encode(), DeliveryMethod.Reliable).ConfigureAwait(false); }
+                var body = MatchWire.EncodeMatch(t.PlayerId, queue, room.Code, players);
+                try { await t.Peer.PublishRawAsync(Channels.Matchmaking, (ushort)MatchEvt.MatchFound, body).ConfigureAwait(false); }
                 catch { /* member dropping; the empty room will be cleaned up by Rooms when others leave */ }
             }
         }
@@ -180,39 +179,36 @@ namespace SetNet.Matchmaking
             => server != null && Servers.TryGetValue(server, out var state) ? state : null;
     }
 
-    /// <summary>Auto-discovered handler for matchmaking commands (enqueue/cancel). Serializer-agnostic (byte[]).</summary>
-    [MessageHandler(MatchTypes.Command)]
-    public sealed class MatchmakingServerHandler : IServerMessageHandler<byte[]>
+    /// <summary>
+    /// Auto-discovered channel service for matchmaking commands (enqueue/cancel). The unified protocol handles
+    /// correlation and reply framing; this only implements the queue logic and dispatches on the op.
+    /// </summary>
+    [ProtocolChannel(Channels.Matchmaking)]
+    public sealed class MatchmakingChannelService : IChannelService
     {
         /// <inheritdoc/>
-        public async Task HandleAsync(BasePeer peer, byte[] data)
+        public async Task HandleAsync(ChannelRequest request)
         {
-            var cmd = MatchCommand.Decode(data);
-            var state = MatchmakingServer.Get(peer.CurrentPeerInfo.Server);
-            if (state == null)
-            {
-                await ReplyAsync(peer, MatchReply.Fail(cmd.CorrelationId, "matchmaking is not configured on this server")).ConfigureAwait(false);
-                return;
-            }
+            var state = MatchmakingServer.Get(request.Peer.CurrentPeerInfo.Server);
+            if (state == null) throw new ProtocolException("matchmaking is not configured on this server");
+            var peer = request.Peer;
 
-            switch (cmd.Op)
+            switch ((MatchOp)request.Op)
             {
                 case MatchOp.Enqueue:
                 {
-                    var playerId = state.Enqueue(peer, cmd.Queue, cmd.Skill);
-                    await ReplyAsync(peer, MatchReply.Ok(cmd.CorrelationId, playerId)).ConfigureAwait(false);
+                    var (queue, skill) = MatchWire.DecodeEnqueue(request.RawBody);
+                    var playerId = state.Enqueue(peer, queue, skill);
+                    await request.ReplyRawAsync(MatchWire.EncodeReply(playerId)).ConfigureAwait(false);
                     break;
                 }
                 case MatchOp.Cancel:
                 {
                     state.RemovePeer(peer.CurrentPeerInfo.Id);
-                    await ReplyAsync(peer, MatchReply.Ok(cmd.CorrelationId, peer.CurrentPeerInfo.Id.ToString("N"))).ConfigureAwait(false);
+                    await request.ReplyRawAsync(MatchWire.EncodeReply(peer.CurrentPeerInfo.Id.ToString("N"))).ConfigureAwait(false);
                     break;
                 }
             }
         }
-
-        private static Task ReplyAsync(BasePeer peer, MatchReply reply)
-            => peer.SendAsync(MatchTypes.Reply, reply.Encode(), DeliveryMethod.Reliable);
     }
 }

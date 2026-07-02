@@ -59,7 +59,7 @@ await ah.BuyoutAsync(someListingId);
 
 ## Notes
 
-- **Reserved wire types 65470 / 65471 / 65472.** Don't reuse them.
+- Rides the unified **SetNet.Protocol** messaging layer on the `Channels.Auction` channel (all modules share one envelope wire type, `65447`) — no per-module wire ids to reserve. Serializer-agnostic: the control protocol is hand-framed `byte[]`, your payloads use your `SetNetSerializer`.
 - **Escrow everywhere.** The item leaves the seller's inventory at listing; each bid withdraws currency and refunds the prior bidder; settlement grants item↔currency. Nothing is created or destroyed — a cancel/expiry returns the item, an outbid returns the money.
 - **Settlement** runs on a ~1 s timer; a buyout settles instantly. Cancel is only allowed before the first bid.
 - **Persistence.** Listings and escrow live in memory here; back `SetNet.Inventory`/`SetNet.Wallet` with durable stores and persist listings yourself if auctions must survive a restart.

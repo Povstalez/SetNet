@@ -60,7 +60,7 @@ PlayReveal(drops);
 
 ## Notes
 
-- **Reserved wire types 65465 / 65466.** Don't reuse them.
+- Rides the unified **SetNet.Protocol** messaging layer on the `Channels.Loot` channel (all modules share one envelope wire type, `65447`) — no per-module wire ids to reserve. Serializer-agnostic: the control protocol is hand-framed `byte[]`, your payloads use your `SetNetSerializer`.
 - **RNG stays server-side.** Clients can't inspect or predict drops. Set `LootOptions.Seed` only in tests.
 - **Client opens are denied by default.** Supply a `CanOpen` policy that verifies the player actually holds the container/key; otherwise roll from server game logic with `RollAndGrantAsync`.
 - Guaranteed entries drop once per roll; weighted entries are drawn `Rolls` times by relative weight, and identical items merge into one stack.

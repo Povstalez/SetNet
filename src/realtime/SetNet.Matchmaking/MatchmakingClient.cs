@@ -2,9 +2,7 @@ using System;
 using System.Threading;
 using System.Threading.Tasks;
 using SetNet.Core;
-using SetNet.Core.Transport;
-using SetNet.Data;
-using SetNet.Data.Attributes;
+using SetNet.Protocol;
 using SetNet.Rooms;
 
 namespace SetNet.Matchmaking
@@ -12,12 +10,13 @@ namespace SetNet.Matchmaking
     /// <summary>
     /// Client-side matchmaking driver, attached by <see cref="MatchmakingClientExtensions.UseMatchmaking"/>. Enter a
     /// queue and await a match; when the server pairs you up you get a <see cref="MatchResult"/> with a room code to
-    /// join via your <c>RoomsClient</c>. All by composition, alongside your regular messages.
+    /// join via your <c>RoomsClient</c>. Rides the unified protocol on the <see cref="Channels.Matchmaking"/> channel.
     /// </summary>
     public sealed class MatchmakingClient
     {
         private readonly BaseClient _client;
         private readonly object _gate = new object();
+        private readonly IDisposable _subscription;
         private string _ownId = "";
         private string? _waitingQueue;
         private TaskCompletionSource<MatchResult>? _matchTcs;
@@ -28,7 +27,11 @@ namespace SetNet.Matchmaking
         internal MatchmakingClient(BaseClient client)
         {
             _client = client ?? throw new ArgumentNullException(nameof(client));
-            MatchmakingRegistry.RegisterClient(this);
+            _subscription = _client.OnRaw(Channels.Matchmaking, (ushort)MatchEvt.MatchFound, body =>
+            {
+                var (recipient, queue, roomCode, players) = MatchWire.DecodeMatch(body);
+                OnEvent(recipient, queue, roomCode, players);
+            });
         }
 
         /// <summary>True while this client is waiting in a queue.</summary>
@@ -52,8 +55,8 @@ namespace SetNet.Matchmaking
 
             try
             {
-                var reply = await SendCommandAsync(MatchOp.Enqueue, request.Queue, request.Skill).ConfigureAwait(false);
-                lock (_gate) _ownId = reply.OwnPlayerId;
+                var ownId = await SendCommandAsync(MatchOp.Enqueue, MatchWire.EncodeEnqueue(request.Queue, request.Skill)).ConfigureAwait(false);
+                lock (_gate) _ownId = ownId;
             }
             catch
             {
@@ -84,50 +87,39 @@ namespace SetNet.Matchmaking
             bool searching;
             lock (_gate) searching = _waitingQueue != null;
             if (!searching) return;
-            await SendCommandAsync(MatchOp.Cancel, "", 0).ConfigureAwait(false);
+            await SendCommandAsync(MatchOp.Cancel, Array.Empty<byte>()).ConfigureAwait(false);
             lock (_gate) { _waitingQueue = null; _matchTcs?.TrySetCanceled(); _matchTcs = null; }
         }
 
         private async Task SafeCancelAsync()
         {
-            try { await SendCommandAsync(MatchOp.Cancel, "", 0).ConfigureAwait(false); } catch { /* best effort */ }
+            try { await SendCommandAsync(MatchOp.Cancel, Array.Empty<byte>()).ConfigureAwait(false); } catch { /* best effort */ }
         }
 
-        private async Task<MatchReply> SendCommandAsync(MatchOp op, string queue, int skill)
+        /// <summary>Sends a matchmaking command and maps protocol failures back to the public <see cref="MatchmakingException"/>; returns the player id from the reply.</summary>
+        private async Task<string> SendCommandAsync(MatchOp op, byte[] body)
         {
-            var correlationId = MatchmakingRegistry.NextId();
-            var tcs = new TaskCompletionSource<MatchReply>(TaskCreationOptions.RunContinuationsAsynchronously);
-            MatchmakingRegistry.Register(correlationId, tcs);
             try
             {
-                var command = new MatchCommand(correlationId, op, queue, skill);
-                await _client.SendAsync(MatchTypes.Command, command.Encode(), DeliveryMethod.Reliable).ConfigureAwait(false);
-
-                using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
-                using (timeout.Token.Register(() => tcs.TrySetCanceled()))
-                {
-                    MatchReply reply;
-                    try { reply = await tcs.Task.ConfigureAwait(false); }
-                    catch (OperationCanceledException) { throw new MatchmakingException("Matchmaking command timed out."); }
-                    if (!reply.Success) throw new MatchmakingException(reply.Error);
-                    return reply;
-                }
+                var reply = await _client.RequestRawAsync(Channels.Matchmaking, (ushort)op, body).ConfigureAwait(false);
+                return MatchWire.DecodeReply(reply);
             }
-            finally { MatchmakingRegistry.Remove(correlationId); }
+            catch (ProtocolException ex) { throw new MatchmakingException(ex.Message); }
+            catch (TimeoutException) { throw new MatchmakingException("Matchmaking command timed out."); }
         }
 
-        internal void OnEvent(MatchEvent evt)
+        private void OnEvent(string recipient, string queue, string roomCode, System.Collections.Generic.IReadOnlyList<string> players)
         {
             TaskCompletionSource<MatchResult>? tcs;
             string ownId;
             lock (_gate)
             {
-                if (_waitingQueue == null || evt.Queue != _waitingQueue || evt.Recipient != _ownId) return;   // not for me
+                if (_waitingQueue == null || queue != _waitingQueue || recipient != _ownId) return;   // not for me
                 tcs = _matchTcs;
                 ownId = _ownId;
             }
 
-            var result = new MatchResult(evt.Queue, evt.RoomCode, evt.Players, ownId);
+            var result = new MatchResult(queue, roomCode, players, ownId);
             MatchFound?.Invoke(result);
             tcs?.TrySetResult(result);
         }
@@ -138,30 +130,5 @@ namespace SetNet.Matchmaking
     {
         /// <summary>Enables matchmaking on a client and returns the driver (find/cancel + <c>MatchFound</c> event).</summary>
         public static MatchmakingClient UseMatchmaking(this BaseClient client) => new MatchmakingClient(client);
-    }
-
-    /// <summary>Auto-discovered client handler for matchmaking command replies (correlated).</summary>
-    [MessageHandler(MatchTypes.Reply)]
-    public sealed class MatchmakingReplyHandler : IClientMessageHandler<byte[]>
-    {
-        /// <inheritdoc/>
-        public Task HandleAsync(byte[] data)
-        {
-            var reply = MatchReply.Decode(data);
-            MatchmakingRegistry.Complete(reply.CorrelationId, reply);
-            return Task.CompletedTask;
-        }
-    }
-
-    /// <summary>Auto-discovered client handler for match-found push events; routes to the matching <see cref="MatchmakingClient"/>.</summary>
-    [MessageHandler(MatchTypes.Event)]
-    public sealed class MatchmakingEventHandler : IClientMessageHandler<byte[]>
-    {
-        /// <inheritdoc/>
-        public Task HandleAsync(byte[] data)
-        {
-            MatchmakingRegistry.DispatchEvent(MatchEvent.Decode(data));
-            return Task.CompletedTask;
-        }
     }
 }

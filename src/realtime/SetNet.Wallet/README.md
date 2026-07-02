@@ -44,7 +44,7 @@ foreach (var b in await wallet.GetAsync()) Console.WriteLine($"{b.Amount} {b.Cur
 
 ## Notes
 
-- **Reserved wire types 65475 / 65476 / 65477.** Don't reuse them.
+- Rides the unified **SetNet.Protocol** messaging layer on the `Channels.Wallet` channel (all modules share one envelope wire type, `65447`) — no per-module wire ids to reserve. Serializer-agnostic: the control protocol is hand-framed `byte[]`, your payloads use your `SetNetSerializer`.
 - **Atomic by contract.** `TryWithdrawAsync`/`TryTransferAsync` never overdraw and never dupe. Back the store with a transactional store (Redis/SQL) for a multi-node cluster.
 - **Stable player key.** Default is the connection id; with [`SetNet.Auth`](https://www.nuget.org/packages/SetNet.Auth) set `WalletOptions.PlayerKey` to the account id so wallets persist.
 - Mirrors [`SetNet.Inventory`](https://www.nuget.org/packages/SetNet.Inventory): items there, money here.

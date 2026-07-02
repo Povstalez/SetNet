@@ -100,7 +100,7 @@ party.ReadyChanged += (_, _) =>
 - **Leader promotion**: the leader is the first member; if they leave or disconnect, the next member becomes leader and everyone gets `LeaderChanged`. An empty party is dropped.
 - **Codes** are 6 chars from an unambiguous alphabet (no `O/0/I/1`), collision-checked.
 - **Node-local** (parties are live peers on one server node), like Rooms. A multi-node deployment would coordinate through a shared store.
-- Reserved wire types `65511 / 65512 / 65513`. Serializer-agnostic (hand-framed protocol); the player-facing data is fully typed (`PartyInfo`/`PartyMember`).
+- Rides the unified **SetNet.Protocol** messaging layer on the `Channels.Party` channel (all modules share one envelope wire type, `65447`) — no per-module wire ids to reserve. Serializer-agnostic: the control protocol is hand-framed `byte[]`, your payloads use your `SetNetSerializer`.
 
 ## Documentation & source
 

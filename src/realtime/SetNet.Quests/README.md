@@ -51,7 +51,7 @@ await quests.ClaimAsync("goblin_hunt");
 
 ## Notes
 
-- **Reserved wire types 65462 / 65463 / 65464.** Don't reuse them.
+- Rides the unified **SetNet.Protocol** messaging layer on the `Channels.Quests` channel (all modules share one envelope wire type, `65447`) — no per-module wire ids to reserve. Serializer-agnostic: the control protocol is hand-framed `byte[]`, your payloads use your `SetNetSerializer`.
 - **Progress is server-driven.** Call `ProgressAsync(playerKey, objectiveKey)` from game logic; it advances every accepted, unclaimed quest that has that objective, capped at the requirement.
 - **Rewards.** Item rewards grant through `SetNet.Inventory` on claim. For XP/currency rewards, handle `QuestCompleted` (or the client's claim ack) and call [`SetNet.Progression`](https://www.nuget.org/packages/SetNet.Progression) / [`SetNet.Wallet`](https://www.nuget.org/packages/SetNet.Wallet).
 - **Persistence.** Default `MemoryQuestStore` is per-process; implement `IQuestStore` over Redis/SQL for durable quest logs.

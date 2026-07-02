@@ -5,122 +5,84 @@ using System.Text;
 
 namespace SetNet.Matchmaking
 {
-    /// <summary>Client → server matchmaking command. Hand-framed as a byte[] so it rides over any serializer.</summary>
-    internal readonly struct MatchCommand
+    /// <summary>Command operations (client → server) within the Matchmaking protocol channel.</summary>
+    internal enum MatchOp : ushort
     {
-        public readonly int CorrelationId;
-        public readonly MatchOp Op;
-        public readonly string Queue;
-        public readonly int Skill;
-
-        public MatchCommand(int correlationId, MatchOp op, string queue, int skill)
-        {
-            CorrelationId = correlationId;
-            Op = op;
-            Queue = queue ?? "";
-            Skill = skill;
-        }
-
-        public byte[] Encode()
-        {
-            using var ms = new MemoryStream();
-            using (var w = new BinaryWriter(ms, Encoding.UTF8, leaveOpen: true))
-            {
-                w.Write(CorrelationId);
-                w.Write((byte)Op);
-                w.Write(Queue);
-                w.Write(Skill);
-            }
-            return ms.ToArray();
-        }
-
-        public static MatchCommand Decode(byte[] frame)
-        {
-            using var ms = new MemoryStream(frame);
-            using var r = new BinaryReader(ms, Encoding.UTF8);
-            var corr = r.ReadInt32();
-            var op = (MatchOp)r.ReadByte();
-            var queue = r.ReadString();
-            var skill = r.ReadInt32();
-            return new MatchCommand(corr, op, queue, skill);
-        }
+        /// <summary>Enter a queue.</summary>
+        Enqueue = 1,
+        /// <summary>Leave the queue.</summary>
+        Cancel = 2,
     }
 
-    /// <summary>Server → client reply to a command (correlated). Confirms the enqueue/cancel and carries the player's own id.</summary>
-    internal readonly struct MatchReply
+    /// <summary>Push events (server → client) within the Matchmaking protocol channel.</summary>
+    internal enum MatchEvt : ushort
     {
-        public readonly int CorrelationId;
-        public readonly bool Success;
-        public readonly string OwnPlayerId;
-        public readonly string Error;
-
-        private MatchReply(int corr, bool success, string ownId, string error)
-        {
-            CorrelationId = corr;
-            Success = success;
-            OwnPlayerId = ownId ?? "";
-            Error = error ?? "";
-        }
-
-        public static MatchReply Ok(int corr, string ownId) => new MatchReply(corr, true, ownId, "");
-        public static MatchReply Fail(int corr, string error) => new MatchReply(corr, false, "", error);
-
-        public byte[] Encode()
-        {
-            using var ms = new MemoryStream();
-            using (var w = new BinaryWriter(ms, Encoding.UTF8, leaveOpen: true))
-            {
-                w.Write(CorrelationId);
-                w.Write(Success);
-                if (Success) w.Write(OwnPlayerId);
-                else w.Write(Error);
-            }
-            return ms.ToArray();
-        }
-
-        public static MatchReply Decode(byte[] frame)
-        {
-            using var ms = new MemoryStream(frame);
-            using var r = new BinaryReader(ms, Encoding.UTF8);
-            var corr = r.ReadInt32();
-            var success = r.ReadBoolean();
-            return success ? Ok(corr, r.ReadString()) : Fail(corr, r.ReadString());
-        }
+        /// <summary>A match was formed for this player.</summary>
+        MatchFound = 10,
     }
 
-    /// <summary>Server → client push event: a match was found. Sent only to the players in the match, tagged with the recipient's id.</summary>
-    internal readonly struct MatchEvent
+    /// <summary>
+    /// Body codecs for the Matchmaking channel. The unified envelope carries kind/channel/op/correlation, so these
+    /// encode only the payload fields — hand-framed as <c>byte[]</c> to stay serializer-agnostic.
+    /// </summary>
+    internal static class MatchWire
     {
-        public readonly string Recipient;
-        public readonly string Queue;
-        public readonly string RoomCode;
-        public readonly IReadOnlyList<string> Players;
-
-        public MatchEvent(string recipient, string queue, string roomCode, IReadOnlyList<string> players)
-        {
-            Recipient = recipient ?? "";
-            Queue = queue ?? "";
-            RoomCode = roomCode ?? "";
-            Players = players ?? Array.Empty<string>();
-        }
-
-        public byte[] Encode()
+        /// <summary>Enqueue-command body: [queue][skill].</summary>
+        public static byte[] EncodeEnqueue(string queue, int skill)
         {
             using var ms = new MemoryStream();
             using (var w = new BinaryWriter(ms, Encoding.UTF8, leaveOpen: true))
             {
-                w.Write(Recipient);
-                w.Write(Queue);
-                w.Write(RoomCode);
-                w.Write(Players.Count);
-                foreach (var p in Players) w.Write(p);
+                w.Write(queue ?? "");
+                w.Write(skill);
             }
             return ms.ToArray();
         }
 
-        public static MatchEvent Decode(byte[] frame)
+        /// <summary>Reads an enqueue-command body.</summary>
+        public static (string queue, int skill) DecodeEnqueue(byte[] body)
         {
-            using var ms = new MemoryStream(frame);
+            using var ms = new MemoryStream(body);
+            using var r = new BinaryReader(ms, Encoding.UTF8);
+            return (r.ReadString(), r.ReadInt32());
+        }
+
+        /// <summary>Enqueue/Cancel reply body: the caller's player id.</summary>
+        public static byte[] EncodeReply(string ownId)
+        {
+            using var ms = new MemoryStream();
+            using (var w = new BinaryWriter(ms, Encoding.UTF8, leaveOpen: true)) w.Write(ownId ?? "");
+            return ms.ToArray();
+        }
+
+        /// <summary>Reads an enqueue/cancel reply body.</summary>
+        public static string DecodeReply(byte[] body)
+        {
+            if (body == null || body.Length == 0) return "";
+            using var ms = new MemoryStream(body);
+            using var r = new BinaryReader(ms, Encoding.UTF8);
+            return r.ReadString();
+        }
+
+        /// <summary>Match-found event body: [recipient][queue][roomCode][players…].</summary>
+        public static byte[] EncodeMatch(string recipient, string queue, string roomCode, IReadOnlyList<string> players)
+        {
+            using var ms = new MemoryStream();
+            using (var w = new BinaryWriter(ms, Encoding.UTF8, leaveOpen: true))
+            {
+                w.Write(recipient ?? "");
+                w.Write(queue ?? "");
+                w.Write(roomCode ?? "");
+                w.Write(players?.Count ?? 0);
+                if (players != null) foreach (var p in players) w.Write(p ?? "");
+            }
+            return ms.ToArray();
+        }
+
+        /// <summary>Reads a match-found event body.</summary>
+        public static (string recipient, string queue, string roomCode, List<string> players) DecodeMatch(byte[] body)
+        {
+            using var ms = new MemoryStream(body);
             using var r = new BinaryReader(ms, Encoding.UTF8);
             var recipient = r.ReadString();
             var queue = r.ReadString();
@@ -128,7 +90,7 @@ namespace SetNet.Matchmaking
             var count = r.ReadInt32();
             var players = new List<string>(count);
             for (var i = 0; i < count; i++) players.Add(r.ReadString());
-            return new MatchEvent(recipient, queue, roomCode, players);
+            return (recipient, queue, roomCode, players);
         }
     }
 }

@@ -3,31 +3,18 @@ using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
-using System.Threading;
 using System.Threading.Tasks;
 using SetNet.Core;
-using SetNet.Core.Transport;
-using SetNet.Data;
-using SetNet.Data.Attributes;
 using SetNet.Inventory;
+using SetNet.Protocol;
 
 namespace SetNet.Guilds
 {
-    /// <summary>Reserved wire types for the guild service. Don't reuse these ids for application messages.</summary>
-    public static class GuildTypes
-    {
-        /// <summary>Client → server: guild command.</summary>
-        public const ushort Command = ushort.MaxValue - 77;   // 65458
+    /// <summary>Command operations (client → server) within the Guilds protocol channel.</summary>
+    internal enum GuildOp : ushort { Create = 1, Join = 2, Leave = 3, Promote = 4, Kick = 5, ListMembers = 6, BankDeposit = 7, BankWithdraw = 8, BankList = 9 }
 
-        /// <summary>Server → client: correlated reply.</summary>
-        public const ushort Reply = ushort.MaxValue - 78;     // 65457
-
-        /// <summary>Server → client: push event (member joined/left, disbanded).</summary>
-        public const ushort Event = ushort.MaxValue - 79;     // 65456
-    }
-
-    internal enum GuildOp : byte { Create = 0, Join = 1, Leave = 2, Promote = 3, Kick = 4, ListMembers = 5, BankDeposit = 6, BankWithdraw = 7, BankList = 8 }
-    internal enum GuildEventType : byte { MemberJoined = 0, MemberLeft = 1, Disbanded = 2 }
+    /// <summary>Push events (server → client) within the Guilds protocol channel.</summary>
+    internal enum GuildEvt : ushort { MemberJoined = 10, MemberLeft = 11, Disbanded = 12 }
 
     /// <summary>A member's rank within a guild.</summary>
     public enum GuildRole : byte
@@ -129,10 +116,9 @@ namespace SetNet.Guilds
 
     // ---- wire ----
 
+    /// <summary>Decoded guild command body (the op and correlation live in the protocol envelope).</summary>
     internal sealed class GuildCommand
     {
-        public int CorrelationId;
-        public GuildOp Op;
         public string GuildId = "";
         public string Name = "";
         public string TargetKey = "";
@@ -144,7 +130,7 @@ namespace SetNet.Guilds
         {
             using var ms = new MemoryStream();
             using var w = new BinaryWriter(ms);
-            w.Write(CorrelationId); w.Write((byte)Op); w.Write(GuildId ?? ""); w.Write(Name ?? "");
+            w.Write(GuildId ?? ""); w.Write(Name ?? "");
             w.Write(TargetKey ?? ""); w.Write((byte)Role); w.Write(ItemId ?? ""); w.Write(Count);
             return ms.ToArray();
         }
@@ -155,17 +141,15 @@ namespace SetNet.Guilds
             using var r = new BinaryReader(ms);
             return new GuildCommand
             {
-                CorrelationId = r.ReadInt32(), Op = (GuildOp)r.ReadByte(), GuildId = r.ReadString(), Name = r.ReadString(),
+                GuildId = r.ReadString(), Name = r.ReadString(),
                 TargetKey = r.ReadString(), Role = (GuildRole)r.ReadByte(), ItemId = r.ReadString(), Count = r.ReadInt64(),
             };
         }
     }
 
+    /// <summary>Decoded guild reply body (payload only; op/correlation are in the envelope).</summary>
     internal sealed class GuildReply
     {
-        public int CorrelationId;
-        public bool Success;
-        public string Error = "";
         public string GuildId = "";
         public List<GuildMember> Members = new List<GuildMember>();
         public List<ItemStack> Bank = new List<ItemStack>();
@@ -174,7 +158,7 @@ namespace SetNet.Guilds
         {
             using var ms = new MemoryStream();
             using var w = new BinaryWriter(ms);
-            w.Write(CorrelationId); w.Write(Success); w.Write(Error ?? ""); w.Write(GuildId ?? "");
+            w.Write(GuildId ?? "");
             w.Write(Members.Count);
             foreach (var m in Members) { w.Write(m.PlayerKey ?? ""); w.Write((byte)m.Role); }
             w.Write(Bank.Count);
@@ -184,9 +168,11 @@ namespace SetNet.Guilds
 
         public static GuildReply Decode(byte[] data)
         {
+            var reply = new GuildReply();
+            if (data == null || data.Length == 0) return reply;
             using var ms = new MemoryStream(data);
             using var r = new BinaryReader(ms);
-            var reply = new GuildReply { CorrelationId = r.ReadInt32(), Success = r.ReadBoolean(), Error = r.ReadString(), GuildId = r.ReadString() };
+            reply.GuildId = r.ReadString();
             var mc = r.ReadInt32();
             for (var i = 0; i < mc; i++) reply.Members.Add(new GuildMember(r.ReadString(), (GuildRole)r.ReadByte()));
             var bc = r.ReadInt32();
@@ -195,10 +181,10 @@ namespace SetNet.Guilds
         }
     }
 
-    /// <summary>A guild push event: a membership change the client reacts to (internal wire type).</summary>
+    /// <summary>A guild push event: a membership change the client reacts to (internal wire body).</summary>
     internal sealed class GuildEvent
     {
-        public GuildEventType Type;
+        public GuildEvt Type;
         public string GuildId = "";
         public string PlayerKey = "";
 
@@ -206,41 +192,28 @@ namespace SetNet.Guilds
         {
             using var ms = new MemoryStream();
             using var w = new BinaryWriter(ms);
-            w.Write((byte)Type); w.Write(GuildId ?? ""); w.Write(PlayerKey ?? "");
+            w.Write(GuildId ?? ""); w.Write(PlayerKey ?? "");
             return ms.ToArray();
         }
 
-        internal static GuildEvent Decode(byte[] data)
+        internal static GuildEvent Decode(GuildEvt type, byte[] data)
         {
             using var ms = new MemoryStream(data);
             using var r = new BinaryReader(ms);
-            return new GuildEvent { Type = (GuildEventType)r.ReadByte(), GuildId = r.ReadString(), PlayerKey = r.ReadString() };
+            return new GuildEvent { Type = type, GuildId = r.ReadString(), PlayerKey = r.ReadString() };
         }
-    }
-
-    internal static class GuildRegistry
-    {
-        private static int _counter;
-        private static readonly ConcurrentDictionary<int, TaskCompletionSource<GuildReply>> Pending
-            = new ConcurrentDictionary<int, TaskCompletionSource<GuildReply>>();
-        private static readonly ConcurrentDictionary<GuildClient, byte> Clients = new ConcurrentDictionary<GuildClient, byte>();
-
-        public static int NextId() => Interlocked.Increment(ref _counter);
-        public static void Register(int id, TaskCompletionSource<GuildReply> tcs) => Pending[id] = tcs;
-        public static void Remove(int id) => Pending.TryRemove(id, out _);
-        public static void Complete(int id, GuildReply reply) { if (Pending.TryGetValue(id, out var tcs)) tcs.TrySetResult(reply); }
-        public static void RegisterClient(GuildClient c) => Clients[c] = 0;
-        public static void DispatchEvent(GuildEvent evt) { foreach (var c in Clients.Keys) c.OnEvent(evt); }
     }
 
     /// <summary>
     /// Client-side guild driver, attached by <see cref="GuildClientExtensions.UseGuilds"/>. Create or join a guild,
     /// manage members and roles, and use the shared guild bank (which is a guild-keyed inventory in the same
     /// <c>SetNet.Inventory</c> hub). Membership changes arrive via <see cref="MemberJoined"/>/<see cref="MemberLeft"/>/<see cref="Disbanded"/>.
+    /// Rides the unified protocol on the <see cref="Channels.Guilds"/> channel.
     /// </summary>
     public sealed class GuildClient
     {
         private readonly BaseClient _client;
+        private readonly List<IDisposable> _subscriptions = new List<IDisposable>();
 
         /// <summary>Raised when a member joins the guild you're in (arg: their player key).</summary>
         public event Action<string>? MemberJoined;
@@ -254,71 +227,63 @@ namespace SetNet.Guilds
         internal GuildClient(BaseClient client)
         {
             _client = client ?? throw new ArgumentNullException(nameof(client));
-            GuildRegistry.RegisterClient(this);
+            _subscriptions.Add(_client.OnRaw(Channels.Guilds, (ushort)GuildEvt.MemberJoined, b => OnEvent(GuildEvt.MemberJoined, b)));
+            _subscriptions.Add(_client.OnRaw(Channels.Guilds, (ushort)GuildEvt.MemberLeft, b => OnEvent(GuildEvt.MemberLeft, b)));
+            _subscriptions.Add(_client.OnRaw(Channels.Guilds, (ushort)GuildEvt.Disbanded, b => OnEvent(GuildEvt.Disbanded, b)));
         }
 
         /// <summary>Creates a guild and becomes its leader; returns the new guild id.</summary>
         public async Task<string> CreateAsync(string name)
         {
-            var reply = await Send(new GuildCommand { Op = GuildOp.Create, Name = name }).ConfigureAwait(false);
+            var reply = await Send(GuildOp.Create, new GuildCommand { Name = name }).ConfigureAwait(false);
             return reply.GuildId;
         }
 
         /// <summary>Joins an existing guild by id.</summary>
-        public Task JoinAsync(string guildId) => Send(new GuildCommand { Op = GuildOp.Join, GuildId = guildId });
+        public Task JoinAsync(string guildId) => Send(GuildOp.Join, new GuildCommand { GuildId = guildId });
 
         /// <summary>Leaves your current guild (leader leaving transfers leadership or disbands the last member's guild).</summary>
-        public Task LeaveAsync() => Send(new GuildCommand { Op = GuildOp.Leave });
+        public Task LeaveAsync() => Send(GuildOp.Leave, new GuildCommand());
 
         /// <summary>Sets a member's role (leader only; setting Leader transfers leadership).</summary>
-        public Task PromoteAsync(string memberKey, GuildRole role) => Send(new GuildCommand { Op = GuildOp.Promote, TargetKey = memberKey, Role = role });
+        public Task PromoteAsync(string memberKey, GuildRole role) => Send(GuildOp.Promote, new GuildCommand { TargetKey = memberKey, Role = role });
 
         /// <summary>Kicks a lower-ranked member (officer/leader only).</summary>
-        public Task KickAsync(string memberKey) => Send(new GuildCommand { Op = GuildOp.Kick, TargetKey = memberKey });
+        public Task KickAsync(string memberKey) => Send(GuildOp.Kick, new GuildCommand { TargetKey = memberKey });
 
         /// <summary>Lists the guild's members and roles.</summary>
         public async Task<IReadOnlyList<GuildMember>> ListMembersAsync()
-            => (await Send(new GuildCommand { Op = GuildOp.ListMembers }).ConfigureAwait(false)).Members;
+            => (await Send(GuildOp.ListMembers, new GuildCommand()).ConfigureAwait(false)).Members;
 
         /// <summary>Deposits items from your inventory into the guild bank.</summary>
-        public Task BankDepositAsync(string itemId, long count) => Send(new GuildCommand { Op = GuildOp.BankDeposit, ItemId = itemId, Count = count });
+        public Task BankDepositAsync(string itemId, long count) => Send(GuildOp.BankDeposit, new GuildCommand { ItemId = itemId, Count = count });
 
         /// <summary>Withdraws items from the guild bank into your inventory (officer/leader only).</summary>
-        public Task BankWithdrawAsync(string itemId, long count) => Send(new GuildCommand { Op = GuildOp.BankWithdraw, ItemId = itemId, Count = count });
+        public Task BankWithdrawAsync(string itemId, long count) => Send(GuildOp.BankWithdraw, new GuildCommand { ItemId = itemId, Count = count });
 
         /// <summary>Lists the guild bank's contents.</summary>
         public async Task<IReadOnlyList<ItemStack>> BankListAsync()
-            => (await Send(new GuildCommand { Op = GuildOp.BankList }).ConfigureAwait(false)).Bank;
+            => (await Send(GuildOp.BankList, new GuildCommand()).ConfigureAwait(false)).Bank;
 
-        private async Task<GuildReply> Send(GuildCommand cmd)
+        private async Task<GuildReply> Send(GuildOp op, GuildCommand cmd)
         {
-            var id = GuildRegistry.NextId();
-            cmd.CorrelationId = id;
-            var tcs = new TaskCompletionSource<GuildReply>(TaskCreationOptions.RunContinuationsAsynchronously);
-            GuildRegistry.Register(id, tcs);
             try
             {
-                await _client.SendAsync(GuildTypes.Command, cmd.Encode(), DeliveryMethod.Reliable).ConfigureAwait(false);
-                using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
-                using (timeout.Token.Register(() => tcs.TrySetCanceled()))
-                {
-                    GuildReply reply;
-                    try { reply = await tcs.Task.ConfigureAwait(false); }
-                    catch (OperationCanceledException) { throw new GuildException("Guild command timed out."); }
-                    if (!reply.Success) throw new GuildException(reply.Error);
-                    return reply;
-                }
+                var body = await _client.RequestRawAsync(Channels.Guilds, (ushort)op, cmd.Encode()).ConfigureAwait(false);
+                return GuildReply.Decode(body);
             }
-            finally { GuildRegistry.Remove(id); }
+            catch (ProtocolException ex) { throw new GuildException(ex.Message); }
+            catch (TimeoutException) { throw new GuildException("Guild command timed out."); }
         }
 
-        internal void OnEvent(GuildEvent evt)
+        private void OnEvent(GuildEvt type, byte[] body)
         {
-            switch (evt.Type)
+            var evt = GuildEvent.Decode(type, body);
+            switch (type)
             {
-                case GuildEventType.MemberJoined: MemberJoined?.Invoke(evt.PlayerKey); break;
-                case GuildEventType.MemberLeft: MemberLeft?.Invoke(evt.PlayerKey); break;
-                case GuildEventType.Disbanded: Disbanded?.Invoke(); break;
+                case GuildEvt.MemberJoined: MemberJoined?.Invoke(evt.PlayerKey); break;
+                case GuildEvt.MemberLeft: MemberLeft?.Invoke(evt.PlayerKey); break;
+                case GuildEvt.Disbanded: Disbanded?.Invoke(); break;
             }
         }
     }
@@ -343,117 +308,115 @@ namespace SetNet.Guilds
 
         internal static GuildServer? For(BaseServer? server) => server != null && Servers.TryGetValue(server, out var s) ? s : null;
 
-        internal async Task OnCommand(BasePeer peer, GuildCommand cmd)
+        internal Task HandleAsync(ChannelRequest request)
         {
-            var me = _inventory.KeyOf(peer);
-            try
+            var me = _inventory.KeyOf(request.Peer);
+            var cmd = GuildCommand.Decode(request.RawBody);
+            switch ((GuildOp)request.Op)
             {
-                switch (cmd.Op)
-                {
-                    case GuildOp.Create: await Create(peer, me, cmd); break;
-                    case GuildOp.Join: await Join(peer, me, cmd); break;
-                    case GuildOp.Leave: await Leave(peer, me, cmd); break;
-                    case GuildOp.Promote: await Promote(peer, me, cmd); break;
-                    case GuildOp.Kick: await Kick(peer, me, cmd); break;
-                    case GuildOp.ListMembers: await ListMembers(peer, me, cmd); break;
-                    case GuildOp.BankDeposit: await Bank(peer, me, cmd, withdraw: false); break;
-                    case GuildOp.BankWithdraw: await Bank(peer, me, cmd, withdraw: true); break;
-                    case GuildOp.BankList: await BankList(peer, me, cmd); break;
-                }
+                case GuildOp.Create: return Create(request, me, cmd);
+                case GuildOp.Join: return Join(request, me, cmd);
+                case GuildOp.Leave: return Leave(request, me, cmd);
+                case GuildOp.Promote: return Promote(request, me, cmd);
+                case GuildOp.Kick: return Kick(request, me, cmd);
+                case GuildOp.ListMembers: return ListMembers(request, me, cmd);
+                case GuildOp.BankDeposit: return Bank(request, me, cmd, withdraw: false);
+                case GuildOp.BankWithdraw: return Bank(request, me, cmd, withdraw: true);
+                case GuildOp.BankList: return BankList(request, me, cmd);
+                default: return Task.CompletedTask;
             }
-            catch (Exception ex) { await Reply(peer, cmd.CorrelationId, false, ex.Message, ""); }
         }
 
-        private async Task Create(BasePeer peer, string me, GuildCommand cmd)
+        private async Task Create(ChannelRequest request, string me, GuildCommand cmd)
         {
-            if (await _store.GetByMemberAsync(me).ConfigureAwait(false) != null) { await Reply(peer, cmd.CorrelationId, false, "Already in a guild.", ""); return; }
-            if (string.IsNullOrWhiteSpace(cmd.Name)) { await Reply(peer, cmd.CorrelationId, false, "Guild name required.", ""); return; }
+            if (await _store.GetByMemberAsync(me).ConfigureAwait(false) != null) throw new ProtocolException("Already in a guild.");
+            if (string.IsNullOrWhiteSpace(cmd.Name)) throw new ProtocolException("Guild name required.");
             var id = await _store.ReserveIdAsync().ConfigureAwait(false);
             var guild = new Guild { Id = id, Name = cmd.Name.Trim() };
             guild.Members[me] = GuildRole.Leader;
             await _store.UpsertAsync(guild).ConfigureAwait(false);
-            await Reply(peer, cmd.CorrelationId, true, "", id);
+            await request.ReplyRawAsync(new GuildReply { GuildId = id }.Encode()).ConfigureAwait(false);
         }
 
-        private async Task Join(BasePeer peer, string me, GuildCommand cmd)
+        private async Task Join(ChannelRequest request, string me, GuildCommand cmd)
         {
-            if (await _store.GetByMemberAsync(me).ConfigureAwait(false) != null) { await Reply(peer, cmd.CorrelationId, false, "Already in a guild.", ""); return; }
+            if (await _store.GetByMemberAsync(me).ConfigureAwait(false) != null) throw new ProtocolException("Already in a guild.");
             var guild = await _store.GetAsync(cmd.GuildId).ConfigureAwait(false);
-            if (guild == null) { await Reply(peer, cmd.CorrelationId, false, "No such guild.", ""); return; }
+            if (guild == null) throw new ProtocolException("No such guild.");
             lock (guild) guild.Members[me] = GuildRole.Member;
             await _store.UpsertAsync(guild).ConfigureAwait(false);
-            await Reply(peer, cmd.CorrelationId, true, "", guild.Id);
-            await NotifyMembers(guild, new GuildEvent { Type = GuildEventType.MemberJoined, GuildId = guild.Id, PlayerKey = me }, except: null).ConfigureAwait(false);
+            await request.ReplyRawAsync(new GuildReply { GuildId = guild.Id }.Encode()).ConfigureAwait(false);
+            await NotifyMembers(guild, new GuildEvent { Type = GuildEvt.MemberJoined, GuildId = guild.Id, PlayerKey = me }, except: null).ConfigureAwait(false);
         }
 
-        private async Task Leave(BasePeer peer, string me, GuildCommand cmd)
+        private async Task Leave(ChannelRequest request, string me, GuildCommand cmd)
         {
             var guild = await _store.GetByMemberAsync(me).ConfigureAwait(false);
-            if (guild == null) { await Reply(peer, cmd.CorrelationId, false, "Not in a guild.", ""); return; }
+            if (guild == null) throw new ProtocolException("Not in a guild.");
             await RemoveMember(guild, me).ConfigureAwait(false);
-            await Reply(peer, cmd.CorrelationId, true, "", guild.Id);
+            await request.ReplyRawAsync(new GuildReply { GuildId = guild.Id }.Encode()).ConfigureAwait(false);
         }
 
-        private async Task Promote(BasePeer peer, string me, GuildCommand cmd)
+        private async Task Promote(ChannelRequest request, string me, GuildCommand cmd)
         {
             var guild = await _store.GetByMemberAsync(me).ConfigureAwait(false);
-            if (guild == null) { await Reply(peer, cmd.CorrelationId, false, "Not in a guild.", ""); return; }
+            if (guild == null) throw new ProtocolException("Not in a guild.");
             lock (guild)
             {
-                if (!guild.Members.TryGetValue(me, out var myRole) || myRole != GuildRole.Leader) throw new GuildException("Only the leader can change roles.");
-                if (!guild.Members.ContainsKey(cmd.TargetKey ?? "")) throw new GuildException("Target is not a member.");
+                if (!guild.Members.TryGetValue(me, out var myRole) || myRole != GuildRole.Leader) throw new ProtocolException("Only the leader can change roles.");
+                if (!guild.Members.ContainsKey(cmd.TargetKey ?? "")) throw new ProtocolException("Target is not a member.");
                 if (cmd.Role == GuildRole.Leader) { guild.Members[cmd.TargetKey!] = GuildRole.Leader; guild.Members[me] = GuildRole.Officer; }   // transfer
                 else guild.Members[cmd.TargetKey!] = cmd.Role;
             }
             await _store.UpsertAsync(guild).ConfigureAwait(false);
-            await Reply(peer, cmd.CorrelationId, true, "", guild.Id);
+            await request.ReplyRawAsync(new GuildReply { GuildId = guild.Id }.Encode()).ConfigureAwait(false);
         }
 
-        private async Task Kick(BasePeer peer, string me, GuildCommand cmd)
+        private async Task Kick(ChannelRequest request, string me, GuildCommand cmd)
         {
             var guild = await _store.GetByMemberAsync(me).ConfigureAwait(false);
-            if (guild == null) { await Reply(peer, cmd.CorrelationId, false, "Not in a guild.", ""); return; }
+            if (guild == null) throw new ProtocolException("Not in a guild.");
             lock (guild)
             {
-                if (!guild.Members.TryGetValue(me, out var myRole) || myRole < GuildRole.Officer) throw new GuildException("Only officers and the leader can kick.");
-                if (!guild.Members.TryGetValue(cmd.TargetKey ?? "", out var targetRole)) throw new GuildException("Target is not a member.");
-                if (targetRole >= myRole) throw new GuildException("Cannot kick an equal or higher rank.");
+                if (!guild.Members.TryGetValue(me, out var myRole) || myRole < GuildRole.Officer) throw new ProtocolException("Only officers and the leader can kick.");
+                if (!guild.Members.TryGetValue(cmd.TargetKey ?? "", out var targetRole)) throw new ProtocolException("Target is not a member.");
+                if (targetRole >= myRole) throw new ProtocolException("Cannot kick an equal or higher rank.");
             }
             await RemoveMember(guild, cmd.TargetKey!).ConfigureAwait(false);
-            await Reply(peer, cmd.CorrelationId, true, "", guild.Id);
+            await request.ReplyRawAsync(new GuildReply { GuildId = guild.Id }.Encode()).ConfigureAwait(false);
         }
 
-        private async Task ListMembers(BasePeer peer, string me, GuildCommand cmd)
+        private async Task ListMembers(ChannelRequest request, string me, GuildCommand cmd)
         {
             var guild = await _store.GetByMemberAsync(me).ConfigureAwait(false);
-            if (guild == null) { await Reply(peer, cmd.CorrelationId, false, "Not in a guild.", ""); return; }
+            if (guild == null) throw new ProtocolException("Not in a guild.");
             List<GuildMember> members;
             lock (guild) members = guild.Members.Select(kv => new GuildMember(kv.Key, kv.Value)).ToList();
-            await Reply(peer, cmd.CorrelationId, true, "", guild.Id, members).ConfigureAwait(false);
+            await request.ReplyRawAsync(new GuildReply { GuildId = guild.Id, Members = members }.Encode()).ConfigureAwait(false);
         }
 
-        private async Task Bank(BasePeer peer, string me, GuildCommand cmd, bool withdraw)
+        private async Task Bank(ChannelRequest request, string me, GuildCommand cmd, bool withdraw)
         {
             var guild = await _store.GetByMemberAsync(me).ConfigureAwait(false);
-            if (guild == null) { await Reply(peer, cmd.CorrelationId, false, "Not in a guild.", ""); return; }
-            if (string.IsNullOrEmpty(cmd.ItemId) || cmd.Count <= 0) { await Reply(peer, cmd.CorrelationId, false, "Invalid item or count.", ""); return; }
+            if (guild == null) throw new ProtocolException("Not in a guild.");
+            if (string.IsNullOrEmpty(cmd.ItemId) || cmd.Count <= 0) throw new ProtocolException("Invalid item or count.");
 
             GuildRole role; lock (guild) guild.Members.TryGetValue(me, out role);
-            if (withdraw && role < GuildRole.Officer) { await Reply(peer, cmd.CorrelationId, false, "Only officers and the leader can withdraw.", ""); return; }
+            if (withdraw && role < GuildRole.Officer) throw new ProtocolException("Only officers and the leader can withdraw.");
 
             var (fromKey, toKey) = withdraw ? (guild.BankKey, me) : (me, guild.BankKey);
             if (!await _inventory.TryRevokeAsync(fromKey, cmd.ItemId, cmd.Count).ConfigureAwait(false))
-            { await Reply(peer, cmd.CorrelationId, false, withdraw ? "Guild bank lacks that item." : "You lack that item.", ""); return; }
+                throw new ProtocolException(withdraw ? "Guild bank lacks that item." : "You lack that item.");
             await _inventory.GrantAsync(toKey, cmd.ItemId, cmd.Count).ConfigureAwait(false);
-            await Reply(peer, cmd.CorrelationId, true, "", guild.Id);
+            await request.ReplyRawAsync(new GuildReply { GuildId = guild.Id }.Encode()).ConfigureAwait(false);
         }
 
-        private async Task BankList(BasePeer peer, string me, GuildCommand cmd)
+        private async Task BankList(ChannelRequest request, string me, GuildCommand cmd)
         {
             var guild = await _store.GetByMemberAsync(me).ConfigureAwait(false);
-            if (guild == null) { await Reply(peer, cmd.CorrelationId, false, "Not in a guild.", ""); return; }
+            if (guild == null) throw new ProtocolException("Not in a guild.");
             var bank = new List<ItemStack>(await _inventory.GetAsync(guild.BankKey).ConfigureAwait(false));
-            await Reply(peer, cmd.CorrelationId, true, "", guild.Id, bank: bank).ConfigureAwait(false);
+            await request.ReplyRawAsync(new GuildReply { GuildId = guild.Id, Bank = bank }.Encode()).ConfigureAwait(false);
         }
 
         /// <summary>Removes a member; promotes a successor if the leader left, or disbands (returning the bank) on the last member.</summary>
@@ -480,13 +443,13 @@ namespace SetNet.Guilds
                     if (await _inventory.TryRevokeAsync(guild.BankKey, stack.ItemId, stack.Count).ConfigureAwait(false))
                         await _inventory.GrantAsync(memberKey, stack.ItemId, stack.Count).ConfigureAwait(false);
                 await _store.RemoveAsync(guild.Id).ConfigureAwait(false);
-                await NotifyMember(memberKey, new GuildEvent { Type = GuildEventType.Disbanded, GuildId = guild.Id }).ConfigureAwait(false);
+                await NotifyMember(memberKey, new GuildEvent { Type = GuildEvt.Disbanded, GuildId = guild.Id }).ConfigureAwait(false);
                 return;
             }
 
             await _store.UpsertAsync(guild).ConfigureAwait(false);
-            await NotifyMembers(guild, new GuildEvent { Type = GuildEventType.MemberLeft, GuildId = guild.Id, PlayerKey = memberKey }, except: null).ConfigureAwait(false);
-            await NotifyMember(memberKey, new GuildEvent { Type = GuildEventType.MemberLeft, GuildId = guild.Id, PlayerKey = memberKey }).ConfigureAwait(false);   // tell the leaver too
+            await NotifyMembers(guild, new GuildEvent { Type = GuildEvt.MemberLeft, GuildId = guild.Id, PlayerKey = memberKey }, except: null).ConfigureAwait(false);
+            await NotifyMember(memberKey, new GuildEvent { Type = GuildEvt.MemberLeft, GuildId = guild.Id, PlayerKey = memberKey }).ConfigureAwait(false);   // tell the leaver too
         }
 
         private async Task NotifyMembers(Guild guild, GuildEvent evt, string? except)
@@ -499,43 +462,26 @@ namespace SetNet.Guilds
         {
             var peer = _inventory.PeerFor(playerKey);
             if (peer == null) return Task.CompletedTask;
-            try { return peer.SendAsync(GuildTypes.Event, evt.Encode(), DeliveryMethod.Reliable); } catch { return Task.CompletedTask; }
+            try { return peer.PublishRawAsync(Channels.Guilds, (ushort)evt.Type, evt.Encode()); } catch { return Task.CompletedTask; }
         }
+    }
 
-        private static Task Reply(BasePeer peer, int corr, bool ok, string error, string guildId, List<GuildMember>? members = null, List<ItemStack>? bank = null)
+    // ---- auto-discovered channel service ----
+
+    /// <summary>Auto-discovered channel service for guild commands.</summary>
+    [ProtocolChannel(Channels.Guilds)]
+    public sealed class GuildChannelService : IChannelService
+    {
+        /// <inheritdoc/>
+        public Task HandleAsync(ChannelRequest request)
         {
-            var reply = new GuildReply { CorrelationId = corr, Success = ok, Error = error, GuildId = guildId, Members = members ?? new List<GuildMember>(), Bank = bank ?? new List<ItemStack>() };
-            try { return peer.SendAsync(GuildTypes.Reply, reply.Encode(), DeliveryMethod.Reliable); } catch { return Task.CompletedTask; }
+            var hub = GuildServer.For(request.Peer.CurrentPeerInfo.Server);
+            if (hub == null) throw new ProtocolException("guilds is not configured on this server");
+            return hub.HandleAsync(request);
         }
     }
 
-    /// <summary>Auto-discovered server handler for guild commands.</summary>
-    [MessageHandler(GuildTypes.Command)]
-    public sealed class GuildCommandHandler : IServerMessageHandler<byte[]>
-    {
-        /// <inheritdoc/>
-        public Task HandleAsync(BasePeer peer, byte[] data)
-        {
-            var hub = GuildServer.For(peer.CurrentPeerInfo.Server);
-            return hub?.OnCommand(peer, GuildCommand.Decode(data)) ?? Task.CompletedTask;
-        }
-    }
-
-    /// <summary>Auto-discovered client handler for correlated guild replies.</summary>
-    [MessageHandler(GuildTypes.Reply)]
-    public sealed class GuildReplyHandler : IClientMessageHandler<byte[]>
-    {
-        /// <inheritdoc/>
-        public Task HandleAsync(byte[] data) { var r = GuildReply.Decode(data); GuildRegistry.Complete(r.CorrelationId, r); return Task.CompletedTask; }
-    }
-
-    /// <summary>Auto-discovered client handler for guild push events.</summary>
-    [MessageHandler(GuildTypes.Event)]
-    public sealed class GuildEventHandler : IClientMessageHandler<byte[]>
-    {
-        /// <inheritdoc/>
-        public Task HandleAsync(byte[] data) { GuildRegistry.DispatchEvent(GuildEvent.Decode(data)); return Task.CompletedTask; }
-    }
+    // ---- composition entry points ----
 
     /// <summary>Attaches the guild hub to a server by composition.</summary>
     public static class GuildServerExtensions
@@ -556,10 +502,10 @@ namespace SetNet.Guilds
         public static GuildClient UseGuilds(this BaseClient client) => new GuildClient(client);
     }
 
-    /// <summary>One-time bootstrap so the guild handlers are discovered. Call at startup.</summary>
+    /// <summary>One-time bootstrap so the guild channel service is discovered. Call at startup.</summary>
     public static class GuildRuntime
     {
         /// <summary>Ensures the guild layer is discoverable.</summary>
-        public static void Enable() { _ = GuildTypes.Command; }
+        public static void Enable() { _ = typeof(GuildChannelService); }
     }
 }

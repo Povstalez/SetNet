@@ -71,7 +71,7 @@ zones.TransferRequested += async transfer =>
 
 ## Notes
 
-- **Reserved wire types 65478 / 65479 / 65480.** Don't reuse them.
+- Rides the unified **SetNet.Protocol** messaging layer on the `Channels.Zones` channel (all modules share one envelope wire type, `65447`) — no per-module wire ids to reserve. Serializer-agnostic: the control protocol is hand-framed `byte[]`, your payloads use your `SetNetSerializer`.
 - **The store must be shared for real cross-node handoff.** The default `MemoryHandoffStore` only works when origin and destination are the same process (co-located nodes / tests). For separate processes, back `IHandoffStore` with Redis/DB so the destination can read the stashed state.
 - **Where's the destination node?** `SetNet.Zones` carries state; it doesn't decide *which* node owns a zone. Pair it with [`SetNet.Sharding`](https://www.nuget.org/packages/SetNet.Sharding) (`ring.GetNode(zoneId)`) or your own zone→node map to fill in `ZoneTarget.Host/Port`.
 - **One-time, expiring tokens.** A token is consumed on the first successful claim and swept after `HandoffTtl`. Carry only what the destination needs to reconstruct the player; keep durable data (inventory, progression) in shared stores like [`SetNet.Inventory`](https://www.nuget.org/packages/SetNet.Inventory).

@@ -71,7 +71,7 @@ A divergence (desync) means one client computed a different world — usually fa
 - The server holds a turn number `T`. Clients submit an input tagged for their current turn.
 - A turn finalizes when **all participants** have submitted for it (fast path) **or** after `TurnTimeoutMs` (safety net). The finalized input set is broadcast; `T` advances.
 - Clients run a turn or two behind real time (the input delay), which is the standard lockstep trade-off for perfect consistency.
-- Reserved wire types `65514 / 65515`.
+- Rides the unified **SetNet.Protocol** messaging layer on the `Channels.Lockstep` channel (all modules share one envelope wire type, `65447`) — no per-module wire ids to reserve. Serializer-agnostic: the control protocol is hand-framed `byte[]`, your payloads use your `SetNetSerializer`.
 
 ## Notes
 

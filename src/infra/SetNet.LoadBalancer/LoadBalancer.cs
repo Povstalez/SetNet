@@ -2,24 +2,14 @@ using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
-using System.Threading;
 using System.Threading.Tasks;
 using SetNet.Core;
-using SetNet.Core.Transport;
-using SetNet.Data;
-using SetNet.Data.Attributes;
+using SetNet.Protocol;
 
 namespace SetNet.LoadBalancer
 {
-    /// <summary>Reserved wire types for the load-balancer service. Don't reuse these ids for application messages.</summary>
-    public static class LoadBalancerTypes
-    {
-        /// <summary>Client → server: pick-a-node command.</summary>
-        public const ushort Command = ushort.MaxValue - 80;   // 65455
-
-        /// <summary>Server → client: correlated reply (the chosen node).</summary>
-        public const ushort Reply = ushort.MaxValue - 81;     // 65454
-    }
+    /// <summary>Command operations (client → server) within the LoadBalancer protocol channel.</summary>
+    internal enum LoadBalancerOp : ushort { Pick = 1 }
 
     /// <summary>Thrown when node selection fails (no capacity, timeout).</summary>
     public sealed class LoadBalancerException : Exception
@@ -64,43 +54,27 @@ namespace SetNet.LoadBalancer
 
     internal static class LbCodec
     {
-        public static byte[] EncodeReply(int corr, bool ok, string error, LbNode? node)
+        public static byte[] EncodeNode(LbNode node)
         {
             using var ms = new MemoryStream();
             using var w = new BinaryWriter(ms);
-            w.Write(corr); w.Write(ok); w.Write(error ?? "");
-            w.Write(node != null);
-            if (node != null) { w.Write(node.NodeId ?? ""); w.Write(node.Host ?? ""); w.Write(node.Port); w.Write(node.Load); w.Write(node.Capacity); }
+            w.Write(node.NodeId ?? ""); w.Write(node.Host ?? ""); w.Write(node.Port); w.Write(node.Load); w.Write(node.Capacity);
             return ms.ToArray();
         }
 
-        public static (int Corr, bool Ok, string Error, LbNode? Node) DecodeReply(byte[] data)
+        public static LbNode DecodeNode(byte[] data)
         {
             using var ms = new MemoryStream(data);
             using var r = new BinaryReader(ms);
-            var corr = r.ReadInt32(); var ok = r.ReadBoolean(); var err = r.ReadString();
-            LbNode? node = null;
-            if (r.ReadBoolean()) node = new LbNode(r.ReadString(), r.ReadString(), r.ReadInt32(), r.ReadInt32(), r.ReadInt32());
-            return (corr, ok, err, node);
+            return new LbNode(r.ReadString(), r.ReadString(), r.ReadInt32(), r.ReadInt32(), r.ReadInt32());
         }
-    }
-
-    internal static class LbRegistry
-    {
-        private static int _counter;
-        private static readonly ConcurrentDictionary<int, TaskCompletionSource<(bool Ok, string Error, LbNode? Node)>> Pending
-            = new ConcurrentDictionary<int, TaskCompletionSource<(bool, string, LbNode?)>>();
-
-        public static int NextId() => Interlocked.Increment(ref _counter);
-        public static void Register(int id, TaskCompletionSource<(bool, string, LbNode?)> tcs) => Pending[id] = tcs;
-        public static void Remove(int id) => Pending.TryRemove(id, out _);
-        public static void Complete(int id, (bool, string, LbNode?) r) { if (Pending.TryGetValue(id, out var tcs)) tcs.TrySetResult(r); }
     }
 
     /// <summary>
     /// Client-side load-balancer driver, attached by <see cref="LoadBalancerClientExtensions.UseLoadBalancer"/>. Ask
     /// a well-known entry node for the least-loaded game node, then connect there. Pairs with <c>SetNet.Sharding</c>
-    /// (which routes by key) when placement is capacity-driven rather than key-driven.
+    /// (which routes by key) when placement is capacity-driven rather than key-driven. Rides the unified protocol on
+    /// the <see cref="Channels.LoadBalancer"/> channel.
     /// </summary>
     public sealed class LoadBalancerClient
     {
@@ -111,25 +85,13 @@ namespace SetNet.LoadBalancer
         /// <summary>Returns the least-loaded node with spare capacity; throws <see cref="LoadBalancerException"/> if all are full.</summary>
         public async Task<LbNode> PickAsync()
         {
-            var id = LbRegistry.NextId();
-            var tcs = new TaskCompletionSource<(bool, string, LbNode?)>(TaskCreationOptions.RunContinuationsAsynchronously);
-            LbRegistry.Register(id, tcs);
             try
             {
-                using var ms = new MemoryStream();
-                using (var w = new BinaryWriter(ms)) w.Write(id);
-                await _client.SendAsync(LoadBalancerTypes.Command, ms.ToArray(), DeliveryMethod.Reliable).ConfigureAwait(false);
-                using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
-                using (timeout.Token.Register(() => tcs.TrySetCanceled()))
-                {
-                    (bool Ok, string Error, LbNode? Node) result;
-                    try { result = await tcs.Task.ConfigureAwait(false); }
-                    catch (OperationCanceledException) { throw new LoadBalancerException("Node selection timed out."); }
-                    if (!result.Ok || result.Node == null) throw new LoadBalancerException(result.Error.Length > 0 ? result.Error : "No node available.");
-                    return result.Node;
-                }
+                var body = await _client.RequestRawAsync(Channels.LoadBalancer, (ushort)LoadBalancerOp.Pick, Array.Empty<byte>()).ConfigureAwait(false);
+                return LbCodec.DecodeNode(body);
             }
-            finally { LbRegistry.Remove(id); }
+            catch (ProtocolException ex) { throw new LoadBalancerException(ex.Message); }
+            catch (TimeoutException) { throw new LoadBalancerException("Node selection timed out."); }
         }
     }
 
@@ -181,37 +143,25 @@ namespace SetNet.LoadBalancer
             return best;
         }
 
-        internal Task OnQuery(BasePeer peer, int correlationId)
+        internal Task HandleAsync(ChannelRequest request)
         {
             var node = Pick();
-            var reply = node != null
-                ? LbCodec.EncodeReply(correlationId, true, "", node)
-                : LbCodec.EncodeReply(correlationId, false, "All nodes are full.", null);
-            try { return peer.SendAsync(LoadBalancerTypes.Reply, reply, DeliveryMethod.Reliable); } catch { return Task.CompletedTask; }
+            if (node == null) throw new ProtocolException("All nodes are full.");
+            return request.ReplyRawAsync(LbCodec.EncodeNode(node));
         }
     }
 
-    /// <summary>Auto-discovered server handler for node-selection queries.</summary>
-    [MessageHandler(LoadBalancerTypes.Command)]
-    public sealed class LoadBalancerCommandHandler : IServerMessageHandler<byte[]>
+    /// <summary>Auto-discovered channel service for node-selection queries.</summary>
+    [ProtocolChannel(Channels.LoadBalancer)]
+    public sealed class LoadBalancerChannelService : IChannelService
     {
         /// <inheritdoc/>
-        public Task HandleAsync(BasePeer peer, byte[] data)
+        public Task HandleAsync(ChannelRequest request)
         {
-            var hub = LoadBalancerServer.For(peer.CurrentPeerInfo.Server);
-            if (hub == null) return Task.CompletedTask;
-            using var ms = new MemoryStream(data);
-            using var r = new BinaryReader(ms);
-            return hub.OnQuery(peer, r.ReadInt32());
+            var hub = LoadBalancerServer.For(request.Peer.CurrentPeerInfo.Server);
+            if (hub == null) throw new ProtocolException("load balancer is not configured on this server");
+            return hub.HandleAsync(request);
         }
-    }
-
-    /// <summary>Auto-discovered client handler for correlated node-selection replies.</summary>
-    [MessageHandler(LoadBalancerTypes.Reply)]
-    public sealed class LoadBalancerReplyHandler : IClientMessageHandler<byte[]>
-    {
-        /// <inheritdoc/>
-        public Task HandleAsync(byte[] data) { var (corr, ok, err, node) = LbCodec.DecodeReply(data); LbRegistry.Complete(corr, (ok, err, node)); return Task.CompletedTask; }
     }
 
     /// <summary>Attaches the load-balancer directory to a server by composition.</summary>
@@ -232,10 +182,10 @@ namespace SetNet.LoadBalancer
         public static LoadBalancerClient UseLoadBalancer(this BaseClient client) => new LoadBalancerClient(client);
     }
 
-    /// <summary>One-time bootstrap so the load-balancer handlers are discovered. Call at startup.</summary>
+    /// <summary>One-time bootstrap so the load-balancer channel service is discovered. Call at startup.</summary>
     public static class LoadBalancerRuntime
     {
         /// <summary>Ensures the load-balancer layer is discoverable.</summary>
-        public static void Enable() { _ = LoadBalancerTypes.Command; }
+        public static void Enable() { _ = typeof(LoadBalancerChannelService); }
     }
 }

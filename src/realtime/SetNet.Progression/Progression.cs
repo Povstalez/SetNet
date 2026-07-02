@@ -1,27 +1,18 @@
 using System;
 using System.Collections.Concurrent;
+using System.Collections.Generic;
 using System.IO;
-using System.Threading;
 using System.Threading.Tasks;
 using SetNet.Core;
-using SetNet.Core.Transport;
-using SetNet.Data;
-using SetNet.Data.Attributes;
+using SetNet.Protocol;
 
 namespace SetNet.Progression
 {
-    /// <summary>Reserved wire types for the progression service. Don't reuse these ids for application messages.</summary>
-    public static class ProgressionTypes
-    {
-        /// <summary>Client → server: state query.</summary>
-        public const ushort Command = ushort.MaxValue - 74;   // 65461
+    /// <summary>Command operations (client → server) within the Progression protocol channel.</summary>
+    internal enum ProgressionOp : ushort { Query = 1 }
 
-        /// <summary>Server → client: correlated reply (a progression snapshot).</summary>
-        public const ushort Reply = ushort.MaxValue - 75;     // 65460
-
-        /// <summary>Server → client: push event when the peer's level/XP changes.</summary>
-        public const ushort Event = ushort.MaxValue - 76;     // 65459
-    }
+    /// <summary>Push events (server → client) within the Progression protocol channel.</summary>
+    internal enum ProgressionEvt : ushort { Changed = 10 }
 
     /// <summary>Thrown when a progression operation fails (query timeout).</summary>
     public sealed class ProgressionException : Exception
@@ -97,45 +88,32 @@ namespace SetNet.Progression
 
     internal static class ProgressionCodec
     {
-        public static byte[] EncodeState(int corr, ProgressionState s)
+        public static byte[] EncodeState(ProgressionState s)
         {
             using var ms = new MemoryStream();
             using var w = new BinaryWriter(ms);
-            w.Write(corr); w.Write(s.Level); w.Write(s.Xp); w.Write(s.XpToNext);
+            w.Write(s.Level); w.Write(s.Xp); w.Write(s.XpToNext);
             return ms.ToArray();
         }
 
-        public static (int Corr, ProgressionState State) DecodeState(byte[] data)
+        public static ProgressionState DecodeState(byte[] data)
         {
+            if (data == null || data.Length == 0) return new ProgressionState();
             using var ms = new MemoryStream(data);
             using var r = new BinaryReader(ms);
-            var corr = r.ReadInt32();
-            return (corr, new ProgressionState(r.ReadInt32(), r.ReadInt64(), r.ReadInt64()));
+            return new ProgressionState(r.ReadInt32(), r.ReadInt64(), r.ReadInt64());
         }
-    }
-
-    internal static class ProgressionRegistry
-    {
-        private static int _counter;
-        private static readonly ConcurrentDictionary<int, TaskCompletionSource<ProgressionState>> Pending
-            = new ConcurrentDictionary<int, TaskCompletionSource<ProgressionState>>();
-        private static readonly ConcurrentDictionary<ProgressionClient, byte> Clients = new ConcurrentDictionary<ProgressionClient, byte>();
-
-        public static int NextId() => Interlocked.Increment(ref _counter);
-        public static void Register(int id, TaskCompletionSource<ProgressionState> tcs) => Pending[id] = tcs;
-        public static void Remove(int id) => Pending.TryRemove(id, out _);
-        public static void Complete(int id, ProgressionState s) { if (Pending.TryGetValue(id, out var tcs)) tcs.TrySetResult(s); }
-        public static void RegisterClient(ProgressionClient c) => Clients[c] = 0;
-        public static void DispatchEvent(ProgressionState s) { foreach (var c in Clients.Keys) c.OnChanged(s); }
     }
 
     /// <summary>
     /// Client-side progression driver, attached by <see cref="ProgressionClientExtensions.UseProgression"/>. Read-only
-    /// (the server awards XP): fetch level/XP and subscribe to changes to drive an XP bar and level-up effects.
+    /// (the server awards XP): fetch level/XP and subscribe to changes to drive an XP bar and level-up effects. Rides
+    /// the unified protocol on the <see cref="Channels.Progression"/> channel.
     /// </summary>
     public sealed class ProgressionClient
     {
         private readonly BaseClient _client;
+        private readonly List<IDisposable> _subscriptions = new List<IDisposable>();
 
         /// <summary>Raised when the server pushes updated level/XP for this player.</summary>
         public event Action<ProgressionState>? Changed;
@@ -143,31 +121,21 @@ namespace SetNet.Progression
         internal ProgressionClient(BaseClient client)
         {
             _client = client ?? throw new ArgumentNullException(nameof(client));
-            ProgressionRegistry.RegisterClient(this);
+            _subscriptions.Add(_client.OnRaw(Channels.Progression, (ushort)ProgressionEvt.Changed,
+                body => Changed?.Invoke(ProgressionCodec.DecodeState(body))));
         }
 
         /// <summary>Fetches this player's current level and XP.</summary>
         public async Task<ProgressionState> GetAsync()
         {
-            var id = ProgressionRegistry.NextId();
-            var tcs = new TaskCompletionSource<ProgressionState>(TaskCreationOptions.RunContinuationsAsynchronously);
-            ProgressionRegistry.Register(id, tcs);
             try
             {
-                using var ms = new MemoryStream();
-                using (var w = new BinaryWriter(ms)) w.Write(id);
-                await _client.SendAsync(ProgressionTypes.Command, ms.ToArray(), DeliveryMethod.Reliable).ConfigureAwait(false);
-                using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
-                using (timeout.Token.Register(() => tcs.TrySetCanceled()))
-                {
-                    try { return await tcs.Task.ConfigureAwait(false); }
-                    catch (OperationCanceledException) { throw new ProgressionException("Progression query timed out."); }
-                }
+                var body = await _client.RequestRawAsync(Channels.Progression, (ushort)ProgressionOp.Query, Array.Empty<byte>()).ConfigureAwait(false);
+                return ProgressionCodec.DecodeState(body);
             }
-            finally { ProgressionRegistry.Remove(id); }
+            catch (ProtocolException ex) { throw new ProgressionException(ex.Message); }
+            catch (TimeoutException) { throw new ProgressionException("Progression query timed out."); }
         }
-
-        internal void OnChanged(ProgressionState s) => Changed?.Invoke(s);
     }
 
     /// <summary>
@@ -225,7 +193,7 @@ namespace SetNet.Progression
             var (level, xp) = await _store.GetAsync(playerKey).ConfigureAwait(false);
             xp += amount;
 
-            var gained = new System.Collections.Generic.List<int>();
+            var gained = new List<int>();
             while (level < _options.MaxLevel)
             {
                 var need = _options.XpForLevel(level);
@@ -249,7 +217,7 @@ namespace SetNet.Progression
         {
             if (!_online.TryGetValue(playerKey, out var peer)) return;
             state ??= await GetAsync(playerKey).ConfigureAwait(false);
-            try { await peer.SendAsync(ProgressionTypes.Event, ProgressionCodec.EncodeState(0, state), DeliveryMethod.Reliable).ConfigureAwait(false); } catch { }
+            try { await peer.PublishRawAsync(Channels.Progression, (ushort)ProgressionEvt.Changed, ProgressionCodec.EncodeState(state)).ConfigureAwait(false); } catch { }
         }
 
         private ProgressionState Snapshot(int level, long xp)
@@ -258,42 +226,24 @@ namespace SetNet.Progression
             return new ProgressionState(level, xp, need);
         }
 
-        internal async Task OnQuery(BasePeer peer, int correlationId)
+        internal async Task HandleAsync(ChannelRequest request)
         {
-            var state = await GetAsync(_options.PlayerKey(peer)).ConfigureAwait(false);
-            try { await peer.SendAsync(ProgressionTypes.Reply, ProgressionCodec.EncodeState(correlationId, state), DeliveryMethod.Reliable).ConfigureAwait(false); } catch { }
+            var state = await GetAsync(_options.PlayerKey(request.Peer)).ConfigureAwait(false);
+            await request.ReplyRawAsync(ProgressionCodec.EncodeState(state)).ConfigureAwait(false);
         }
     }
 
-    /// <summary>Auto-discovered server handler for progression queries.</summary>
-    [MessageHandler(ProgressionTypes.Command)]
-    public sealed class ProgressionCommandHandler : IServerMessageHandler<byte[]>
+    /// <summary>Auto-discovered channel service for progression queries.</summary>
+    [ProtocolChannel(Channels.Progression)]
+    public sealed class ProgressionChannelService : IChannelService
     {
         /// <inheritdoc/>
-        public Task HandleAsync(BasePeer peer, byte[] data)
+        public Task HandleAsync(ChannelRequest request)
         {
-            var hub = ProgressionServer.For(peer.CurrentPeerInfo.Server);
-            if (hub == null) return Task.CompletedTask;
-            using var ms = new MemoryStream(data);
-            using var r = new BinaryReader(ms);
-            return hub.OnQuery(peer, r.ReadInt32());
+            var hub = ProgressionServer.For(request.Peer.CurrentPeerInfo.Server);
+            if (hub == null) throw new ProtocolException("progression is not configured on this server");
+            return hub.HandleAsync(request);
         }
-    }
-
-    /// <summary>Auto-discovered client handler for correlated progression snapshots.</summary>
-    [MessageHandler(ProgressionTypes.Reply)]
-    public sealed class ProgressionReplyHandler : IClientMessageHandler<byte[]>
-    {
-        /// <inheritdoc/>
-        public Task HandleAsync(byte[] data) { var (corr, s) = ProgressionCodec.DecodeState(data); ProgressionRegistry.Complete(corr, s); return Task.CompletedTask; }
-    }
-
-    /// <summary>Auto-discovered client handler for pushed progression changes.</summary>
-    [MessageHandler(ProgressionTypes.Event)]
-    public sealed class ProgressionEventHandler : IClientMessageHandler<byte[]>
-    {
-        /// <inheritdoc/>
-        public Task HandleAsync(byte[] data) { var (_, s) = ProgressionCodec.DecodeState(data); ProgressionRegistry.DispatchEvent(s); return Task.CompletedTask; }
     }
 
     /// <summary>Attaches the progression hub to a server by composition.</summary>
@@ -314,10 +264,10 @@ namespace SetNet.Progression
         public static ProgressionClient UseProgression(this BaseClient client) => new ProgressionClient(client);
     }
 
-    /// <summary>One-time bootstrap so the progression handlers are discovered. Call at startup.</summary>
+    /// <summary>One-time bootstrap so the progression channel service is discovered. Call at startup.</summary>
     public static class ProgressionRuntime
     {
         /// <summary>Ensures the progression layer is discoverable.</summary>
-        public static void Enable() { _ = ProgressionTypes.Command; }
+        public static void Enable() { _ = typeof(ProgressionChannelService); }
     }
 }

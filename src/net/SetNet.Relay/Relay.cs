@@ -7,26 +7,35 @@ using System.Threading;
 using System.Threading.Tasks;
 using SetNet.Core;
 using SetNet.Core.Transport;
-using SetNet.Data;
-using SetNet.Data.Attributes;
+using SetNet.Protocol;
 
 namespace SetNet.Relay
 {
-    /// <summary>Reserved wire types for the relay. Don't reuse these ids for application messages.</summary>
-    public static class RelayTypes
+    /// <summary>Command operations (client → server) within the Relay protocol channel.</summary>
+    internal enum RelayOp : ushort
     {
-        /// <summary>Client → server: allocate/join/leave/data command.</summary>
-        public const ushort Command = ushort.MaxValue - 35;   // 65500
-
-        /// <summary>Server → client: correlated reply to an allocate/join/leave command.</summary>
-        public const ushort Reply = ushort.MaxValue - 36;     // 65499
-
-        /// <summary>Server → client: push event (peer joined/left, relayed data, session closed).</summary>
-        public const ushort Event = ushort.MaxValue - 37;     // 65498
+        /// <summary>Allocate a new relay session and join it.</summary>
+        Allocate = 1,
+        /// <summary>Join an existing relay session by code.</summary>
+        Join = 2,
+        /// <summary>Leave the current session.</summary>
+        Leave = 3,
+        /// <summary>Forward opaque bytes to other members (fire-and-forget).</summary>
+        Data = 4,
     }
 
-    internal enum RelayOp : byte { Allocate = 0, Join = 1, Leave = 2, Data = 3 }
-    internal enum RelayEventType : byte { PeerJoined = 0, PeerLeft = 1, Data = 2, Closed = 3 }
+    /// <summary>Push events (server → client) within the Relay protocol channel.</summary>
+    internal enum RelayEvt : ushort
+    {
+        /// <summary>Another peer joined the session.</summary>
+        PeerJoined = 10,
+        /// <summary>A peer left the session.</summary>
+        PeerLeft = 11,
+        /// <summary>Relayed opaque data from another member.</summary>
+        Data = 12,
+        /// <summary>The session closed.</summary>
+        Closed = 13,
+    }
 
     /// <summary>Thrown when a relay allocate/join fails (unknown code, full, timeout).</summary>
     public sealed class RelayException : Exception
@@ -37,146 +46,160 @@ namespace SetNet.Relay
 
     // ---- wire ----
 
-    internal sealed class RelayCommand
+    /// <summary>
+    /// Body codecs for the Relay channel. The unified protocol envelope already carries kind/channel/op/correlation,
+    /// so these encode only the payload fields — hand-framed as <c>byte[]</c> to stay serializer-agnostic.
+    /// </summary>
+    internal static class RelayWire
     {
-        public int CorrelationId;
-        public RelayOp Op;
-        public string Code = "";
-        public int MaxPeers;
-        public uint Target;
-        public byte[] Payload = Array.Empty<byte>();
-
-        public byte[] Encode()
+        /// <summary>Allocate-command body: the requested max peers.</summary>
+        public static byte[] EncodeAllocate(int maxPeers)
         {
             using var ms = new MemoryStream();
-            using var w = new BinaryWriter(ms);
-            w.Write(CorrelationId);
-            w.Write((byte)Op);
-            w.Write(Code ?? "");
-            w.Write(MaxPeers);
-            w.Write(Target);
-            w.Write(Payload?.Length ?? 0);
-            if (Payload != null) w.Write(Payload);
+            using (var w = new BinaryWriter(ms)) w.Write(maxPeers);
             return ms.ToArray();
         }
 
-        public static RelayCommand Decode(byte[] data)
+        /// <summary>Reads an allocate-command body.</summary>
+        public static int DecodeAllocate(byte[] body)
         {
-            using var ms = new MemoryStream(data);
+            if (body == null || body.Length < 4) return 0;
+            using var ms = new MemoryStream(body);
             using var r = new BinaryReader(ms);
-            var cmd = new RelayCommand
-            {
-                CorrelationId = r.ReadInt32(),
-                Op = (RelayOp)r.ReadByte(),
-                Code = r.ReadString(),
-                MaxPeers = r.ReadInt32(),
-                Target = r.ReadUInt32(),
-            };
+            return r.ReadInt32();
+        }
+
+        /// <summary>Join-command body: the session code.</summary>
+        public static byte[] EncodeJoin(string code)
+        {
+            using var ms = new MemoryStream();
+            using (var w = new BinaryWriter(ms)) w.Write(code ?? "");
+            return ms.ToArray();
+        }
+
+        /// <summary>Reads a join-command body.</summary>
+        public static string DecodeJoin(byte[] body)
+        {
+            if (body == null || body.Length == 0) return "";
+            using var ms = new MemoryStream(body);
+            using var r = new BinaryReader(ms);
+            return r.ReadString();
+        }
+
+        /// <summary>Data-command body: [uint target (0 = all)][payload].</summary>
+        public static byte[] EncodeData(uint target, byte[] payload)
+        {
+            using var ms = new MemoryStream();
+            using var w = new BinaryWriter(ms);
+            w.Write(target);
+            w.Write(payload?.Length ?? 0);
+            if (payload != null) w.Write(payload);
+            return ms.ToArray();
+        }
+
+        /// <summary>Reads a data-command body.</summary>
+        public static (uint target, byte[] payload) DecodeData(byte[] body)
+        {
+            using var ms = new MemoryStream(body);
+            using var r = new BinaryReader(ms);
+            var target = r.ReadUInt32();
             var len = r.ReadInt32();
-            cmd.Payload = len > 0 ? r.ReadBytes(len) : Array.Empty<byte>();
-            return cmd;
+            var payload = len > 0 ? r.ReadBytes(len) : Array.Empty<byte>();
+            return (target, payload);
         }
-    }
 
-    internal sealed class RelayReply
-    {
-        public int CorrelationId;
-        public bool Success;
-        public string Error = "";
-        public string Code = "";
-        public uint OwnId;
-        public uint[] Members = Array.Empty<uint>();
-
-        public byte[] Encode()
+        /// <summary>Allocate/Join reply body: the session code, the caller's peer id, and the current member list.</summary>
+        public static byte[] EncodeReply(string code, uint ownId, uint[] members)
         {
             using var ms = new MemoryStream();
             using var w = new BinaryWriter(ms);
-            w.Write(CorrelationId);
-            w.Write(Success);
-            w.Write(Error ?? "");
-            w.Write(Code ?? "");
-            w.Write(OwnId);
-            w.Write(Members.Length);
-            foreach (var m in Members) w.Write(m);
+            w.Write(code ?? "");
+            w.Write(ownId);
+            w.Write(members?.Length ?? 0);
+            if (members != null) foreach (var m in members) w.Write(m);
             return ms.ToArray();
         }
 
-        public static RelayReply Decode(byte[] data)
+        /// <summary>Reads an Allocate/Join reply body.</summary>
+        public static (string code, uint ownId, uint[] members) DecodeReply(byte[] body)
         {
-            using var ms = new MemoryStream(data);
+            using var ms = new MemoryStream(body);
             using var r = new BinaryReader(ms);
-            var reply = new RelayReply
-            {
-                CorrelationId = r.ReadInt32(),
-                Success = r.ReadBoolean(),
-                Error = r.ReadString(),
-                Code = r.ReadString(),
-                OwnId = r.ReadUInt32(),
-            };
+            var code = r.ReadString();
+            var ownId = r.ReadUInt32();
             var count = r.ReadInt32();
-            reply.Members = new uint[count];
-            for (var i = 0; i < count; i++) reply.Members[i] = r.ReadUInt32();
-            return reply;
+            var members = new uint[count];
+            for (var i = 0; i < count; i++) members[i] = r.ReadUInt32();
+            return (code, ownId, members);
         }
-    }
 
-    internal sealed class RelayEvent
-    {
-        public RelayEventType Type;
-        public string Code = "";
-        public uint FromPeerId;
-        public byte[] Payload = Array.Empty<byte>();
-
-        public byte[] Encode()
+        /// <summary>Peer-joined/left event body: [session code][peer id].</summary>
+        public static byte[] EncodePeer(string code, uint peerId)
         {
             using var ms = new MemoryStream();
             using var w = new BinaryWriter(ms);
-            w.Write((byte)Type);
-            w.Write(Code ?? "");
-            w.Write(FromPeerId);
-            w.Write(Payload?.Length ?? 0);
-            if (Payload != null) w.Write(Payload);
+            w.Write(code ?? "");
+            w.Write(peerId);
             return ms.ToArray();
         }
 
-        public static RelayEvent Decode(byte[] data)
+        /// <summary>Reads a peer-joined/left event body.</summary>
+        public static (string code, uint peerId) DecodePeer(byte[] body)
         {
-            using var ms = new MemoryStream(data);
+            using var ms = new MemoryStream(body);
             using var r = new BinaryReader(ms);
-            var evt = new RelayEvent
-            {
-                Type = (RelayEventType)r.ReadByte(),
-                Code = r.ReadString(),
-                FromPeerId = r.ReadUInt32(),
-            };
+            return (r.ReadString(), r.ReadUInt32());
+        }
+
+        /// <summary>Data event body: [session code][from peer id][payload].</summary>
+        public static byte[] EncodeDataEvent(string code, uint fromPeerId, byte[] payload)
+        {
+            using var ms = new MemoryStream();
+            using var w = new BinaryWriter(ms);
+            w.Write(code ?? "");
+            w.Write(fromPeerId);
+            w.Write(payload?.Length ?? 0);
+            if (payload != null) w.Write(payload);
+            return ms.ToArray();
+        }
+
+        /// <summary>Reads a data event body.</summary>
+        public static (string code, uint fromPeerId, byte[] payload) DecodeDataEvent(byte[] body)
+        {
+            using var ms = new MemoryStream(body);
+            using var r = new BinaryReader(ms);
+            var code = r.ReadString();
+            var fromPeerId = r.ReadUInt32();
             var len = r.ReadInt32();
-            evt.Payload = len > 0 ? r.ReadBytes(len) : Array.Empty<byte>();
-            return evt;
+            var payload = len > 0 ? r.ReadBytes(len) : Array.Empty<byte>();
+            return (code, fromPeerId, payload);
+        }
+
+        /// <summary>Session-closed event body: [session code].</summary>
+        public static byte[] EncodeClosed(string code)
+        {
+            using var ms = new MemoryStream();
+            using (var w = new BinaryWriter(ms)) w.Write(code ?? "");
+            return ms.ToArray();
+        }
+
+        /// <summary>Reads a session-closed event body.</summary>
+        public static string DecodeClosed(byte[] body)
+        {
+            if (body == null || body.Length == 0) return "";
+            using var ms = new MemoryStream(body);
+            using var r = new BinaryReader(ms);
+            return r.ReadString();
         }
     }
 
-    // ---- client-side plumbing ----
-
-    internal static class RelayRegistry
-    {
-        private static int _counter;
-        private static readonly ConcurrentDictionary<int, TaskCompletionSource<RelayReply>> Pending
-            = new ConcurrentDictionary<int, TaskCompletionSource<RelayReply>>();
-        private static readonly ConcurrentDictionary<RelayClient, byte> Clients
-            = new ConcurrentDictionary<RelayClient, byte>();
-
-        public static int NextId() => Interlocked.Increment(ref _counter);
-        public static void Register(int id, TaskCompletionSource<RelayReply> tcs) => Pending[id] = tcs;
-        public static void Remove(int id) => Pending.TryRemove(id, out _);
-        public static void Complete(int id, RelayReply reply) { if (Pending.TryGetValue(id, out var tcs)) tcs.TrySetResult(reply); }
-        public static void RegisterClient(RelayClient c) => Clients[c] = 0;
-        public static void DispatchEvent(RelayEvent evt) { foreach (var c in Clients.Keys) c.OnEvent(evt); }
-    }
+    // ---- client ----
 
     /// <summary>
     /// Client-side relay driver, attached by <see cref="RelayClientExtensions.UseRelay"/>. Allocate a relay session (or
     /// join one by code), then push <b>opaque bytes</b> that the server forwards to the other members — a TURN-style
     /// fallback for peers that can't connect directly (symmetric NAT), or a simple hub for tunnelling any payload.
+    /// Rides the unified protocol on the <see cref="Channels.Relay"/> channel.
     /// </summary>
     public sealed class RelayClient
     {
@@ -185,6 +208,7 @@ namespace SetNet.Relay
         private string? _code;
         private uint _ownId;
         private readonly HashSet<uint> _members = new HashSet<uint>();
+        private readonly List<IDisposable> _subscriptions = new List<IDisposable>();
 
         /// <summary>This client's peer id within the current session (0 if not in one).</summary>
         public uint OwnId { get { lock (_gate) return _ownId; } }
@@ -207,28 +231,28 @@ namespace SetNet.Relay
         internal RelayClient(BaseClient client)
         {
             _client = client ?? throw new ArgumentNullException(nameof(client));
-            RelayRegistry.RegisterClient(this);
+            _subscriptions.Add(_client.OnRaw(Channels.Relay, (ushort)RelayEvt.PeerJoined, OnPeerJoinedEvent));
+            _subscriptions.Add(_client.OnRaw(Channels.Relay, (ushort)RelayEvt.PeerLeft, OnPeerLeftEvent));
+            _subscriptions.Add(_client.OnRaw(Channels.Relay, (ushort)RelayEvt.Data, OnDataEvent));
+            _subscriptions.Add(_client.OnRaw(Channels.Relay, (ushort)RelayEvt.Closed, OnClosedEvent));
         }
 
         /// <summary>Allocates a new relay session and joins it; returns the join code others use to connect.</summary>
         public async Task<string> AllocateAsync(int maxPeers = 0)
         {
-            var reply = await SendCommand(RelayOp.Allocate, "", maxPeers, 0, Array.Empty<byte>()).ConfigureAwait(false);
-            Apply(reply);
-            return reply.Code;
+            var (code, ownId, members) = ApplyReply(await RequestAsync((ushort)RelayOp.Allocate, RelayWire.EncodeAllocate(maxPeers)).ConfigureAwait(false));
+            _ = ownId; _ = members;
+            return code;
         }
 
         /// <summary>Joins an existing relay session by code; throws <see cref="RelayException"/> if it's missing or full.</summary>
         public async Task JoinAsync(string code)
-        {
-            var reply = await SendCommand(RelayOp.Join, code, 0, 0, Array.Empty<byte>()).ConfigureAwait(false);
-            Apply(reply);
-        }
+            => ApplyReply(await RequestAsync((ushort)RelayOp.Join, RelayWire.EncodeJoin(code)).ConfigureAwait(false));
 
         /// <summary>Leaves the current session. Tolerant of a dropped connection (the server auto-removes us).</summary>
         public async Task LeaveAsync()
         {
-            try { await SendCommand(RelayOp.Leave, "", 0, 0, Array.Empty<byte>()).ConfigureAwait(false); }
+            try { await RequestAsync((ushort)RelayOp.Leave, Array.Empty<byte>()).ConfigureAwait(false); }
             catch { /* already disconnected — server cleans up */ }
             lock (_gate) { _code = null; _members.Clear(); _ownId = 0; }
         }
@@ -240,64 +264,55 @@ namespace SetNet.Relay
         public Task SendToAsync(uint peerId, byte[] data, DeliveryMethod delivery = DeliveryMethod.Reliable) => SendData(peerId, data, delivery);
 
         private Task SendData(uint target, byte[] data, DeliveryMethod delivery)
+            => _client.PostRawAsync(Channels.Relay, (ushort)RelayOp.Data, RelayWire.EncodeData(target, data ?? Array.Empty<byte>()), delivery);
+
+        /// <summary>Sends a relay command and maps protocol failures back to the public <see cref="RelayException"/>.</summary>
+        private async Task<byte[]> RequestAsync(ushort op, byte[] body)
         {
-            var cmd = new RelayCommand { CorrelationId = 0, Op = RelayOp.Data, Target = target, Payload = data ?? Array.Empty<byte>() };
-            return _client.SendAsync(RelayTypes.Command, cmd.Encode(), delivery);
+            try { return await _client.RequestRawAsync(Channels.Relay, op, body).ConfigureAwait(false); }
+            catch (ProtocolException ex) { throw new RelayException(ex.Message); }
+            catch (TimeoutException) { throw new RelayException("Relay command timed out."); }
         }
 
-        private async Task<RelayReply> SendCommand(RelayOp op, string code, int maxPeers, uint target, byte[] payload)
+        private (string code, uint ownId, uint[] members) ApplyReply(byte[] replyBody)
         {
-            var id = RelayRegistry.NextId();
-            var tcs = new TaskCompletionSource<RelayReply>(TaskCreationOptions.RunContinuationsAsynchronously);
-            RelayRegistry.Register(id, tcs);
-            try
-            {
-                var cmd = new RelayCommand { CorrelationId = id, Op = op, Code = code, MaxPeers = maxPeers, Target = target, Payload = payload };
-                await _client.SendAsync(RelayTypes.Command, cmd.Encode(), DeliveryMethod.Reliable).ConfigureAwait(false);
-
-                using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
-                using (timeout.Token.Register(() => tcs.TrySetCanceled()))
-                {
-                    try { return await tcs.Task.ConfigureAwait(false); }
-                    catch (OperationCanceledException) { throw new RelayException("Relay command timed out."); }
-                }
-            }
-            finally { RelayRegistry.Remove(id); }
-        }
-
-        private void Apply(RelayReply reply)
-        {
-            if (!reply.Success) throw new RelayException(reply.Error);
+            var (code, ownId, members) = RelayWire.DecodeReply(replyBody);
             lock (_gate)
             {
-                _code = reply.Code;
-                _ownId = reply.OwnId;
+                _code = code;
+                _ownId = ownId;
                 _members.Clear();
-                foreach (var m in reply.Members) _members.Add(m);
+                foreach (var m in members) _members.Add(m);
             }
+            return (code, ownId, members);
         }
 
-        internal void OnEvent(RelayEvent evt)
+        private void OnPeerJoinedEvent(byte[] body)
         {
-            lock (_gate) { if (_code == null || _code != evt.Code) return; }   // not my session
-            switch (evt.Type)
-            {
-                case RelayEventType.PeerJoined:
-                    lock (_gate) _members.Add(evt.FromPeerId);
-                    PeerJoined?.Invoke(evt.FromPeerId);
-                    break;
-                case RelayEventType.PeerLeft:
-                    lock (_gate) _members.Remove(evt.FromPeerId);
-                    PeerLeft?.Invoke(evt.FromPeerId);
-                    break;
-                case RelayEventType.Data:
-                    Received?.Invoke(evt.FromPeerId, evt.Payload);
-                    break;
-                case RelayEventType.Closed:
-                    lock (_gate) { _code = null; _members.Clear(); _ownId = 0; }
-                    Closed?.Invoke();
-                    break;
-            }
+            var (code, peerId) = RelayWire.DecodePeer(body);
+            lock (_gate) { if (_code == null || _code != code) return; _members.Add(peerId); }   // not my session
+            PeerJoined?.Invoke(peerId);
+        }
+
+        private void OnPeerLeftEvent(byte[] body)
+        {
+            var (code, peerId) = RelayWire.DecodePeer(body);
+            lock (_gate) { if (_code == null || _code != code) return; _members.Remove(peerId); }   // not my session
+            PeerLeft?.Invoke(peerId);
+        }
+
+        private void OnDataEvent(byte[] body)
+        {
+            var (code, fromPeerId, payload) = RelayWire.DecodeDataEvent(body);
+            lock (_gate) { if (_code == null || _code != code) return; }   // not my session
+            Received?.Invoke(fromPeerId, payload);
+        }
+
+        private void OnClosedEvent(byte[] body)
+        {
+            var code = RelayWire.DecodeClosed(body);
+            lock (_gate) { if (_code == null || _code != code) return; _code = null; _members.Clear(); _ownId = 0; }
+            Closed?.Invoke();
         }
     }
 
@@ -350,44 +365,45 @@ namespace SetNet.Relay
             server.PeerDisconnected += peer => RemovePeer(state, peer);
         }
 
-        internal static async Task OnCommand(BasePeer peer, RelayCommand cmd)
-        {
-            var server = peer.CurrentPeerInfo.Server;
-            if (server == null || !Servers.TryGetValue(server, out var state)) return;
+        internal static RelayServerState? For(BaseServer? server)
+            => server != null && Servers.TryGetValue(server, out var state) ? state : null;
 
-            switch (cmd.Op)
+        internal static async Task OnCommand(ChannelRequest request, RelayServerState state)
+        {
+            var peer = request.Peer;
+            switch ((RelayOp)request.Op)
             {
                 case RelayOp.Allocate:
                 {
-                    var session = state.Allocate(cmd.MaxPeers);
+                    var session = state.Allocate(RelayWire.DecodeAllocate(request.RawBody));
                     var id = Add(state, session, peer);
-                    await Reply(peer, cmd.CorrelationId, true, "", session.Code, id, Array.Empty<uint>()).ConfigureAwait(false);
+                    await request.ReplyRawAsync(RelayWire.EncodeReply(session.Code, id, Array.Empty<uint>())).ConfigureAwait(false);
                     break;
                 }
                 case RelayOp.Join:
                 {
-                    if (!state.Sessions.TryGetValue(cmd.Code ?? "", out var session))
-                    { await Reply(peer, cmd.CorrelationId, false, "No such relay session.", "", 0, Array.Empty<uint>()).ConfigureAwait(false); break; }
-                    if (session.IsFull)
-                    { await Reply(peer, cmd.CorrelationId, false, "Relay session is full.", "", 0, Array.Empty<uint>()).ConfigureAwait(false); break; }
+                    var code = RelayWire.DecodeJoin(request.RawBody);
+                    if (!state.Sessions.TryGetValue(code ?? "", out var session)) throw new ProtocolException("No such relay session.");
+                    if (session.IsFull) throw new ProtocolException("Relay session is full.");
 
                     var existing = new List<uint>(session.Members.Keys);
                     var id = Add(state, session, peer);
-                    await Reply(peer, cmd.CorrelationId, true, "", session.Code, id, existing.ToArray()).ConfigureAwait(false);
-                    await NotifyOthers(session, id, new RelayEvent { Type = RelayEventType.PeerJoined, Code = session.Code, FromPeerId = id }).ConfigureAwait(false);
+                    await request.ReplyRawAsync(RelayWire.EncodeReply(session.Code, id, existing.ToArray())).ConfigureAwait(false);
+                    await NotifyOthers(session, id, (ushort)RelayEvt.PeerJoined, RelayWire.EncodePeer(session.Code, id)).ConfigureAwait(false);
                     break;
                 }
                 case RelayOp.Leave:
                     RemovePeer(state, peer);
-                    await Reply(peer, cmd.CorrelationId, true, "", "", 0, Array.Empty<uint>()).ConfigureAwait(false);
+                    if (request.ExpectsReply) await request.ReplyRawAsync(Array.Empty<byte>()).ConfigureAwait(false);
                     break;
                 case RelayOp.Data:
                 {
                     if (!state.Located.TryGetValue(peer.CurrentPeerInfo.Id, out var loc)) break;
                     if (!state.Sessions.TryGetValue(loc.Code, out var session)) break;
-                    var evt = new RelayEvent { Type = RelayEventType.Data, Code = session.Code, FromPeerId = loc.PeerId, Payload = cmd.Payload };
-                    if (cmd.Target == 0) await NotifyOthers(session, loc.PeerId, evt).ConfigureAwait(false);
-                    else if (session.Members.TryGetValue(cmd.Target, out var target)) await Send(target, evt).ConfigureAwait(false);
+                    var (target, payload) = RelayWire.DecodeData(request.RawBody);
+                    var body = RelayWire.EncodeDataEvent(session.Code, loc.PeerId, payload);
+                    if (target == 0) await NotifyOthers(session, loc.PeerId, (ushort)RelayEvt.Data, body).ConfigureAwait(false);
+                    else if (session.Members.TryGetValue(target, out var to)) await Send(to, (ushort)RelayEvt.Data, body).ConfigureAwait(false);
                     break;
                 }
             }
@@ -407,54 +423,42 @@ namespace SetNet.Relay
             if (!state.Sessions.TryGetValue(loc.Code, out var session)) return;
             session.Members.TryRemove(loc.PeerId, out _);
             if (session.Members.IsEmpty) { state.Sessions.TryRemove(session.Code, out _); return; }
-            _ = NotifyOthers(session, loc.PeerId, new RelayEvent { Type = RelayEventType.PeerLeft, Code = session.Code, FromPeerId = loc.PeerId });
+            _ = NotifyOthers(session, loc.PeerId, (ushort)RelayEvt.PeerLeft, RelayWire.EncodePeer(session.Code, loc.PeerId));
         }
 
-        private static async Task NotifyOthers(RelaySession session, uint except, RelayEvent evt)
+        private static async Task NotifyOthers(RelaySession session, uint except, ushort evtOp, byte[] body)
         {
-            // Sent via SendAsync (serializer-wrapped) to match the auto-discovered IClientMessageHandler<byte[]> invoker.
-            var encoded = evt.Encode();
+            // Pushed via PublishRawAsync (which SendAsyncs the envelope byte[]) so the client's OnRaw subscription decodes it.
             foreach (var kv in session.Members)
             {
                 if (kv.Key == except) continue;
-                try { await kv.Value.SendAsync(RelayTypes.Event, encoded, DeliveryMethod.Reliable).ConfigureAwait(false); } catch { /* dropped */ }
+                try { await kv.Value.PublishRawAsync(Channels.Relay, evtOp, body).ConfigureAwait(false); } catch { /* dropped */ }
             }
         }
 
-        private static Task Send(BasePeer peer, RelayEvent evt)
+        private static Task Send(BasePeer peer, ushort evtOp, byte[] body)
         {
-            try { return peer.SendAsync(RelayTypes.Event, evt.Encode(), DeliveryMethod.Reliable); } catch { return Task.CompletedTask; }
-        }
-
-        private static Task Reply(BasePeer peer, int corr, bool ok, string err, string code, uint ownId, uint[] members)
-        {
-            var reply = new RelayReply { CorrelationId = corr, Success = ok, Error = err, Code = code, OwnId = ownId, Members = members };
-            return peer.SendAsync(RelayTypes.Reply, reply.Encode(), DeliveryMethod.Reliable);
+            try { return peer.PublishRawAsync(Channels.Relay, evtOp, body); } catch { return Task.CompletedTask; }
         }
     }
 
-    /// <summary>Auto-discovered server handler for relay commands.</summary>
-    [MessageHandler(RelayTypes.Command)]
-    public sealed class RelayCommandHandler : IServerMessageHandler<byte[]>
-    {
-        /// <inheritdoc/>
-        public Task HandleAsync(BasePeer peer, byte[] data) => RelayServer.OnCommand(peer, RelayCommand.Decode(data));
-    }
+    // ---- auto-discovered channel service ----
 
-    /// <summary>Auto-discovered client handler for correlated relay replies.</summary>
-    [MessageHandler(RelayTypes.Reply)]
-    public sealed class RelayReplyHandler : IClientMessageHandler<byte[]>
+    /// <summary>
+    /// Auto-discovered channel service for relay commands (allocate/join/leave/data). Replaces the former hand-framed
+    /// <c>[MessageHandler]</c> classes and correlation plumbing: the unified protocol handles correlation and reply
+    /// framing, so this only implements the relay logic and dispatches on the op.
+    /// </summary>
+    [ProtocolChannel(Channels.Relay)]
+    public sealed class RelayChannelService : IChannelService
     {
         /// <inheritdoc/>
-        public Task HandleAsync(byte[] data) { var r = RelayReply.Decode(data); RelayRegistry.Complete(r.CorrelationId, r); return Task.CompletedTask; }
-    }
-
-    /// <summary>Auto-discovered client handler for relay push events.</summary>
-    [MessageHandler(RelayTypes.Event)]
-    public sealed class RelayEventHandler : IClientMessageHandler<byte[]>
-    {
-        /// <inheritdoc/>
-        public Task HandleAsync(byte[] data) { RelayRegistry.DispatchEvent(RelayEvent.Decode(data)); return Task.CompletedTask; }
+        public Task HandleAsync(ChannelRequest request)
+        {
+            var state = RelayServer.For(request.Peer.CurrentPeerInfo.Server);
+            if (state == null) throw new ProtocolException("relay is not configured on this server");
+            return RelayServer.OnCommand(request, state);
+        }
     }
 
     /// <summary>Attaches the relay hub to a server by composition.</summary>
@@ -475,10 +479,10 @@ namespace SetNet.Relay
         public static RelayClient UseRelay(this BaseClient client) => new RelayClient(client);
     }
 
-    /// <summary>One-time bootstrap so the relay handlers are discovered. Call at startup.</summary>
+    /// <summary>One-time bootstrap so the relay channel service is discovered. Call at startup.</summary>
     public static class RelayRuntime
     {
         /// <summary>Ensures the relay layer is discoverable.</summary>
-        public static void Enable() { _ = RelayTypes.Command; }
+        public static void Enable() { _ = typeof(RelayChannelService); }
     }
 }

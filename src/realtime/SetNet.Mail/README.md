@@ -68,7 +68,7 @@ await mail.ClaimAsync(messageId);   // attachments → your inventory
 
 ## Notes
 
-- **Reserved wire types 65481 / 65482 / 65483.** Don't reuse them.
+- Rides the unified **SetNet.Protocol** messaging layer on the `Channels.Mail` channel (all modules share one envelope wire type, `65447`) — no per-module wire ids to reserve. Serializer-agnostic: the control protocol is hand-framed `byte[]`, your payloads use your `SetNetSerializer`.
 - **Attachments need an inventory.** Pass the `InventoryServer` to `UseMail`; without it, messages with attachments are rejected (text-only mail still works). Escrow uses `Inventory.TryRevokeAsync`, so a sender can't attach items they don't have.
 - **No dupes, no loss.** Items live in exactly one place at a time: sender's inventory → mail escrow → recipient's inventory (on claim) or back to sender (on delete/unclaimed). System mail mints its attachments (server is the source).
 - **Persistence.** The default `MemoryMailStore` is per-process. Implement `IMailStore` over Redis/SQL so mailboxes survive restarts and are readable on whichever node the recipient logs into.

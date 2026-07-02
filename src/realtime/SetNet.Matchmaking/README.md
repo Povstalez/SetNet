@@ -83,7 +83,7 @@ var room = await matchmaking.FindAndJoinAsync(new MatchRequest { Queue = "ranked
 ## Notes
 
 - Runs on a **dedicated server** (the same node that hosts Rooms). Because rooms are node-local, matchmaking is node-local too; a multi-node deployment would coordinate through a shared `IRoomStore` implementation.
-- Reserved wire types `65523/65524/65525` (just below the Rooms range) — don't reuse them.
+- Rides the unified **SetNet.Protocol** messaging layer on the `Channels.Matchmaking` channel (all modules share one envelope wire type, `65447`) — no per-module wire ids to reserve. Serializer-agnostic: the control protocol is hand-framed `byte[]`, your payloads use your `SetNetSerializer`.
 - Depends on `SetNet` + `SetNet.Rooms`; serializer-agnostic (hand-framed `byte[]` protocol).
 
 ## Documentation & source

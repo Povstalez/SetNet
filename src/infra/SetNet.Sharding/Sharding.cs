@@ -2,26 +2,14 @@ using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
-using System.Threading;
 using System.Threading.Tasks;
 using SetNet.Core;
-using SetNet.Core.Transport;
-using SetNet.Data;
-using SetNet.Data.Attributes;
+using SetNet.Protocol;
 
 namespace SetNet.Sharding
 {
-    /// <summary>Reserved wire types for the shard directory. Don't reuse these ids for application messages.</summary>
-    public static class ShardingTypes
-    {
-        /// <summary>Client → server: locate/list command.</summary>
-        public const ushort Command = ushort.MaxValue - 44;   // 65491
-
-        /// <summary>Server → client: correlated reply.</summary>
-        public const ushort Reply = ushort.MaxValue - 45;     // 65490
-    }
-
-    internal enum ShardOp : byte { Locate = 0, List = 1 }
+    /// <summary>Command operations (client → server) within the Sharding protocol channel.</summary>
+    internal enum ShardOp : ushort { Locate = 1, List = 2 }
 
     /// <summary>Thrown when a shard directory query fails (empty ring, timeout).</summary>
     public sealed class ShardingException : Exception
@@ -156,51 +144,30 @@ namespace SetNet.Sharding
 
     // ---- wire ----
 
-    internal sealed class ShardCommand
+    internal static class ShardCodec
     {
-        public int CorrelationId;
-        public ShardOp Op;
-        public string Key = "";
-
-        public byte[] Encode()
+        public static byte[] EncodeQuery(string key)
         {
             using var ms = new MemoryStream();
             using var w = new BinaryWriter(ms);
-            w.Write(CorrelationId);
-            w.Write((byte)Op);
-            w.Write(Key ?? "");
+            w.Write(key ?? "");
             return ms.ToArray();
         }
 
-        public static ShardCommand Decode(byte[] data)
+        public static string DecodeQuery(byte[] data)
         {
+            if (data == null || data.Length == 0) return "";
             using var ms = new MemoryStream(data);
             using var r = new BinaryReader(ms);
-            return new ShardCommand
-            {
-                CorrelationId = r.ReadInt32(),
-                Op = (ShardOp)r.ReadByte(),
-                Key = r.ReadString(),
-            };
+            return r.ReadString();
         }
-    }
 
-    internal sealed class ShardReply
-    {
-        public int CorrelationId;
-        public bool Success;
-        public string Error = "";
-        public ShardNode[] Nodes = Array.Empty<ShardNode>();
-
-        public byte[] Encode()
+        public static byte[] EncodeNodes(IReadOnlyList<ShardNode> nodes)
         {
             using var ms = new MemoryStream();
             using var w = new BinaryWriter(ms);
-            w.Write(CorrelationId);
-            w.Write(Success);
-            w.Write(Error ?? "");
-            w.Write(Nodes.Length);
-            foreach (var n in Nodes)
+            w.Write(nodes.Count);
+            foreach (var n in nodes)
             {
                 w.Write(n.NodeId ?? "");
                 w.Write(n.Host ?? "");
@@ -209,42 +176,26 @@ namespace SetNet.Sharding
             return ms.ToArray();
         }
 
-        public static ShardReply Decode(byte[] data)
+        public static ShardNode[] DecodeNodes(byte[] data)
         {
+            if (data == null || data.Length == 0) return Array.Empty<ShardNode>();
             using var ms = new MemoryStream(data);
             using var r = new BinaryReader(ms);
-            var reply = new ShardReply
-            {
-                CorrelationId = r.ReadInt32(),
-                Success = r.ReadBoolean(),
-                Error = r.ReadString(),
-            };
             var count = r.ReadInt32();
-            reply.Nodes = new ShardNode[count];
+            var nodes = new ShardNode[count];
             for (var i = 0; i < count; i++)
-                reply.Nodes[i] = new ShardNode { NodeId = r.ReadString(), Host = r.ReadString(), Port = r.ReadInt32() };
-            return reply;
+                nodes[i] = new ShardNode { NodeId = r.ReadString(), Host = r.ReadString(), Port = r.ReadInt32() };
+            return nodes;
         }
     }
 
-    // ---- client-side plumbing ----
-
-    internal static class ShardingRegistry
-    {
-        private static int _counter;
-        private static readonly ConcurrentDictionary<int, TaskCompletionSource<ShardReply>> Pending
-            = new ConcurrentDictionary<int, TaskCompletionSource<ShardReply>>();
-
-        public static int NextId() => Interlocked.Increment(ref _counter);
-        public static void Register(int id, TaskCompletionSource<ShardReply> tcs) => Pending[id] = tcs;
-        public static void Remove(int id) => Pending.TryRemove(id, out _);
-        public static void Complete(int id, ShardReply reply) { if (Pending.TryGetValue(id, out var tcs)) tcs.TrySetResult(reply); }
-    }
+    // ---- client ----
 
     /// <summary>
     /// Client-side shard directory, attached by <see cref="ShardingClientExtensions.UseSharding"/>. Ask any node
     /// which node owns a key (a room code, a world region, a player id) and connect there — the usual flow is:
     /// connect to a well-known entry node, <see cref="LocateAsync"/>, then dial the returned node for gameplay.
+    /// Rides the unified protocol on the <see cref="Channels.Sharding"/> channel.
     /// </summary>
     public sealed class ShardingClient
     {
@@ -255,38 +206,24 @@ namespace SetNet.Sharding
         /// <summary>The node that owns <paramref name="key"/> per the server's ring.</summary>
         public async Task<ShardNode> LocateAsync(string key)
         {
-            var reply = await SendCommand(ShardOp.Locate, key).ConfigureAwait(false);
-            if (!reply.Success) throw new ShardingException(reply.Error);
-            if (reply.Nodes.Length == 0) throw new ShardingException("Shard ring is empty.");
-            return reply.Nodes[0];
+            var nodes = await Query(ShardOp.Locate, key).ConfigureAwait(false);
+            if (nodes.Length == 0) throw new ShardingException("Shard ring is empty.");
+            return nodes[0];
         }
 
         /// <summary>All nodes currently on the server's ring.</summary>
         public async Task<IReadOnlyList<ShardNode>> ListNodesAsync()
-        {
-            var reply = await SendCommand(ShardOp.List, "").ConfigureAwait(false);
-            if (!reply.Success) throw new ShardingException(reply.Error);
-            return reply.Nodes;
-        }
+            => await Query(ShardOp.List, "").ConfigureAwait(false);
 
-        private async Task<ShardReply> SendCommand(ShardOp op, string key)
+        private async Task<ShardNode[]> Query(ShardOp op, string key)
         {
-            var id = ShardingRegistry.NextId();
-            var tcs = new TaskCompletionSource<ShardReply>(TaskCreationOptions.RunContinuationsAsynchronously);
-            ShardingRegistry.Register(id, tcs);
             try
             {
-                var cmd = new ShardCommand { CorrelationId = id, Op = op, Key = key };
-                await _client.SendAsync(ShardingTypes.Command, cmd.Encode(), DeliveryMethod.Reliable).ConfigureAwait(false);
-
-                using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
-                using (timeout.Token.Register(() => tcs.TrySetCanceled()))
-                {
-                    try { return await tcs.Task.ConfigureAwait(false); }
-                    catch (OperationCanceledException) { throw new ShardingException("Shard directory query timed out."); }
-                }
+                var body = await _client.RequestRawAsync(Channels.Sharding, (ushort)op, ShardCodec.EncodeQuery(key)).ConfigureAwait(false);
+                return ShardCodec.DecodeNodes(body);
             }
-            finally { ShardingRegistry.Remove(id); }
+            catch (ProtocolException ex) { throw new ShardingException(ex.Message); }
+            catch (TimeoutException) { throw new ShardingException("Shard directory query timed out."); }
         }
     }
 
@@ -337,55 +274,42 @@ namespace SetNet.Sharding
             return owner != null && owner.NodeId == _selfNodeId;
         }
 
-        internal async Task OnCommand(BasePeer peer, ShardCommand cmd)
+        internal Task HandleAsync(ChannelRequest request)
         {
-            switch (cmd.Op)
+            switch ((ShardOp)request.Op)
             {
                 case ShardOp.Locate:
                 {
-                    var node = Locate(cmd.Key);
-                    if (node == null) await Reply(peer, cmd.CorrelationId, false, "Shard ring is empty.", Array.Empty<ShardNode>()).ConfigureAwait(false);
-                    else await Reply(peer, cmd.CorrelationId, true, "", new[] { node }).ConfigureAwait(false);
-                    break;
+                    var node = Locate(ShardCodec.DecodeQuery(request.RawBody));
+                    if (node == null) throw new ProtocolException("Shard ring is empty.");
+                    return request.ReplyRawAsync(ShardCodec.EncodeNodes(new[] { node }));
                 }
                 case ShardOp.List:
                 {
                     var ring = _ring;
                     var nodes = new ShardNode[ring.Nodes.Count];
                     for (var i = 0; i < nodes.Length; i++) nodes[i] = ring.Nodes[i];
-                    await Reply(peer, cmd.CorrelationId, true, "", nodes).ConfigureAwait(false);
-                    break;
+                    return request.ReplyRawAsync(ShardCodec.EncodeNodes(nodes));
                 }
+                default:
+                    throw new ProtocolException($"Unknown sharding op {request.Op}.");
             }
         }
-
-        private static Task Reply(BasePeer peer, int corr, bool ok, string err, ShardNode[] nodes)
-        {
-            var reply = new ShardReply { CorrelationId = corr, Success = ok, Error = err, Nodes = nodes };
-            return peer.SendAsync(ShardingTypes.Reply, reply.Encode(), DeliveryMethod.Reliable);
-        }
     }
 
-    // ---- auto-discovered handlers ----
+    // ---- auto-discovered channel service ----
 
-    /// <summary>Auto-discovered server handler for shard directory queries.</summary>
-    [MessageHandler(ShardingTypes.Command)]
-    public sealed class ShardCommandHandler : IServerMessageHandler<byte[]>
+    /// <summary>Auto-discovered channel service for shard directory queries.</summary>
+    [ProtocolChannel(Channels.Sharding)]
+    public sealed class ShardingChannelService : IChannelService
     {
         /// <inheritdoc/>
-        public Task HandleAsync(BasePeer peer, byte[] data)
+        public Task HandleAsync(ChannelRequest request)
         {
-            var directory = ShardingServer.For(peer.CurrentPeerInfo.Server);
-            return directory?.OnCommand(peer, ShardCommand.Decode(data)) ?? Task.CompletedTask;
+            var directory = ShardingServer.For(request.Peer.CurrentPeerInfo.Server);
+            if (directory == null) throw new ProtocolException("sharding is not configured on this server");
+            return directory.HandleAsync(request);
         }
-    }
-
-    /// <summary>Auto-discovered client handler for correlated shard directory replies.</summary>
-    [MessageHandler(ShardingTypes.Reply)]
-    public sealed class ShardReplyHandler : IClientMessageHandler<byte[]>
-    {
-        /// <inheritdoc/>
-        public Task HandleAsync(byte[] data) { var r = ShardReply.Decode(data); ShardingRegistry.Complete(r.CorrelationId, r); return Task.CompletedTask; }
     }
 
     // ---- composition entry points ----
@@ -409,10 +333,10 @@ namespace SetNet.Sharding
         public static ShardingClient UseSharding(this BaseClient client) => new ShardingClient(client);
     }
 
-    /// <summary>One-time bootstrap so the sharding handlers are discovered. Call at startup.</summary>
+    /// <summary>One-time bootstrap so the sharding channel service is discovered. Call at startup.</summary>
     public static class ShardingRuntime
     {
         /// <summary>Ensures the sharding layer is discoverable.</summary>
-        public static void Enable() { _ = ShardingTypes.Command; }
+        public static void Enable() { _ = typeof(ShardingChannelService); }
     }
 }

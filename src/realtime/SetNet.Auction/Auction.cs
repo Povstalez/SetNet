@@ -6,28 +6,17 @@ using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
 using SetNet.Core;
-using SetNet.Core.Transport;
-using SetNet.Data;
-using SetNet.Data.Attributes;
 using SetNet.Inventory;
+using SetNet.Protocol;
 using SetNet.Wallet;
 
 namespace SetNet.Auction
 {
-    /// <summary>Reserved wire types for the auction service. Don't reuse these ids for application messages.</summary>
-    public static class AuctionTypes
-    {
-        /// <summary>Client → server: browse/sell/bid/buyout/cancel command.</summary>
-        public const ushort Command = ushort.MaxValue - 63;   // 65472
+    /// <summary>Command operations (client → server) within the Auction protocol channel.</summary>
+    internal enum AuctionOp : ushort { Browse = 1, Sell = 2, Bid = 3, Buyout = 4, Cancel = 5 }
 
-        /// <summary>Server → client: correlated reply.</summary>
-        public const ushort Reply = ushort.MaxValue - 64;     // 65471
-
-        /// <summary>Server → client: push event (outbid/won/sold/returned).</summary>
-        public const ushort Event = ushort.MaxValue - 65;     // 65470
-    }
-
-    internal enum AuctionOp : byte { Browse = 0, Sell = 1, Bid = 2, Buyout = 3, Cancel = 4 }
+    /// <summary>Push events (server → client) within the Auction protocol channel; values match <see cref="AuctionEventType"/>.</summary>
+    internal enum AuctionEvt : ushort { Outbid = 10, Won = 11, Sold = 12, Returned = 13 }
 
     /// <summary>What happened to an auction the player is involved in.</summary>
     public enum AuctionEventType : byte
@@ -103,10 +92,9 @@ namespace SetNet.Auction
 
     // ---- wire ----
 
+    /// <summary>Decoded auction command body (the op and correlation live in the protocol envelope).</summary>
     internal sealed class AuctionCommand
     {
-        public int CorrelationId;
-        public AuctionOp Op;
         public string ListingId = "";
         public string ItemId = "";
         public long Count;
@@ -120,7 +108,7 @@ namespace SetNet.Auction
         {
             using var ms = new MemoryStream();
             using var w = new BinaryWriter(ms);
-            w.Write(CorrelationId); w.Write((byte)Op); w.Write(ListingId ?? ""); w.Write(ItemId ?? ""); w.Write(Count);
+            w.Write(ListingId ?? ""); w.Write(ItemId ?? ""); w.Write(Count);
             w.Write(Currency ?? ""); w.Write(MinBid); w.Write(Buyout); w.Write(Amount); w.Write(DurationSeconds);
             return ms.ToArray();
         }
@@ -131,17 +119,15 @@ namespace SetNet.Auction
             using var r = new BinaryReader(ms);
             return new AuctionCommand
             {
-                CorrelationId = r.ReadInt32(), Op = (AuctionOp)r.ReadByte(), ListingId = r.ReadString(), ItemId = r.ReadString(), Count = r.ReadInt64(),
+                ListingId = r.ReadString(), ItemId = r.ReadString(), Count = r.ReadInt64(),
                 Currency = r.ReadString(), MinBid = r.ReadInt64(), Buyout = r.ReadInt64(), Amount = r.ReadInt64(), DurationSeconds = r.ReadInt32(),
             };
         }
     }
 
+    /// <summary>Decoded auction reply body (payload only; op/correlation are in the envelope).</summary>
     internal sealed class AuctionReply
     {
-        public int CorrelationId;
-        public bool Success;
-        public string Error = "";
         public string ListingId = "";
         public List<AuctionListing> Listings = new List<AuctionListing>();
 
@@ -149,7 +135,7 @@ namespace SetNet.Auction
         {
             using var ms = new MemoryStream();
             using var w = new BinaryWriter(ms);
-            w.Write(CorrelationId); w.Write(Success); w.Write(Error ?? ""); w.Write(ListingId ?? "");
+            w.Write(ListingId ?? "");
             w.Write(Listings.Count);
             foreach (var l in Listings)
             {
@@ -161,9 +147,11 @@ namespace SetNet.Auction
 
         public static AuctionReply Decode(byte[] data)
         {
+            var reply = new AuctionReply();
+            if (data == null || data.Length == 0) return reply;
             using var ms = new MemoryStream(data);
             using var r = new BinaryReader(ms);
-            var reply = new AuctionReply { CorrelationId = r.ReadInt32(), Success = r.ReadBoolean(), Error = r.ReadString(), ListingId = r.ReadString() };
+            reply.ListingId = r.ReadString();
             var count = r.ReadInt32();
             for (var i = 0; i < count; i++)
                 reply.Listings.Add(new AuctionListing
@@ -200,41 +188,28 @@ namespace SetNet.Auction
         {
             using var ms = new MemoryStream();
             using var w = new BinaryWriter(ms);
-            w.Write((byte)Type); w.Write(ListingId ?? ""); w.Write(ItemId ?? ""); w.Write(Count); w.Write(Amount); w.Write(Currency ?? "");
+            w.Write(ListingId ?? ""); w.Write(ItemId ?? ""); w.Write(Count); w.Write(Amount); w.Write(Currency ?? "");
             return ms.ToArray();
         }
 
-        internal static AuctionEvent Decode(byte[] data)
+        internal static AuctionEvent Decode(AuctionEventType type, byte[] data)
         {
             using var ms = new MemoryStream(data);
             using var r = new BinaryReader(ms);
-            return new AuctionEvent { Type = (AuctionEventType)r.ReadByte(), ListingId = r.ReadString(), ItemId = r.ReadString(), Count = r.ReadInt64(), Amount = r.ReadInt64(), Currency = r.ReadString() };
+            return new AuctionEvent { Type = type, ListingId = r.ReadString(), ItemId = r.ReadString(), Count = r.ReadInt64(), Amount = r.ReadInt64(), Currency = r.ReadString() };
         }
-    }
-
-    internal static class AuctionRegistry
-    {
-        private static int _counter;
-        private static readonly ConcurrentDictionary<int, TaskCompletionSource<AuctionReply>> Pending
-            = new ConcurrentDictionary<int, TaskCompletionSource<AuctionReply>>();
-        private static readonly ConcurrentDictionary<AuctionClient, byte> Clients = new ConcurrentDictionary<AuctionClient, byte>();
-
-        public static int NextId() => Interlocked.Increment(ref _counter);
-        public static void Register(int id, TaskCompletionSource<AuctionReply> tcs) => Pending[id] = tcs;
-        public static void Remove(int id) => Pending.TryRemove(id, out _);
-        public static void Complete(int id, AuctionReply reply) { if (Pending.TryGetValue(id, out var tcs)) tcs.TrySetResult(reply); }
-        public static void RegisterClient(AuctionClient c) => Clients[c] = 0;
-        public static void DispatchEvent(AuctionEvent evt) { foreach (var c in Clients.Keys) c.OnEvent(evt); }
     }
 
     /// <summary>
     /// Client-side auction driver, attached by <see cref="AuctionClientExtensions.UseAuction"/>. Browse listings,
     /// put items up for sale (escrowed from your inventory), bid or buy out (currency escrowed, prior bidder
     /// refunded), and cancel your own bid-free listings. Outcomes arrive via <see cref="Outbid"/>/<see cref="Won"/>/<see cref="Sold"/>/<see cref="Returned"/>.
+    /// Rides the unified protocol on the <see cref="Channels.Auction"/> channel.
     /// </summary>
     public sealed class AuctionClient
     {
         private readonly BaseClient _client;
+        private readonly List<IDisposable> _subscriptions = new List<IDisposable>();
 
         /// <summary>Raised when someone outbids you (your bid was refunded); arg carries the refund amount.</summary>
         public event Action<AuctionEvent>? Outbid;
@@ -251,54 +226,47 @@ namespace SetNet.Auction
         internal AuctionClient(BaseClient client)
         {
             _client = client ?? throw new ArgumentNullException(nameof(client));
-            AuctionRegistry.RegisterClient(this);
+            _subscriptions.Add(_client.OnRaw(Channels.Auction, (ushort)AuctionEvt.Outbid, b => OnEvent(AuctionEventType.Outbid, b)));
+            _subscriptions.Add(_client.OnRaw(Channels.Auction, (ushort)AuctionEvt.Won, b => OnEvent(AuctionEventType.Won, b)));
+            _subscriptions.Add(_client.OnRaw(Channels.Auction, (ushort)AuctionEvt.Sold, b => OnEvent(AuctionEventType.Sold, b)));
+            _subscriptions.Add(_client.OnRaw(Channels.Auction, (ushort)AuctionEvt.Returned, b => OnEvent(AuctionEventType.Returned, b)));
         }
 
         /// <summary>Lists all active auctions.</summary>
         public async Task<IReadOnlyList<AuctionListing>> BrowseAsync()
-            => (await Send(new AuctionCommand { Op = AuctionOp.Browse }).ConfigureAwait(false)).Listings;
+            => (await Send(AuctionOp.Browse, new AuctionCommand()).ConfigureAwait(false)).Listings;
 
         /// <summary>Puts an item up for auction (escrowed from your inventory); returns the listing id.</summary>
         public async Task<string> SellAsync(string itemId, long count, long minBid, int durationSeconds, long buyout = 0, string currency = "gold")
         {
-            var reply = await Send(new AuctionCommand { Op = AuctionOp.Sell, ItemId = itemId, Count = count, MinBid = minBid, Buyout = buyout, Currency = currency, DurationSeconds = durationSeconds }).ConfigureAwait(false);
+            var reply = await Send(AuctionOp.Sell, new AuctionCommand { ItemId = itemId, Count = count, MinBid = minBid, Buyout = buyout, Currency = currency, DurationSeconds = durationSeconds }).ConfigureAwait(false);
             return reply.ListingId;
         }
 
         /// <summary>Places a bid (must beat the current bid / meet the minimum); your currency is escrowed.</summary>
-        public Task BidAsync(string listingId, long amount) => Send(new AuctionCommand { Op = AuctionOp.Bid, ListingId = listingId, Amount = amount });
+        public Task BidAsync(string listingId, long amount) => Send(AuctionOp.Bid, new AuctionCommand { ListingId = listingId, Amount = amount });
 
         /// <summary>Buys a listing outright at its buyout price and settles immediately.</summary>
-        public Task BuyoutAsync(string listingId) => Send(new AuctionCommand { Op = AuctionOp.Buyout, ListingId = listingId });
+        public Task BuyoutAsync(string listingId) => Send(AuctionOp.Buyout, new AuctionCommand { ListingId = listingId });
 
         /// <summary>Cancels your own listing (only allowed while it has no bids); the item is returned.</summary>
-        public Task CancelAsync(string listingId) => Send(new AuctionCommand { Op = AuctionOp.Cancel, ListingId = listingId });
+        public Task CancelAsync(string listingId) => Send(AuctionOp.Cancel, new AuctionCommand { ListingId = listingId });
 
-        private async Task<AuctionReply> Send(AuctionCommand cmd)
+        private async Task<AuctionReply> Send(AuctionOp op, AuctionCommand cmd)
         {
-            var id = AuctionRegistry.NextId();
-            cmd.CorrelationId = id;
-            var tcs = new TaskCompletionSource<AuctionReply>(TaskCreationOptions.RunContinuationsAsynchronously);
-            AuctionRegistry.Register(id, tcs);
             try
             {
-                await _client.SendAsync(AuctionTypes.Command, cmd.Encode(), DeliveryMethod.Reliable).ConfigureAwait(false);
-                using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
-                using (timeout.Token.Register(() => tcs.TrySetCanceled()))
-                {
-                    AuctionReply reply;
-                    try { reply = await tcs.Task.ConfigureAwait(false); }
-                    catch (OperationCanceledException) { throw new AuctionException("Auction command timed out."); }
-                    if (!reply.Success) throw new AuctionException(reply.Error);
-                    return reply;
-                }
+                var body = await _client.RequestRawAsync(Channels.Auction, (ushort)op, cmd.Encode()).ConfigureAwait(false);
+                return AuctionReply.Decode(body);
             }
-            finally { AuctionRegistry.Remove(id); }
+            catch (ProtocolException ex) { throw new AuctionException(ex.Message); }
+            catch (TimeoutException) { throw new AuctionException("Auction command timed out."); }
         }
 
-        internal void OnEvent(AuctionEvent evt)
+        private void OnEvent(AuctionEventType type, byte[] body)
         {
-            switch (evt.Type)
+            var evt = AuctionEvent.Decode(type, body);
+            switch (type)
             {
                 case AuctionEventType.Outbid: Outbid?.Invoke(evt); break;
                 case AuctionEventType.Won: Won?.Invoke(evt); break;
@@ -336,31 +304,29 @@ namespace SetNet.Auction
 
         internal static AuctionServer? For(BaseServer? server) => server != null && Servers.TryGetValue(server, out var s) ? s : null;
 
-        internal async Task OnCommand(BasePeer peer, AuctionCommand cmd)
+        internal Task HandleAsync(ChannelRequest request)
         {
-            var me = _inventory.KeyOf(peer);
-            try
+            var me = _inventory.KeyOf(request.Peer);
+            var cmd = AuctionCommand.Decode(request.RawBody);
+            switch ((AuctionOp)request.Op)
             {
-                switch (cmd.Op)
-                {
-                    case AuctionOp.Browse: await Reply(peer, cmd.CorrelationId, true, "", "", Snapshot()); break;
-                    case AuctionOp.Sell: await Sell(peer, me, cmd); break;
-                    case AuctionOp.Bid: await Bid(peer, me, cmd, cmd.Amount, buyout: false); break;
-                    case AuctionOp.Buyout: await Buyout(peer, me, cmd); break;
-                    case AuctionOp.Cancel: await Cancel(peer, me, cmd); break;
-                }
+                case AuctionOp.Browse: return request.ReplyRawAsync(new AuctionReply { Listings = Snapshot() }.Encode());
+                case AuctionOp.Sell: return Sell(request, me, cmd);
+                case AuctionOp.Bid: return Bid(request, me, cmd, cmd.Amount, buyout: false);
+                case AuctionOp.Buyout: return Buyout(request, me, cmd);
+                case AuctionOp.Cancel: return Cancel(request, me, cmd);
+                default: return Task.CompletedTask;
             }
-            catch (AuctionException ex) { await Reply(peer, cmd.CorrelationId, false, ex.Message, "", null); }
         }
 
-        private async Task Sell(BasePeer peer, string me, AuctionCommand cmd)
+        private async Task Sell(ChannelRequest request, string me, AuctionCommand cmd)
         {
             if (string.IsNullOrEmpty(cmd.ItemId) || cmd.Count <= 0 || cmd.MinBid < 0 || cmd.DurationSeconds <= 0)
-            { await Reply(peer, cmd.CorrelationId, false, "Invalid listing.", "", null); return; }
+                throw new ProtocolException("Invalid listing.");
 
             // Escrow the item out of the seller's inventory.
             if (!await _inventory.TryRevokeAsync(me, cmd.ItemId, cmd.Count).ConfigureAwait(false))
-            { await Reply(peer, cmd.CorrelationId, false, "You don't have that item.", "", null); return; }
+                throw new ProtocolException("You don't have that item.");
 
             var listing = new Listing
             {
@@ -370,27 +336,27 @@ namespace SetNet.Auction
                 ExpiresTicks = Stopwatch.GetTimestamp() + (long)(cmd.DurationSeconds * (double)Stopwatch.Frequency),
             };
             _listings[listing.Id] = listing;
-            await Reply(peer, cmd.CorrelationId, true, "", listing.Id, null);
+            await request.ReplyRawAsync(new AuctionReply { ListingId = listing.Id }.Encode()).ConfigureAwait(false);
         }
 
-        private async Task Bid(BasePeer peer, string me, AuctionCommand cmd, long amount, bool buyout)
+        private async Task Bid(ChannelRequest request, string me, AuctionCommand cmd, long amount, bool buyout)
         {
-            if (!_listings.TryGetValue(cmd.ListingId ?? "", out var listing)) throw new AuctionException("No such listing.");
-            if (listing.Seller == me) throw new AuctionException("You can't bid on your own listing.");
+            if (!_listings.TryGetValue(cmd.ListingId ?? "", out var listing)) throw new ProtocolException("No such listing.");
+            if (listing.Seller == me) throw new ProtocolException("You can't bid on your own listing.");
 
             string? refundBidder = null; long refundAmount = 0;
             lock (listing.Gate)
             {
-                if (listing.Settled) throw new AuctionException("Listing already ended.");
+                if (listing.Settled) throw new ProtocolException("Listing already ended.");
                 var minRequired = listing.CurrentBidder == null ? listing.MinBid : listing.CurrentBid + 1;
-                if (!buyout && amount < minRequired) throw new AuctionException($"Bid must be at least {minRequired}.");
+                if (!buyout && amount < minRequired) throw new ProtocolException($"Bid must be at least {minRequired}.");
                 refundBidder = listing.CurrentBidder;
                 refundAmount = listing.CurrentBid;
             }
 
             // Escrow the new bid before committing it as the high bid.
             if (!await _wallet.TryWithdrawAsync(me, listing.Currency, amount).ConfigureAwait(false))
-                throw new AuctionException($"Not enough {listing.Currency}.");
+                throw new ProtocolException($"Not enough {listing.Currency}.");
 
             // Refund the previous high bidder (their escrow returns).
             if (refundBidder != null && refundAmount > 0)
@@ -402,22 +368,22 @@ namespace SetNet.Auction
             lock (listing.Gate) { listing.CurrentBid = amount; listing.CurrentBidder = me; }
 
             if (buyout) await Settle(listing).ConfigureAwait(false);
-            await Reply(peer, cmd.CorrelationId, true, "", listing.Id, null);
+            await request.ReplyRawAsync(new AuctionReply { ListingId = listing.Id }.Encode()).ConfigureAwait(false);
         }
 
-        private async Task Buyout(BasePeer peer, string me, AuctionCommand cmd)
+        private async Task Buyout(ChannelRequest request, string me, AuctionCommand cmd)
         {
-            if (!_listings.TryGetValue(cmd.ListingId ?? "", out var listing)) throw new AuctionException("No such listing.");
-            if (listing.Buyout <= 0) throw new AuctionException("This listing has no buyout.");
-            await Bid(peer, me, cmd, listing.Buyout, buyout: true).ConfigureAwait(false);
+            if (!_listings.TryGetValue(cmd.ListingId ?? "", out var listing)) throw new ProtocolException("No such listing.");
+            if (listing.Buyout <= 0) throw new ProtocolException("This listing has no buyout.");
+            await Bid(request, me, cmd, listing.Buyout, buyout: true).ConfigureAwait(false);
         }
 
-        private async Task Cancel(BasePeer peer, string me, AuctionCommand cmd)
+        private async Task Cancel(ChannelRequest request, string me, AuctionCommand cmd)
         {
-            if (!_listings.TryGetValue(cmd.ListingId ?? "", out var listing)) throw new AuctionException("No such listing.");
-            if (listing.Seller != me) throw new AuctionException("Not your listing.");
-            bool hasBid; lock (listing.Gate) { if (listing.Settled) throw new AuctionException("Listing already ended."); hasBid = listing.CurrentBidder != null; }
-            if (hasBid) throw new AuctionException("Can't cancel a listing that has bids.");
+            if (!_listings.TryGetValue(cmd.ListingId ?? "", out var listing)) throw new ProtocolException("No such listing.");
+            if (listing.Seller != me) throw new ProtocolException("Not your listing.");
+            bool hasBid; lock (listing.Gate) { if (listing.Settled) throw new ProtocolException("Listing already ended."); hasBid = listing.CurrentBidder != null; }
+            if (hasBid) throw new ProtocolException("Can't cancel a listing that has bids.");
 
             if (TryClaimSettle(listing))
             {
@@ -425,7 +391,7 @@ namespace SetNet.Auction
                 await _inventory.GrantAsync(listing.Seller, listing.ItemId, listing.Count).ConfigureAwait(false);   // return escrow
                 await Notify(listing.Seller, ReturnedEvent(listing)).ConfigureAwait(false);
             }
-            await Reply(peer, cmd.CorrelationId, true, "", listing.Id, null);
+            await request.ReplyRawAsync(new AuctionReply { ListingId = listing.Id }.Encode()).ConfigureAwait(false);
         }
 
         private async Task SettleExpired()
@@ -489,46 +455,32 @@ namespace SetNet.Auction
         {
             var peer = _inventory.PeerFor(playerKey);
             if (peer == null) return Task.CompletedTask;
-            try { return peer.SendAsync(AuctionTypes.Event, evt.Encode(), DeliveryMethod.Reliable); } catch { return Task.CompletedTask; }
+            try { return peer.PublishRawAsync(Channels.Auction, (ushort)EvtOp(evt.Type), evt.Encode()); } catch { return Task.CompletedTask; }
         }
 
-        private static Task Reply(BasePeer peer, int corr, bool ok, string error, string listingId, List<AuctionListing>? listings)
-        {
-            var reply = new AuctionReply { CorrelationId = corr, Success = ok, Error = error, ListingId = listingId, Listings = listings ?? new List<AuctionListing>() };
-            try { return peer.SendAsync(AuctionTypes.Reply, reply.Encode(), DeliveryMethod.Reliable); } catch { return Task.CompletedTask; }
-        }
+        // AuctionEvt is AuctionEventType shifted into the event-op range (10..13).
+        private static AuctionEvt EvtOp(AuctionEventType type) => (AuctionEvt)(10 + (byte)type);
 
         /// <summary>Stops the settlement timer.</summary>
         public void Dispose() => _timer.Dispose();
     }
 
-    /// <summary>Auto-discovered server handler for auction commands.</summary>
-    [MessageHandler(AuctionTypes.Command)]
-    public sealed class AuctionCommandHandler : IServerMessageHandler<byte[]>
+    // ---- auto-discovered channel service ----
+
+    /// <summary>Auto-discovered channel service for auction commands.</summary>
+    [ProtocolChannel(Channels.Auction)]
+    public sealed class AuctionChannelService : IChannelService
     {
         /// <inheritdoc/>
-        public Task HandleAsync(BasePeer peer, byte[] data)
+        public Task HandleAsync(ChannelRequest request)
         {
-            var hub = AuctionServer.For(peer.CurrentPeerInfo.Server);
-            return hub?.OnCommand(peer, AuctionCommand.Decode(data)) ?? Task.CompletedTask;
+            var hub = AuctionServer.For(request.Peer.CurrentPeerInfo.Server);
+            if (hub == null) throw new ProtocolException("auction is not configured on this server");
+            return hub.HandleAsync(request);
         }
     }
 
-    /// <summary>Auto-discovered client handler for correlated auction replies.</summary>
-    [MessageHandler(AuctionTypes.Reply)]
-    public sealed class AuctionReplyHandler : IClientMessageHandler<byte[]>
-    {
-        /// <inheritdoc/>
-        public Task HandleAsync(byte[] data) { var r = AuctionReply.Decode(data); AuctionRegistry.Complete(r.CorrelationId, r); return Task.CompletedTask; }
-    }
-
-    /// <summary>Auto-discovered client handler for auction push events.</summary>
-    [MessageHandler(AuctionTypes.Event)]
-    public sealed class AuctionEventHandler : IClientMessageHandler<byte[]>
-    {
-        /// <inheritdoc/>
-        public Task HandleAsync(byte[] data) { AuctionRegistry.DispatchEvent(AuctionEvent.Decode(data)); return Task.CompletedTask; }
-    }
+    // ---- composition entry points ----
 
     /// <summary>Attaches the auction house to a server by composition.</summary>
     public static class AuctionServerExtensions
@@ -550,10 +502,10 @@ namespace SetNet.Auction
         public static AuctionClient UseAuction(this BaseClient client) => new AuctionClient(client);
     }
 
-    /// <summary>One-time bootstrap so the auction handlers are discovered. Call at startup.</summary>
+    /// <summary>One-time bootstrap so the auction channel service is discovered. Call at startup.</summary>
     public static class AuctionRuntime
     {
         /// <summary>Ensures the auction layer is discoverable.</summary>
-        public static void Enable() { _ = AuctionTypes.Command; }
+        public static void Enable() { _ = typeof(AuctionChannelService); }
     }
 }

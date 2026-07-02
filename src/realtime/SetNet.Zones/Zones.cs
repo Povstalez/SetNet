@@ -3,26 +3,24 @@ using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
-using System.Threading;
 using System.Threading.Tasks;
 using SetNet.Core;
-using SetNet.Core.Transport;
-using SetNet.Data;
-using SetNet.Data.Attributes;
+using SetNet.Protocol;
 
 namespace SetNet.Zones
 {
-    /// <summary>Reserved wire types for the zone handoff service. Don't reuse these ids for application messages.</summary>
-    public static class ZoneTypes
+    /// <summary>Command operations (client → server) within the Zones protocol channel.</summary>
+    internal enum ZoneOp : ushort
     {
-        /// <summary>Client → server: claim a handoff token on the destination node.</summary>
-        public const ushort Command = ushort.MaxValue - 55;   // 65480
+        /// <summary>Claim a handoff token on the destination node.</summary>
+        Claim = 1,
+    }
 
-        /// <summary>Server → client: correlated reply to a claim (the carried state).</summary>
-        public const ushort Reply = ushort.MaxValue - 56;     // 65479
-
-        /// <summary>Server → client: push event instructing the client to migrate to another node.</summary>
-        public const ushort Event = ushort.MaxValue - 57;     // 65478
+    /// <summary>Push events (server → client) within the Zones protocol channel.</summary>
+    internal enum ZoneEvt : ushort
+    {
+        /// <summary>Instructs the client to migrate to another node/zone.</summary>
+        Transfer = 10,
     }
 
     /// <summary>Thrown when a zone claim fails (unknown/expired token, timeout).</summary>
@@ -139,103 +137,85 @@ namespace SetNet.Zones
 
     // ---- wire ----
 
-    internal sealed class ZoneClaimReply
+    /// <summary>
+    /// Body codecs for the Zones channel. The unified protocol envelope already carries kind/channel/op/correlation,
+    /// so these encode only the payload fields — hand-framed as <c>byte[]</c> to stay serializer-agnostic.
+    /// </summary>
+    internal static class ZoneWire
     {
-        public int CorrelationId;
-        public bool Success;
-        public string Error = "";
-        public string ZoneId = "";
-        public byte[] State = Array.Empty<byte>();
-
-        public byte[] Encode()
+        /// <summary>Claim-command body: the handoff token.</summary>
+        public static byte[] EncodeClaim(string token)
         {
             using var ms = new MemoryStream();
-            using var w = new BinaryWriter(ms);
-            w.Write(CorrelationId);
-            w.Write(Success);
-            w.Write(Error ?? "");
-            w.Write(ZoneId ?? "");
-            w.Write(State?.Length ?? 0);
-            if (State != null) w.Write(State);
+            using (var w = new BinaryWriter(ms)) w.Write(token ?? "");
             return ms.ToArray();
         }
 
-        public static ZoneClaimReply Decode(byte[] data)
+        /// <summary>Reads a claim-command body.</summary>
+        public static string DecodeClaim(byte[] body)
         {
-            using var ms = new MemoryStream(data);
+            if (body == null || body.Length == 0) return "";
+            using var ms = new MemoryStream(body);
             using var r = new BinaryReader(ms);
-            var reply = new ZoneClaimReply
-            {
-                CorrelationId = r.ReadInt32(),
-                Success = r.ReadBoolean(),
-                Error = r.ReadString(),
-                ZoneId = r.ReadString(),
-            };
+            return r.ReadString();
+        }
+
+        /// <summary>Claim reply body: the claimed zone id and the carried state.</summary>
+        public static byte[] EncodeClaimReply(string zoneId, byte[] state)
+        {
+            using var ms = new MemoryStream();
+            using var w = new BinaryWriter(ms);
+            w.Write(zoneId ?? "");
+            w.Write(state?.Length ?? 0);
+            if (state != null) w.Write(state);
+            return ms.ToArray();
+        }
+
+        /// <summary>Reads a claim reply body.</summary>
+        public static (string zoneId, byte[] state) DecodeClaimReply(byte[] body)
+        {
+            using var ms = new MemoryStream(body);
+            using var r = new BinaryReader(ms);
+            var zoneId = r.ReadString();
             var len = r.ReadInt32();
-            reply.State = len > 0 ? r.ReadBytes(len) : Array.Empty<byte>();
-            return reply;
+            var state = len > 0 ? r.ReadBytes(len) : Array.Empty<byte>();
+            return (zoneId, state);
         }
-    }
 
-    internal sealed class ZoneTransferEvent
-    {
-        public string ZoneId = "";
-        public string Host = "";
-        public int Port;
-        public string Token = "";
-
-        public byte[] Encode()
+        /// <summary>Transfer event body: [zone id][host][port][token].</summary>
+        public static byte[] EncodeTransfer(string zoneId, string host, int port, string token)
         {
             using var ms = new MemoryStream();
             using var w = new BinaryWriter(ms);
-            w.Write(ZoneId ?? "");
-            w.Write(Host ?? "");
-            w.Write(Port);
-            w.Write(Token ?? "");
+            w.Write(zoneId ?? "");
+            w.Write(host ?? "");
+            w.Write(port);
+            w.Write(token ?? "");
             return ms.ToArray();
         }
 
-        public static ZoneTransferEvent Decode(byte[] data)
+        /// <summary>Reads a transfer event body.</summary>
+        public static (string zoneId, string host, int port, string token) DecodeTransfer(byte[] body)
         {
-            using var ms = new MemoryStream(data);
+            using var ms = new MemoryStream(body);
             using var r = new BinaryReader(ms);
-            return new ZoneTransferEvent
-            {
-                ZoneId = r.ReadString(),
-                Host = r.ReadString(),
-                Port = r.ReadInt32(),
-                Token = r.ReadString(),
-            };
+            return (r.ReadString(), r.ReadString(), r.ReadInt32(), r.ReadString());
         }
     }
 
     // ---- client ----
 
-    internal static class ZoneRegistry
-    {
-        private static int _counter;
-        private static readonly ConcurrentDictionary<int, TaskCompletionSource<ZoneClaimReply>> Pending
-            = new ConcurrentDictionary<int, TaskCompletionSource<ZoneClaimReply>>();
-        private static readonly ConcurrentDictionary<ZonesClient, byte> Clients
-            = new ConcurrentDictionary<ZonesClient, byte>();
-
-        public static int NextId() => Interlocked.Increment(ref _counter);
-        public static void Register(int id, TaskCompletionSource<ZoneClaimReply> tcs) => Pending[id] = tcs;
-        public static void Remove(int id) => Pending.TryRemove(id, out _);
-        public static void Complete(int id, ZoneClaimReply reply) { if (Pending.TryGetValue(id, out var tcs)) tcs.TrySetResult(reply); }
-        public static void RegisterClient(ZonesClient c) => Clients[c] = 0;
-        public static void DispatchEvent(ZoneTransferEvent evt) { foreach (var c in Clients.Keys) c.OnTransfer(evt); }
-    }
-
     /// <summary>
     /// Client-side zone driver, attached by <see cref="ZonesClientExtensions.UseZones"/>. When the current node
     /// decides to move you to another zone it raises <see cref="TransferRequested"/> with the destination node's
     /// address and a one-time token; the app connects a client to that node and calls <see cref="ClaimAsync"/> with
-    /// the token to receive the state the origin carried across — giving a seamless handoff with no re-login.
+    /// the token to receive the state the origin carried across — giving a seamless handoff with no re-login. Rides
+    /// the unified protocol on the <see cref="Channels.Zones"/> channel.
     /// </summary>
     public sealed class ZonesClient
     {
         private readonly BaseClient _client;
+        private readonly List<IDisposable> _subscriptions = new List<IDisposable>();
 
         /// <summary>Raised when the server instructs this client to migrate to another node/zone.</summary>
         public event Action<ZoneTransfer>? TransferRequested;
@@ -243,7 +223,7 @@ namespace SetNet.Zones
         internal ZonesClient(BaseClient client)
         {
             _client = client ?? throw new ArgumentNullException(nameof(client));
-            ZoneRegistry.RegisterClient(this);
+            _subscriptions.Add(_client.OnRaw(Channels.Zones, (ushort)ZoneEvt.Transfer, OnTransferEvent));
         }
 
         /// <summary>
@@ -252,34 +232,25 @@ namespace SetNet.Zones
         /// </summary>
         public async Task<byte[]> ClaimAsync(string token)
         {
-            var id = ZoneRegistry.NextId();
-            var tcs = new TaskCompletionSource<ZoneClaimReply>(TaskCreationOptions.RunContinuationsAsynchronously);
-            ZoneRegistry.Register(id, tcs);
             try
             {
-                using var ms = new MemoryStream();
-                using (var w = new BinaryWriter(ms)) { w.Write(id); w.Write(token ?? ""); }
-                await _client.SendAsync(ZoneTypes.Command, ms.ToArray(), DeliveryMethod.Reliable).ConfigureAwait(false);
-
-                using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
-                using (timeout.Token.Register(() => tcs.TrySetCanceled()))
-                {
-                    ZoneClaimReply reply;
-                    try { reply = await tcs.Task.ConfigureAwait(false); }
-                    catch (OperationCanceledException) { throw new ZoneException("Zone claim timed out."); }
-                    if (!reply.Success) throw new ZoneException(reply.Error);
-                    return reply.State;
-                }
+                var body = await _client.RequestRawAsync(Channels.Zones, (ushort)ZoneOp.Claim, ZoneWire.EncodeClaim(token)).ConfigureAwait(false);
+                var (_, state) = ZoneWire.DecodeClaimReply(body);
+                return state;
             }
-            finally { ZoneRegistry.Remove(id); }
+            catch (ProtocolException ex) { throw new ZoneException(ex.Message); }
+            catch (TimeoutException) { throw new ZoneException("Zone claim timed out."); }
         }
 
-        internal void OnTransfer(ZoneTransferEvent evt)
-            => TransferRequested?.Invoke(new ZoneTransfer
+        private void OnTransferEvent(byte[] body)
+        {
+            var (zoneId, host, port, token) = ZoneWire.DecodeTransfer(body);
+            TransferRequested?.Invoke(new ZoneTransfer
             {
-                Target = new ZoneTarget(evt.ZoneId, evt.Host, evt.Port),
-                Token = evt.Token,
+                Target = new ZoneTarget(zoneId, host, port),
+                Token = token,
             });
+        }
     }
 
     // ---- server ----
@@ -326,55 +297,43 @@ namespace SetNet.Zones
             var handoff = new ZoneHandoff { PlayerKey = _options.PlayerKey(peer), ZoneId = target.ZoneId, State = carryState ?? Array.Empty<byte>() };
             await _store.PutAsync(token, handoff, _options.HandoffTtl).ConfigureAwait(false);
 
-            var evt = new ZoneTransferEvent { ZoneId = target.ZoneId, Host = target.Host, Port = target.Port, Token = token };
-            try { await peer.SendAsync(ZoneTypes.Event, evt.Encode(), DeliveryMethod.Reliable).ConfigureAwait(false); }
+            try { await peer.PublishRawAsync(Channels.Zones, (ushort)ZoneEvt.Transfer, ZoneWire.EncodeTransfer(target.ZoneId, target.Host, target.Port, token)).ConfigureAwait(false); }
             catch { /* client dropped; the token simply expires */ }
             return token;
         }
 
-        internal async Task OnClaim(BasePeer peer, int correlationId, string token)
+        internal async Task OnClaim(ChannelRequest request, string token)
         {
             var handoff = await _store.TakeAsync(token).ConfigureAwait(false);
-            ZoneClaimReply reply = handoff == null
-                ? new ZoneClaimReply { CorrelationId = correlationId, Success = false, Error = "Unknown or expired handoff token." }
-                : new ZoneClaimReply { CorrelationId = correlationId, Success = true, ZoneId = handoff.ZoneId, State = handoff.State };
-            try { await peer.SendAsync(ZoneTypes.Reply, reply.Encode(), DeliveryMethod.Reliable).ConfigureAwait(false); } catch { /* dropped */ }
+            if (handoff == null) throw new ProtocolException("Unknown or expired handoff token.");
+            await request.ReplyRawAsync(ZoneWire.EncodeClaimReply(handoff.ZoneId, handoff.State)).ConfigureAwait(false);
         }
     }
 
-    // ---- auto-discovered handlers ----
+    // ---- auto-discovered channel service ----
 
-    /// <summary>Auto-discovered server handler for zone claim commands.</summary>
-    [MessageHandler(ZoneTypes.Command)]
-    public sealed class ZoneCommandHandler : IServerMessageHandler<byte[]>
+    /// <summary>
+    /// Auto-discovered channel service for zone claim commands. Replaces the former hand-framed
+    /// <c>[MessageHandler]</c> classes and correlation plumbing: the unified protocol handles correlation and reply
+    /// framing, so this only implements the claim logic and dispatches on the op.
+    /// </summary>
+    [ProtocolChannel(Channels.Zones)]
+    public sealed class ZonesChannelService : IChannelService
     {
         /// <inheritdoc/>
-        public Task HandleAsync(BasePeer peer, byte[] data)
+        public Task HandleAsync(ChannelRequest request)
         {
-            var hub = ZonesServer.For(peer.CurrentPeerInfo.Server);
-            if (hub == null) return Task.CompletedTask;
-            using var ms = new MemoryStream(data);
-            using var r = new BinaryReader(ms);
-            var corr = r.ReadInt32();
-            var token = r.ReadString();
-            return hub.OnClaim(peer, corr, token);
+            var hub = ZonesServer.For(request.Peer.CurrentPeerInfo.Server);
+            if (hub == null) throw new ProtocolException("zones are not configured on this server");
+
+            switch ((ZoneOp)request.Op)
+            {
+                case ZoneOp.Claim:
+                    return hub.OnClaim(request, ZoneWire.DecodeClaim(request.RawBody));
+                default:
+                    return Task.CompletedTask;
+            }
         }
-    }
-
-    /// <summary>Auto-discovered client handler for correlated zone claim replies.</summary>
-    [MessageHandler(ZoneTypes.Reply)]
-    public sealed class ZoneReplyHandler : IClientMessageHandler<byte[]>
-    {
-        /// <inheritdoc/>
-        public Task HandleAsync(byte[] data) { var r = ZoneClaimReply.Decode(data); ZoneRegistry.Complete(r.CorrelationId, r); return Task.CompletedTask; }
-    }
-
-    /// <summary>Auto-discovered client handler for zone migrate instructions.</summary>
-    [MessageHandler(ZoneTypes.Event)]
-    public sealed class ZoneEventHandler : IClientMessageHandler<byte[]>
-    {
-        /// <inheritdoc/>
-        public Task HandleAsync(byte[] data) { ZoneRegistry.DispatchEvent(ZoneTransferEvent.Decode(data)); return Task.CompletedTask; }
     }
 
     // ---- composition entry points ----
@@ -397,10 +356,10 @@ namespace SetNet.Zones
         public static ZonesClient UseZones(this BaseClient client) => new ZonesClient(client);
     }
 
-    /// <summary>One-time bootstrap so the zone handlers are discovered. Call at startup.</summary>
+    /// <summary>One-time bootstrap so the zone channel service is discovered. Call at startup.</summary>
     public static class ZonesRuntime
     {
         /// <summary>Ensures the zone layer is discoverable.</summary>
-        public static void Enable() { _ = ZoneTypes.Command; }
+        public static void Enable() { _ = typeof(ZonesChannelService); }
     }
 }

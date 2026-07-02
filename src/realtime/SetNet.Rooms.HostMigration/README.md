@@ -71,7 +71,7 @@ Compare `newHostPlayerId` against `rooms.CurrentRoom?.OwnPlayerId` to tell wheth
 - **Promotion picks the next remaining member.** When the host leaves or disconnects, the first of the remaining members becomes host and every remaining member receives `HostChanged`. If a non-host leaves, nothing is emitted. When the last member leaves, the room's host state is discarded.
 - **Reliable delivery.** The host-changed notification rides `DeliveryMethod.Reliable`.
 - **Node-local**, matching Rooms — hosts and members are live peers on one server node. A multi-node deployment would coordinate through a shared store.
-- Reserved wire type `65508` (just below the party range). Serializer-agnostic (hand-framed protocol).
+- Rides the unified **SetNet.Protocol** messaging layer on the `Channels.HostMigration` channel (all modules share one envelope wire type, `65447`) — no per-module wire ids to reserve. Serializer-agnostic: the control protocol is hand-framed `byte[]`, your payloads use your `SetNetSerializer`.
 
 ## Documentation & source
 

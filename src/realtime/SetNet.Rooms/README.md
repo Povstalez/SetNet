@@ -83,7 +83,7 @@ Rooms live in an in-process `MemoryRoomStore` by default. Implement `IRoomStore`
 ## Notes
 
 - **Serializer-agnostic, depends only on `SetNet`** — the room protocol is hand-framed (no MessagePack dependency); your broadcast bodies use your `SetNetSerializer`.
-- Uses reserved wire type ids `65526`/`65527`/`65528` — don't use those for your own messages.
+- Rides the unified **SetNet.Protocol** messaging layer on the `Channels.Rooms` channel (all modules share one envelope wire type, `65447`) — no per-module wire ids to reserve. Serializer-agnostic: the control protocol is hand-framed `byte[]`, your payloads use your `SetNetSerializer`.
 - **One client per process** is the norm and fully correct. Running **multiple clients in one process** (e.g. bots/tests) shares event routing (events are filtered by room code), so co-located clients in the same room both observe events — fine in practice, a caveat for in-process multi-client.
 - Host designation / host migration and a relay mode are planned for a future version.
 

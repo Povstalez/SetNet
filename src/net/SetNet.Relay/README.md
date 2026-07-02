@@ -72,7 +72,7 @@ await relay.SendToAsync(hostPeerId, payload);   // → one member
 
 ## Notes
 
-- **Reserved wire types 65498 / 65499 / 65500.** Don't reuse them.
+- Rides the unified **SetNet.Protocol** messaging layer on the `Channels.Relay` channel (all modules share one envelope wire type, `65447`) — no per-module wire ids to reserve. Serializer-agnostic: the control protocol is hand-framed `byte[]`, your payloads use your `SetNetSerializer`.
 - **Opaque forwarding.** The relay copies bytes between members and never deserializes them — pick `DeliveryMethod.Unreliable` for latency-tolerant traffic (over a UDP/Both transport) or the default `Reliable`. Keep unreliable payloads under the transport's datagram limit (~1200 B on UDP).
 - **Relay vs [Rooms](https://www.nuget.org/packages/SetNet.Rooms).** Rooms broadcast **typed** messages through your serializer and are built for lobby/game membership. Relay forwards **raw opaque** bytes with a per-sender id and 1:1 addressing — the right tool for NAT fallback and tunnelling. Use Rooms for gameplay; reach for Relay when peers can't connect directly.
 - **Node-local sessions.** Sessions live on the relay server that created them (like Rooms/Voice); run one relay endpoint, or shard clients so both peers of a session land on the same node.

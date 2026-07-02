@@ -89,7 +89,7 @@ await chat.LeaveAsync("team-red");
 - **Channels are ad-hoc** — a channel exists as soon as someone joins it; there's no separate "create". Use any naming scheme you like (`"global"`, `"team-red"`, `$"room-{code}"`).
 - **Reliable delivery.** Chat rides `DeliveryMethod.Reliable`, so messages are ordered and not dropped.
 - **Node-local.** Channels are live peers on one server node. A multi-node deployment would coordinate through a shared bus.
-- Reserved wire types `65509 / 65510`. Serializer-agnostic (hand-framed protocol) — chat works regardless of which serializer you register.
+- Rides the unified **SetNet.Protocol** messaging layer on the `Channels.Chat` channel (all modules share one envelope wire type, `65447`) — no per-module wire ids to reserve. Serializer-agnostic: the control protocol is hand-framed `byte[]`, your payloads use your `SetNetSerializer`.
 
 ## Documentation & source
 

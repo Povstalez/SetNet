@@ -2,25 +2,15 @@ using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
-using System.Threading;
 using System.Threading.Tasks;
 using SetNet.Core;
-using SetNet.Core.Transport;
-using SetNet.Data;
-using SetNet.Data.Attributes;
 using SetNet.Inventory;
+using SetNet.Protocol;
 
 namespace SetNet.Loot
 {
-    /// <summary>Reserved wire types for the loot service. Don't reuse these ids for application messages.</summary>
-    public static class LootTypes
-    {
-        /// <summary>Client → server: open-container command.</summary>
-        public const ushort Command = ushort.MaxValue - 69;   // 65466
-
-        /// <summary>Server → client: correlated reply (the rolled drops).</summary>
-        public const ushort Reply = ushort.MaxValue - 70;     // 65465
-    }
+    /// <summary>Command operations (client → server) within the Loot protocol channel.</summary>
+    internal enum LootOp : ushort { Open = 1 }
 
     /// <summary>Thrown when a loot open is denied or fails (unknown table, not permitted, timeout).</summary>
     public sealed class LootException : Exception
@@ -90,59 +80,48 @@ namespace SetNet.Loot
 
     internal static class LootCodec
     {
-        public static byte[] EncodeCommand(int corr, string tableId)
+        public static byte[] EncodeCommand(string tableId)
         {
             using var ms = new MemoryStream();
             using var w = new BinaryWriter(ms);
-            w.Write(corr); w.Write(tableId ?? "");
+            w.Write(tableId ?? "");
             return ms.ToArray();
         }
 
-        public static (int Corr, string TableId) DecodeCommand(byte[] data)
+        public static string DecodeCommand(byte[] data)
         {
+            if (data == null || data.Length == 0) return "";
             using var ms = new MemoryStream(data);
             using var r = new BinaryReader(ms);
-            return (r.ReadInt32(), r.ReadString());
+            return r.ReadString();
         }
 
-        public static byte[] EncodeReply(int corr, bool ok, string error, List<ItemStack> drops)
+        public static byte[] EncodeReply(List<ItemStack> drops)
         {
             using var ms = new MemoryStream();
             using var w = new BinaryWriter(ms);
-            w.Write(corr); w.Write(ok); w.Write(error ?? "");
             w.Write(drops.Count);
             foreach (var d in drops) { w.Write(d.ItemId ?? ""); w.Write(d.Count); }
             return ms.ToArray();
         }
 
-        public static (int Corr, bool Ok, string Error, List<ItemStack> Drops) DecodeReply(byte[] data)
+        public static List<ItemStack> DecodeReply(byte[] data)
         {
+            if (data == null || data.Length == 0) return new List<ItemStack>();
             using var ms = new MemoryStream(data);
             using var r = new BinaryReader(ms);
-            var corr = r.ReadInt32(); var ok = r.ReadBoolean(); var err = r.ReadString();
             var count = r.ReadInt32();
             var drops = new List<ItemStack>(count);
             for (var i = 0; i < count; i++) drops.Add(new ItemStack(r.ReadString(), r.ReadInt64()));
-            return (corr, ok, err, drops);
+            return drops;
         }
-    }
-
-    internal static class LootRegistry
-    {
-        private static int _counter;
-        private static readonly ConcurrentDictionary<int, TaskCompletionSource<(bool Ok, string Error, List<ItemStack> Drops)>> Pending
-            = new ConcurrentDictionary<int, TaskCompletionSource<(bool, string, List<ItemStack>)>>();
-
-        public static int NextId() => Interlocked.Increment(ref _counter);
-        public static void Register(int id, TaskCompletionSource<(bool, string, List<ItemStack>)> tcs) => Pending[id] = tcs;
-        public static void Remove(int id) => Pending.TryRemove(id, out _);
-        public static void Complete(int id, (bool, string, List<ItemStack>) result) { if (Pending.TryGetValue(id, out var tcs)) tcs.TrySetResult(result); }
     }
 
     /// <summary>
     /// Client-side loot driver, attached by <see cref="LootClientExtensions.UseLoot"/>. Requests to open a container;
     /// the server checks the open is permitted (<see cref="LootOptions.CanOpen"/>), rolls the table, grants the drops
     /// to your inventory, and returns them for a reveal animation. Most loot is server-triggered, not client-opened.
+    /// Rides the unified protocol on the <see cref="Channels.Loot"/> channel.
     /// </summary>
     public sealed class LootClient
     {
@@ -153,23 +132,13 @@ namespace SetNet.Loot
         /// <summary>Opens a container by table id; returns the granted drops or throws <see cref="LootException"/> if denied.</summary>
         public async Task<IReadOnlyList<ItemStack>> OpenAsync(string tableId)
         {
-            var id = LootRegistry.NextId();
-            var tcs = new TaskCompletionSource<(bool, string, List<ItemStack>)>(TaskCreationOptions.RunContinuationsAsynchronously);
-            LootRegistry.Register(id, tcs);
             try
             {
-                await _client.SendAsync(LootTypes.Command, LootCodec.EncodeCommand(id, tableId), DeliveryMethod.Reliable).ConfigureAwait(false);
-                using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
-                using (timeout.Token.Register(() => tcs.TrySetCanceled()))
-                {
-                    (bool Ok, string Error, List<ItemStack> Drops) result;
-                    try { result = await tcs.Task.ConfigureAwait(false); }
-                    catch (OperationCanceledException) { throw new LootException("Loot open timed out."); }
-                    if (!result.Ok) throw new LootException(result.Error);
-                    return result.Drops;
-                }
+                var body = await _client.RequestRawAsync(Channels.Loot, (ushort)LootOp.Open, LootCodec.EncodeCommand(tableId)).ConfigureAwait(false);
+                return LootCodec.DecodeReply(body);
             }
-            finally { LootRegistry.Remove(id); }
+            catch (ProtocolException ex) { throw new LootException(ex.Message); }
+            catch (TimeoutException) { throw new LootException("Loot open timed out."); }
         }
     }
 
@@ -252,43 +221,30 @@ namespace SetNet.Loot
             return drops;
         }
 
-        internal async Task OnCommand(BasePeer peer, byte[] data)
+        internal async Task HandleAsync(ChannelRequest request)
         {
-            var (corr, tableId) = LootCodec.DecodeCommand(data);
-            var playerKey = _inventory.KeyOf(peer);
+            var tableId = LootCodec.DecodeCommand(request.RawBody);
+            var playerKey = _inventory.KeyOf(request.Peer);
 
-            if (!_tables.ContainsKey(tableId ?? "")) { await Reply(peer, corr, false, "No such loot table.", new List<ItemStack>()).ConfigureAwait(false); return; }
-            if (!_options.CanOpen(playerKey, tableId)) { await Reply(peer, corr, false, "Not permitted to open this.", new List<ItemStack>()).ConfigureAwait(false); return; }
+            if (!_tables.ContainsKey(tableId)) throw new ProtocolException("No such loot table.");
+            if (!_options.CanOpen(playerKey, tableId)) throw new ProtocolException("Not permitted to open this.");
 
             var drops = new List<ItemStack>(await RollAndGrantAsync(playerKey, tableId).ConfigureAwait(false));
-            await Reply(peer, corr, true, "", drops).ConfigureAwait(false);
-        }
-
-        private static Task Reply(BasePeer peer, int corr, bool ok, string error, List<ItemStack> drops)
-        {
-            try { return peer.SendAsync(LootTypes.Reply, LootCodec.EncodeReply(corr, ok, error, drops), DeliveryMethod.Reliable); }
-            catch { return Task.CompletedTask; }
+            await request.ReplyRawAsync(LootCodec.EncodeReply(drops)).ConfigureAwait(false);
         }
     }
 
-    /// <summary>Auto-discovered server handler for loot commands.</summary>
-    [MessageHandler(LootTypes.Command)]
-    public sealed class LootCommandHandler : IServerMessageHandler<byte[]>
+    /// <summary>Auto-discovered channel service for loot commands.</summary>
+    [ProtocolChannel(Channels.Loot)]
+    public sealed class LootChannelService : IChannelService
     {
         /// <inheritdoc/>
-        public Task HandleAsync(BasePeer peer, byte[] data)
+        public Task HandleAsync(ChannelRequest request)
         {
-            var hub = LootServer.For(peer.CurrentPeerInfo.Server);
-            return hub?.OnCommand(peer, data) ?? Task.CompletedTask;
+            var hub = LootServer.For(request.Peer.CurrentPeerInfo.Server);
+            if (hub == null) throw new ProtocolException("loot is not configured on this server");
+            return hub.HandleAsync(request);
         }
-    }
-
-    /// <summary>Auto-discovered client handler for correlated loot replies.</summary>
-    [MessageHandler(LootTypes.Reply)]
-    public sealed class LootReplyHandler : IClientMessageHandler<byte[]>
-    {
-        /// <inheritdoc/>
-        public Task HandleAsync(byte[] data) { var (corr, ok, err, drops) = LootCodec.DecodeReply(data); LootRegistry.Complete(corr, (ok, err, drops)); return Task.CompletedTask; }
     }
 
     /// <summary>Attaches the loot hub to a server by composition.</summary>
@@ -310,10 +266,10 @@ namespace SetNet.Loot
         public static LootClient UseLoot(this BaseClient client) => new LootClient(client);
     }
 
-    /// <summary>One-time bootstrap so the loot handlers are discovered. Call at startup.</summary>
+    /// <summary>One-time bootstrap so the loot channel service is discovered. Call at startup.</summary>
     public static class LootRuntime
     {
         /// <summary>Ensures the loot layer is discoverable.</summary>
-        public static void Enable() { _ = LootTypes.Command; }
+        public static void Enable() { _ = typeof(LootChannelService); }
     }
 }

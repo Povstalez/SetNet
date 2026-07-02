@@ -45,7 +45,7 @@ await gameClient.ConnectAsync();
 
 ## Notes
 
-- **Reserved wire types 65454 / 65455.** Don't reuse them.
+- Rides the unified **SetNet.Protocol** messaging layer on the `Channels.LoadBalancer` channel (all modules share one envelope wire type, `65447`) — no per-module wire ids to reserve. Serializer-agnostic: the control protocol is hand-framed `byte[]`, your payloads use your `SetNetSerializer`.
 - **You feed the registry.** This package doesn't gossip or health-check on its own — push node loads via `UpdateNode`/`ReportLoad`, typically from [`SetNet.Cluster`](https://www.nuget.org/packages/SetNet.Cluster) broadcasts or your orchestrator. `RemoveNode` a drained/dead node.
 - **Selection:** the node with the lowest load/capacity ratio that isn't full. Uncapped nodes (capacity 0) are ranked by raw load and never reported full.
 - **Balancer vs [Sharding](https://www.nuget.org/packages/SetNet.Sharding):** balancer picks by *capacity* (any node will do); Sharding picks by *key* (a room/region must always land on the same node). Use both — balance new sessions, shard keyed ones.

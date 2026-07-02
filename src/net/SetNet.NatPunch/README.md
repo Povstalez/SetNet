@@ -79,7 +79,7 @@ else
 
 ## Notes
 
-- **Reserved wire types 65495 / 65496 / 65497.** Don't reuse them.
+- Rides the unified **SetNet.Protocol** messaging layer on the `Channels.NatPunch` channel (all modules share one envelope wire type, `65447`) — no per-module wire ids to reserve. Serializer-agnostic: the control protocol is hand-framed `byte[]`, your payloads use your `SetNetSerializer`.
 - **Works for the common case, not every case.** The public candidate is the server-observed source IP plus the client-reported UDP port — correct for full-cone and port-preserving NATs (typical home routers). **Symmetric NATs** (common on mobile carriers and corporate networks) randomize ports per destination and will not punch: detect the `null` result and fall back to [`SetNet.Relay`](https://www.nuget.org/packages/SetNet.Relay).
 - **Punch, then use the port immediately.** NAT mappings expire within seconds when idle. Bind your real traffic (e.g. a SetNet UDP client/host) to the same local port right after a successful punch, or keep a keepalive going.
 - **Same-LAN peers** connect via the private candidates automatically — the puncher probes public and private endpoints in the same sweep.

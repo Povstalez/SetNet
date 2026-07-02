@@ -5,23 +5,15 @@ using System.IO;
 using System.Text;
 using System.Threading.Tasks;
 using SetNet.Core;
-using SetNet.Core.Transport;
-using SetNet.Data;
-using SetNet.Data.Attributes;
+using SetNet.Protocol;
 
 namespace SetNet.Chat
 {
-    /// <summary>Reserved wire types for the chat protocol. Don't reuse.</summary>
-    public static class ChatTypes
-    {
-        /// <summary>Client → server chat command (join/leave/message).</summary>
-        public const ushort Command = ushort.MaxValue - 26;   // 65509
+    /// <summary>Command operations (client → server) within the Chat protocol channel (fire-and-forget).</summary>
+    internal enum ChatOp : ushort { Join = 1, Leave = 2, Message = 3 }
 
-        /// <summary>Server → client chat event (a delivered message).</summary>
-        public const ushort Event = ushort.MaxValue - 25;     // 65510
-    }
-
-    internal enum ChatOp : byte { Join = 0, Leave = 1, Message = 2 }
+    /// <summary>Push events (server → client) within the Chat protocol channel.</summary>
+    internal enum ChatEvt : ushort { Message = 10 }
 
     /// <summary>Options for the chat server.</summary>
     public sealed class ChatOptions
@@ -35,7 +27,7 @@ namespace SetNet.Chat
 
     /// <summary>
     /// Text chat by composition: channel-based (join/leave a channel by name), server-relayed, with optional length limits
-    /// and a simple whole-word profanity filter. Works alongside your regular messages; enable on both ends.
+    /// and a simple whole-word profanity filter. Rides the unified protocol on the <see cref="Channels.Chat"/> channel.
     /// </summary>
     public sealed class ChatServer
     {
@@ -76,7 +68,7 @@ namespace SetNet.Chat
             var evt = ChatWire.EncodeEvent(channel, sender.CurrentPeerInfo.Id.ToString("N"), text);
             foreach (var member in members.Values)
             {
-                try { await member.SendAsync(ChatTypes.Event, evt, DeliveryMethod.Reliable).ConfigureAwait(false); } catch { /* dropping */ }
+                try { await member.PublishRawAsync(Channels.Chat, (ushort)ChatEvt.Message, evt).ConfigureAwait(false); } catch { /* dropping */ }
             }
         }
 
@@ -110,6 +102,7 @@ namespace SetNet.Chat
     public sealed class ChatClient
     {
         private readonly BaseClient _client;
+        private readonly IDisposable _subscription;
 
         /// <summary>Raised on an incoming message (args: channel, sender player id, text).</summary>
         public event Action<string, string, string>? MessageReceived;
@@ -117,7 +110,11 @@ namespace SetNet.Chat
         internal ChatClient(BaseClient client)
         {
             _client = client;
-            ChatRegistry.RegisterClient(this);
+            _subscription = _client.OnRaw(Channels.Chat, (ushort)ChatEvt.Message, body =>
+            {
+                var (channel, sender, text) = ChatWire.DecodeEvent(body);
+                MessageReceived?.Invoke(channel, sender, text);
+            });
         }
 
         /// <summary>Joins a channel.</summary>
@@ -129,26 +126,24 @@ namespace SetNet.Chat
         /// <summary>Sends a message to a channel.</summary>
         public Task SendAsync(string channel, string text) => Send(ChatOp.Message, channel, text);
 
-        internal void OnEvent(string channel, string sender, string text) => MessageReceived?.Invoke(channel, sender, text);
-
         private Task Send(ChatOp op, string channel, string text)
-            => _client.SendAsync(ChatTypes.Command, ChatWire.EncodeCommand(op, channel, text), DeliveryMethod.Reliable);
+            => _client.PostRawAsync(Channels.Chat, (ushort)op, ChatWire.EncodeCommand(channel, text));
     }
 
     internal static class ChatWire
     {
-        public static byte[] EncodeCommand(ChatOp op, string channel, string text)
+        public static byte[] EncodeCommand(string channel, string text)
         {
             using var ms = new MemoryStream();
-            using (var w = new BinaryWriter(ms, Encoding.UTF8, leaveOpen: true)) { w.Write((byte)op); w.Write(channel ?? ""); w.Write(text ?? ""); }
+            using (var w = new BinaryWriter(ms, Encoding.UTF8, leaveOpen: true)) { w.Write(channel ?? ""); w.Write(text ?? ""); }
             return ms.ToArray();
         }
 
-        public static (ChatOp op, string channel, string text) DecodeCommand(byte[] frame)
+        public static (string channel, string text) DecodeCommand(byte[] frame)
         {
             using var ms = new MemoryStream(frame);
             using var r = new BinaryReader(ms, Encoding.UTF8);
-            return ((ChatOp)r.ReadByte(), r.ReadString(), r.ReadString());
+            return (r.ReadString(), r.ReadString());
         }
 
         public static byte[] EncodeEvent(string channel, string sender, string text)
@@ -169,11 +164,8 @@ namespace SetNet.Chat
     internal static class ChatRegistry
     {
         private static readonly ConcurrentDictionary<BaseServer, ChatServer> Servers = new ConcurrentDictionary<BaseServer, ChatServer>();
-        private static readonly ConcurrentDictionary<ChatClient, byte> Clients = new ConcurrentDictionary<ChatClient, byte>();
         public static void RegisterServer(BaseServer server, ChatServer chat) => Servers[server] = chat;
         public static ChatServer? GetServer(BaseServer? server) => server != null && Servers.TryGetValue(server, out var s) ? s : null;
-        public static void RegisterClient(ChatClient client) => Clients[client] = 0;
-        public static void ForEachClient(Action<ChatClient> action) { foreach (var c in Clients.Keys) action(c); }
     }
 
     /// <summary>Attaches chat by composition — no base class.</summary>
@@ -196,37 +188,24 @@ namespace SetNet.Chat
         }
     }
 
-    /// <summary>Auto-discovered server handler for chat commands.</summary>
-    [MessageHandler(ChatTypes.Command)]
-    public sealed class ChatCommandHandler : IServerMessageHandler<byte[]>
+    /// <summary>Auto-discovered channel service for chat commands (fire-and-forget: join/leave/message).</summary>
+    [ProtocolChannel(Channels.Chat)]
+    public sealed class ChatChannelService : IChannelService
     {
         /// <inheritdoc/>
-        public Task HandleAsync(BasePeer peer, byte[] data)
+        public Task HandleAsync(ChannelRequest request)
         {
-            var chat = ChatRegistry.GetServer(peer.CurrentPeerInfo.Server);
+            var chat = ChatRegistry.GetServer(request.Peer.CurrentPeerInfo.Server);
             if (chat == null) return Task.CompletedTask;
-            var (op, channel, text) = ChatWire.DecodeCommand(data);
-            return chat.HandleAsync(peer, op, channel, text);
+            var (channel, text) = ChatWire.DecodeCommand(request.RawBody);
+            return chat.HandleAsync(request.Peer, (ChatOp)request.Op, channel, text);
         }
     }
 
-    /// <summary>Auto-discovered client handler for chat events.</summary>
-    [MessageHandler(ChatTypes.Event)]
-    public sealed class ChatEventHandler : IClientMessageHandler<byte[]>
-    {
-        /// <inheritdoc/>
-        public Task HandleAsync(byte[] data)
-        {
-            var (channel, sender, text) = ChatWire.DecodeEvent(data);
-            ChatRegistry.ForEachClient(c => c.OnEvent(channel, sender, text));
-            return Task.CompletedTask;
-        }
-    }
-
-    /// <summary>One-time bootstrap so the chat handlers are discovered. Call at startup.</summary>
+    /// <summary>One-time bootstrap so the chat channel service is discovered. Call at startup.</summary>
     public static class ChatRuntime
     {
         /// <summary>Ensures the chat layer is discoverable.</summary>
-        public static void Enable() { _ = ChatTypes.Command; }
+        public static void Enable() { _ = typeof(ChatChannelService); }
     }
 }

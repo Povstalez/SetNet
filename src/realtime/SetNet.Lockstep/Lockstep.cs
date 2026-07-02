@@ -7,22 +7,16 @@ using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using SetNet.Core;
-using SetNet.Core.Transport;
-using SetNet.Data;
-using SetNet.Data.Attributes;
+using SetNet.Protocol;
 using SetNet.Messaging;
 
 namespace SetNet.Lockstep
 {
-    /// <summary>Reserved wire types for the lockstep protocol (below the entity-RPC range). Don't reuse.</summary>
-    public static class LockstepTypes
-    {
-        /// <summary>Client → server: an input for a specific turn.</summary>
-        public const ushort Input = ushort.MaxValue - 21;   // 65514
+    /// <summary>Command operations (client → server) within the Lockstep protocol channel (fire-and-forget).</summary>
+    internal enum LockstepOp : ushort { Input = 1 }
 
-        /// <summary>Server → client: the finalized input set for a turn.</summary>
-        public const ushort Turn = ushort.MaxValue - 20;    // 65515
-    }
+    /// <summary>Push events (server → client) within the Lockstep protocol channel.</summary>
+    internal enum LockstepEvt : ushort { Turn = 10 }
 
     /// <summary>Tunables for the lockstep engine.</summary>
     public sealed class LockstepOptions
@@ -36,6 +30,7 @@ namespace SetNet.Lockstep
     /// turn and, once **all** inputs are in (or the turn times out), broadcasts the complete input set so every client
     /// advances its simulation identically. Ideal for RTS and other deterministic games where sending inputs is far cheaper
     /// than sending state. Determinism of the simulation itself is your responsibility (fixed-point/careful float use).
+    /// Rides the unified protocol on the <see cref="Channels.Lockstep"/> channel.
     /// </summary>
     public sealed class ServerLockstep : IDisposable
     {
@@ -86,15 +81,12 @@ namespace SetNet.Lockstep
 
         private static async Task SafeSend(BasePeer peer, byte[] frame)
         {
-            try { await peer.SendAsync(LockstepTypes.Turn, frame, DeliveryMethod.Reliable).ConfigureAwait(false); } catch { /* dropping */ }
+            try { await peer.PublishRawAsync(Channels.Lockstep, (ushort)LockstepEvt.Turn, frame).ConfigureAwait(false); } catch { /* dropping */ }
         }
 
         /// <inheritdoc/>
         public void Dispose() => _timer?.Dispose();
     }
-
-    /// <summary>Non-generic sink so the (typeless) registry can deliver a decoded turn to a typed client driver.</summary>
-    internal interface ILockstepClientSink { void OnTurn(uint turn, Dictionary<string, byte[]> inputs); }
 
     /// <summary>
     /// Client-side lockstep driver over a **typed** per-turn input. Submit your input type directly and receive each
@@ -102,9 +94,10 @@ namespace SetNet.Lockstep
     /// never touch raw bytes. (The server relays inputs opaquely and stays serializer-agnostic.)
     /// </summary>
     /// <typeparam name="TInput">Your per-turn input type.</typeparam>
-    public sealed class ClientLockstep<TInput> : ILockstepClientSink
+    public sealed class ClientLockstep<TInput>
     {
         private readonly BaseClient _client;
+        private readonly IDisposable _subscription;
         private uint _nextTurn;
 
         /// <summary>Raised when a turn is finalized (args: turn number, map of player id → that player's deserialized input). Advance your deterministic simulation here.</summary>
@@ -113,7 +106,11 @@ namespace SetNet.Lockstep
         internal ClientLockstep(BaseClient client)
         {
             _client = client;
-            LockstepRegistry.RegisterClient(this);
+            _subscription = _client.OnRaw(Channels.Lockstep, (ushort)LockstepEvt.Turn, body =>
+            {
+                var (turn, inputs) = LockstepWire.DecodeTurn(body);
+                OnTurn(turn, inputs);
+            });
         }
 
         /// <summary>Submits this client's input for the next turn (serialized via <see cref="SetNetSerializer"/>). Returns the turn number it was tagged with.</summary>
@@ -124,7 +121,7 @@ namespace SetNet.Lockstep
             return turn;
         }
 
-        void ILockstepClientSink.OnTurn(uint turn, Dictionary<string, byte[]> inputs)
+        private void OnTurn(uint turn, Dictionary<string, byte[]> inputs)
         {
             if (turn >= _nextTurn) _nextTurn = turn + 1;
             var handler = TurnReady;
@@ -136,7 +133,7 @@ namespace SetNet.Lockstep
 
         private async Task SafeSend(byte[] frame)
         {
-            try { await _client.SendAsync(LockstepTypes.Input, frame, DeliveryMethod.Reliable).ConfigureAwait(false); } catch { /* dropping */ }
+            try { await _client.PostRawAsync(Channels.Lockstep, (ushort)LockstepOp.Input, frame).ConfigureAwait(false); } catch { /* dropping */ }
         }
     }
 
@@ -199,11 +196,8 @@ namespace SetNet.Lockstep
     internal static class LockstepRegistry
     {
         private static readonly ConcurrentDictionary<BaseServer, ServerLockstep> Servers = new ConcurrentDictionary<BaseServer, ServerLockstep>();
-        private static readonly ConcurrentDictionary<ILockstepClientSink, byte> Clients = new ConcurrentDictionary<ILockstepClientSink, byte>();
         public static void RegisterServer(BaseServer server, ServerLockstep engine) => Servers[server] = engine;
         public static ServerLockstep? GetServer(BaseServer? server) => server != null && Servers.TryGetValue(server, out var s) ? s : null;
-        public static void RegisterClient(ILockstepClientSink client) => Clients[client] = 0;
-        public static void ForEachClient(Action<ILockstepClientSink> action) { foreach (var c in Clients.Keys) action(c); }
     }
 
     /// <summary>Attaches the lockstep engine by composition — no base class.</summary>
@@ -226,36 +220,27 @@ namespace SetNet.Lockstep
         }
     }
 
-    /// <summary>Auto-discovered server handler for lockstep inputs.</summary>
-    [MessageHandler(LockstepTypes.Input)]
-    public sealed class LockstepInputHandler : IServerMessageHandler<byte[]>
+    /// <summary>Auto-discovered channel service for lockstep inputs (fire-and-forget).</summary>
+    [ProtocolChannel(Channels.Lockstep)]
+    public sealed class LockstepChannelService : IChannelService
     {
         /// <inheritdoc/>
-        public Task HandleAsync(BasePeer peer, byte[] data)
+        public Task HandleAsync(ChannelRequest request)
         {
-            var engine = LockstepRegistry.GetServer(peer.CurrentPeerInfo.Server);
-            if (engine != null) { var (turn, payload) = LockstepWire.DecodeInput(data); engine.OnInput(peer, turn, payload); }
+            var engine = LockstepRegistry.GetServer(request.Peer.CurrentPeerInfo.Server);
+            if (engine != null && (LockstepOp)request.Op == LockstepOp.Input)
+            {
+                var (turn, payload) = LockstepWire.DecodeInput(request.RawBody);
+                engine.OnInput(request.Peer, turn, payload);
+            }
             return Task.CompletedTask;
         }
     }
 
-    /// <summary>Auto-discovered client handler for finalized turns.</summary>
-    [MessageHandler(LockstepTypes.Turn)]
-    public sealed class LockstepTurnHandler : IClientMessageHandler<byte[]>
-    {
-        /// <inheritdoc/>
-        public Task HandleAsync(byte[] data)
-        {
-            var (turn, inputs) = LockstepWire.DecodeTurn(data);
-            LockstepRegistry.ForEachClient(c => c.OnTurn(turn, inputs));
-            return Task.CompletedTask;
-        }
-    }
-
-    /// <summary>One-time bootstrap so the lockstep handlers are discovered. Call at startup.</summary>
+    /// <summary>One-time bootstrap so the lockstep channel service is discovered. Call at startup.</summary>
     public static class LockstepRuntime
     {
         /// <summary>Ensures the lockstep layer is discoverable.</summary>
-        public static void Enable() { _ = LockstepTypes.Input; }
+        public static void Enable() { _ = typeof(LockstepChannelService); }
     }
 }
