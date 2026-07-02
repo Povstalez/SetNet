@@ -81,6 +81,7 @@ Grouped by purpose (mirrors the `src/<category>/` layout). Each depends only on 
 | **SetNet.Unity** | `MainThreadDispatcher` for Unity's main thread |
 | **SetNet.StateSync.Unity** | Unity components: NetworkObject/Transform/Animator/Rigidbody/Behaviour + NetworkManager (**UPM source**, not NuGet) |
 | **SetNet.Godot** | Godot 4 (C#) main-thread dispatcher + math conversions (deps `SetNet.StateSync` + `GodotSharp`) |
+| **SetNet.StateSync.Godot** | Godot 4 replication components: NetworkObject/Transform/AnimationPlayer/RigidBody/Behaviour + NetworkManager (deps `SetNet.StateSync` + `SetNet.Godot` + `GodotSharp`) |
 
 ### Core extension points already in place (for composition packages)
 - `SetNetSerializer.Use/Serialize/Deserialize` — pluggable serialization.

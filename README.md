@@ -289,6 +289,7 @@ src/
   engine/       SetNet.Unity ................ Unity main-thread dispatcher
                 SetNet.StateSync.Unity ...... Unity replication components (UPM source)
                 SetNet.Godot ................ Godot 4 (C#) dispatcher + math
+                SetNet.StateSync.Godot ...... Godot 4 replication components
 tests/
   SetNet.UnitTests .................... xUnit unit + integration tests
   SetNet.Tests ....................... in-process scenario harness + benchmark
