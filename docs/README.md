@@ -32,7 +32,11 @@ SetNet is a **small core** (`SetNet`) plus **optional companion packages** you p
 | Log in players / sessions | [Auth](../src/security/SetNet.Auth/README.md) (+ [Auth.Jwt](../src/security/SetNet.Auth.Jwt/README.md) / [Auth.OAuth](../src/security/SetNet.Auth.OAuth/README.md)) |
 | Ban abusers / stop connection floods | [BanList](../src/security/SetNet.BanList/README.md), [DdosGuard](../src/security/SetNet.DdosGuard/README.md), [RateLimit](../src/net/SetNet.RateLimit/README.md) |
 | Send messages bigger than a UDP datagram | [Fragmentation](../src/net/SetNet.Fragmentation/README.md) |
+| Transfer files / patches / replays (progress, resume) | [Streams](../src/messaging/SetNet.Streams/README.md) |
 | Prioritise / rate-shape outbound traffic | [Priority](../src/net/SetNet.Priority/README.md) + [Congestion](../src/net/SetNet.Congestion/README.md) |
+| Keep input/chat snappy next to bulk traffic | [Multiplex](../src/net/SetNet.Multiplex/README.md) |
+| Connect two players directly (P2P) | [NatPunch](../src/net/SetNet.NatPunch/README.md), fallback [Relay](../src/net/SetNet.Relay/README.md) |
+| Open the player's router port automatically | [Upnp](../src/net/SetNet.Upnp/README.md) |
 | Lobbies / rooms | [Rooms](../src/realtime/SetNet.Rooms/README.md) (+ [HostMigration](../src/realtime/SetNet.Rooms.HostMigration/README.md)) |
 | Matchmaking | [Matchmaking](../src/realtime/SetNet.Matchmaking/README.md) |
 | Friends queue together | [Party](../src/realtime/SetNet.Party/README.md) |
@@ -41,6 +45,7 @@ SetNet is a **small core** (`SetNet`) plus **optional companion packages** you p
 | Deterministic RTS-style networking | [Lockstep](../src/realtime/SetNet.Lockstep/README.md) |
 | Host in ASP.NET Core / use DI / probe health | [Hosting](../src/infra/SetNet.Hosting/README.md), [DependencyInjection](../src/infra/SetNet.DependencyInjection/README.md), [HealthChecks](../src/infra/SetNet.HealthChecks/README.md) |
 | Watch live metrics / shard players | [Inspector](../src/infra/SetNet.Inspector/README.md), [Gateway](../src/infra/SetNet.Gateway/README.md) |
+| Route keys/rooms across many nodes | [Sharding](../src/infra/SetNet.Sharding/README.md) (+ [Redis](../src/infra/SetNet.Redis/README.md), [Cluster](../src/infra/SetNet.Cluster/README.md)) |
 | Log to Serilog | [Logging.Serilog](../src/logging/SetNet.Logging.Serilog/README.md) |
 | Use it in Unity / Godot | [Unity](../src/engine/SetNet.Unity/README.md) + [StateSync.Unity](../src/engine/SetNet.StateSync.Unity/README.md), [Godot](../src/engine/SetNet.Godot/README.md) |
 

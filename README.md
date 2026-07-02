@@ -80,6 +80,7 @@ The core is one package (`SetNet`); everything else is an **optional companion**
 | Package | What it does |
 |---|---|
 | [SetNet.Rpc](src/messaging/SetNet.Rpc/README.md) · [📦](https://www.nuget.org/packages/SetNet.Rpc) | Request/response: `client.CallAsync<TReq,TResp>()` |
+| [SetNet.Streams](src/messaging/SetNet.Streams/README.md) · [📦](https://www.nuget.org/packages/SetNet.Streams) | Large-payload streaming: offer/accept, chunks, progress, resume |
 | [SetNet.Auth](src/security/SetNet.Auth/README.md) · [📦](https://www.nuget.org/packages/SetNet.Auth) | Enforced auth gate + sessions + reconnect-resume |
 | [SetNet.Auth.Jwt](src/security/SetNet.Auth.Jwt/README.md) · [📦](https://www.nuget.org/packages/SetNet.Auth.Jwt) | JWT `IAuthenticator` |
 | [SetNet.Auth.OAuth](src/security/SetNet.Auth.OAuth/README.md) · [📦](https://www.nuget.org/packages/SetNet.Auth.OAuth) | OpenID Connect authenticator (auto-refreshed JWKS) |
@@ -97,6 +98,9 @@ The core is one package (`SetNet`); everything else is an **optional companion**
 | [SetNet.Priority](src/net/SetNet.Priority/README.md) · [📦](https://www.nuget.org/packages/SetNet.Priority) | Priority send queue with a per-flush byte budget |
 | [SetNet.Congestion](src/net/SetNet.Congestion/README.md) · [📦](https://www.nuget.org/packages/SetNet.Congestion) | AIMD send-rate controller |
 | [SetNet.Relay](src/net/SetNet.Relay/README.md) · [📦](https://www.nuget.org/packages/SetNet.Relay) | TURN-style relay hub (opaque forwarding, NAT fallback) |
+| [SetNet.NatPunch](src/net/SetNet.NatPunch/README.md) · [📦](https://www.nuget.org/packages/SetNet.NatPunch) | UDP hole-punching: coordinator + simultaneous-probe puncher |
+| [SetNet.Upnp](src/net/SetNet.Upnp/README.md) · [📦](https://www.nuget.org/packages/SetNet.Upnp) | UPnP IGD port mapping (SSDP discovery, add/delete mappings) |
+| [SetNet.Multiplex](src/net/SetNet.Multiplex/README.md) · [📦](https://www.nuget.org/packages/SetNet.Multiplex) | Logical channels — per-channel ordered dispatch lanes (HOL fix) |
 
 **Realtime & games**
 
@@ -127,6 +131,7 @@ The core is one package (`SetNet`); everything else is an **optional companion**
 | [SetNet.Gateway](src/infra/SetNet.Gateway/README.md) · [📦](https://www.nuget.org/packages/SetNet.Gateway) | Raw-relay reverse proxy / player sharding |
 | [SetNet.Cluster](src/infra/SetNet.Cluster/README.md) · [📦](https://www.nuget.org/packages/SetNet.Cluster) | Server-to-server broadcast bus (mesh of nodes) |
 | [SetNet.Redis](src/infra/SetNet.Redis/README.md) · [📦](https://www.nuget.org/packages/SetNet.Redis) | Redis backplane: shared sessions/bans/room codes across nodes |
+| [SetNet.Sharding](src/infra/SetNet.Sharding/README.md) · [📦](https://www.nuget.org/packages/SetNet.Sharding) | Consistent-hash key→node routing + cluster-wide shard directory |
 
 **Logging & engine bindings**
 

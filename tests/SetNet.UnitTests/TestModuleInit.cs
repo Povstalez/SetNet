@@ -11,10 +11,14 @@ using SetNet.Voice;
 using SetNet.Rooms.HostMigration;
 using SetNet.Messaging;
 using SetNet.MessagePack;
+using SetNet.Multiplex;
+using SetNet.NatPunch;
 using SetNet.Rooms;
 using SetNet.Rpc;
+using SetNet.Sharding;
 using SetNet.StateSync;
 using SetNet.StateSync.Rpc;
+using SetNet.Streams;
 
 namespace SetNet.UnitTests;
 
@@ -43,5 +47,9 @@ internal static class TestModuleInit
         ProofOfWorkRuntime.Enable();
         VoiceRuntime.Enable();
         RelayRuntime.Enable();
+        NatPunchRuntime.Enable();
+        MultiplexRuntime.Enable();
+        StreamsRuntime.Enable();
+        ShardingRuntime.Enable();
     }
 }

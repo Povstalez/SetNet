@@ -27,6 +27,7 @@ Grouped by purpose (mirrors the `src/<category>/` layout). Each depends only on 
 | Package | What it adds |
 |---|---|
 | **SetNet.Rpc** | `await client.CallAsync<TReq,TResp>()` + `[RpcMethod]` handlers |
+| **SetNet.Streams** | large-payload streaming both directions: offer/accept, sequential chunks, progress, resume after disconnect; pluggable sinks (memory/file) |
 
 **Security** (`src/security/`)
 | Package | What it adds |
@@ -47,6 +48,9 @@ Grouped by purpose (mirrors the `src/<category>/` layout). Each depends only on 
 | **SetNet.Priority** | priority send queue with an optional per-flush byte budget |
 | **SetNet.Congestion** | AIMD congestion controller → per-tick byte budget |
 | **SetNet.Relay** | TURN-style relay hub: allocate/join a session by code, forward opaque bytes (NAT fallback/tunnel) |
+| **SetNet.NatPunch** | UDP hole-punching: coordinator exchanges public/private endpoint candidates + `NatPuncher.TryPunchAsync` opens the direct path (fallback: Relay) |
+| **SetNet.Upnp** | UPnP IGD port mapping: SSDP discovery + AddPortMapping/DeletePortMapping/GetExternalIPAddress; `config.MapServerPortsAsync()` (no wire types) |
+| **SetNet.Multiplex** | logical channels over one connection: `SendMuxAsync(channel, type, msg)` → per-channel ordered dispatch lanes (head-of-line-blocking fix) |
 
 **Realtime / game** (`src/realtime/`)
 | Package | What it adds |
@@ -75,6 +79,7 @@ Grouped by purpose (mirrors the `src/<category>/` layout). Each depends only on 
 | **SetNet.Gateway** | raw-relay reverse proxy: accept clients → forward to per-client backend |
 | **SetNet.Cluster** | server-to-server broadcast bus (mesh of nodes): `Publish`/`Received`/`On<T>` across nodes |
 | **SetNet.Redis** | Redis backplane: shared `ISessionStore`/`IBanStore`/`IRoomStore` across nodes (deps `SetNet.Auth`+`SetNet.Rooms`+`SetNet.BanList`+StackExchange.Redis) |
+| **SetNet.Sharding** | consistent-hash `ShardRing` (virtual nodes) + a shard directory every node answers: clients ask any node which node owns a key, then connect there |
 
 **Logging** (`src/logging/`)
 | Package | What it adds |

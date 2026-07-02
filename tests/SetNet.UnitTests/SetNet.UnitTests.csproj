@@ -45,6 +45,11 @@
         <ProjectReference Include="..\..\src\infra\SetNet.Cluster\SetNet.Cluster.csproj" />
         <ProjectReference Include="..\..\src\net\SetNet.Relay\SetNet.Relay.csproj" />
         <ProjectReference Include="..\..\src\infra\SetNet.Redis\SetNet.Redis.csproj" />
+        <ProjectReference Include="..\..\src\net\SetNet.NatPunch\SetNet.NatPunch.csproj" />
+        <ProjectReference Include="..\..\src\net\SetNet.Upnp\SetNet.Upnp.csproj" />
+        <ProjectReference Include="..\..\src\net\SetNet.Multiplex\SetNet.Multiplex.csproj" />
+        <ProjectReference Include="..\..\src\messaging\SetNet.Streams\SetNet.Streams.csproj" />
+        <ProjectReference Include="..\..\src\infra\SetNet.Sharding\SetNet.Sharding.csproj" />
     </ItemGroup>
 
 </Project>
