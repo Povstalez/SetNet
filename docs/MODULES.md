@@ -46,6 +46,7 @@ Grouped by purpose (mirrors the `src/<category>/` layout). Each depends only on 
 | **SetNet.Fragmentation** | split/reassemble oversize UDP messages transparently |
 | **SetNet.Priority** | priority send queue with an optional per-flush byte budget |
 | **SetNet.Congestion** | AIMD congestion controller → per-tick byte budget |
+| **SetNet.Relay** | TURN-style relay hub: allocate/join a session by code, forward opaque bytes (NAT fallback/tunnel) |
 
 **Realtime / game** (`src/realtime/`)
 | Package | What it adds |
@@ -73,6 +74,7 @@ Grouped by purpose (mirrors the `src/<category>/` layout). Each depends only on 
 | **SetNet.Inspector** | HttpListener dashboard (`/metrics` JSON + HTML) |
 | **SetNet.Gateway** | raw-relay reverse proxy: accept clients → forward to per-client backend |
 | **SetNet.Cluster** | server-to-server broadcast bus (mesh of nodes): `Publish`/`Received`/`On<T>` across nodes |
+| **SetNet.Redis** | Redis backplane: shared `ISessionStore`/`IBanStore`/`IRoomStore` across nodes (deps `SetNet.Auth`+`SetNet.Rooms`+`SetNet.BanList`+StackExchange.Redis) |
 
 **Logging** (`src/logging/`)
 | Package | What it adds |

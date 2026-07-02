@@ -1,0 +1,39 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+    <PropertyGroup>
+        <TargetFramework>netstandard2.1</TargetFramework>
+        <ImplicitUsings>false</ImplicitUsings>
+        <Nullable>enable</Nullable>
+        <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    </PropertyGroup>
+
+    <PropertyGroup>
+        <PackageId>SetNet.Redis</PackageId>
+        <Version>1.1.0</Version>
+        <AssemblyVersion>1.1.0.0</AssemblyVersion>
+        <FileVersion>1.1.0.0</FileVersion>
+        <Authors>Artem Lemeshev</Authors>
+        <Description>Redis backplane for SetNet: shared, restart-surviving implementations of ISessionStore (Auth), IBanStore (BanList) and IRoomStore (Rooms/Matchmaking) so sessions, bans and room codes work across a cluster of server nodes. Depends on SetNet.Auth + SetNet.Rooms + SetNet.BanList + StackExchange.Redis.</Description>
+        <PackageTags>networking;redis;backplane;scaling;sessions;setnet</PackageTags>
+        <PackageLicenseExpression>MIT</PackageLicenseExpression>
+        <RepositoryUrl>https://github.com/Povstalez/SetNet.git</RepositoryUrl>
+        <RepositoryType>git</RepositoryType>
+        <PackageProjectUrl>https://github.com/Povstalez/SetNet</PackageProjectUrl>
+        <PackageReadmeFile>README.md</PackageReadmeFile>
+        <PackageIcon>icon.png</PackageIcon>
+    </PropertyGroup>
+
+    <ItemGroup>
+      <None Include="README.md" Pack="true" PackagePath="\" />
+      <None Include="../../../assets/icon.png" Pack="true" PackagePath="\" Visible="false" />
+    </ItemGroup>
+
+    <ItemGroup>
+      <PackageReference Include="StackExchange.Redis" Version="2.8.16" />
+      <ProjectReference Include="../../core/SetNet/SetNet.csproj" />
+      <ProjectReference Include="../../security/SetNet.Auth/SetNet.Auth.csproj" />
+      <ProjectReference Include="../../security/SetNet.BanList/SetNet.BanList.csproj" />
+      <ProjectReference Include="../../realtime/SetNet.Rooms/SetNet.Rooms.csproj" />
+    </ItemGroup>
+
+</Project>

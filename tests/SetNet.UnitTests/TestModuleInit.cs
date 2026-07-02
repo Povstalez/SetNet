@@ -6,6 +6,7 @@ using SetNet.Lockstep;
 using SetNet.Matchmaking;
 using SetNet.Party;
 using SetNet.ProofOfWork;
+using SetNet.Relay;
 using SetNet.Voice;
 using SetNet.Rooms.HostMigration;
 using SetNet.Messaging;
@@ -41,5 +42,6 @@ internal static class TestModuleInit
         HostMigrationRuntime.Enable();
         ProofOfWorkRuntime.Enable();
         VoiceRuntime.Enable();
+        RelayRuntime.Enable();
     }
 }

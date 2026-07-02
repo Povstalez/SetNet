@@ -43,6 +43,8 @@
         <ProjectReference Include="..\..\src\security\SetNet.ProofOfWork\SetNet.ProofOfWork.csproj" />
         <ProjectReference Include="..\..\src\realtime\SetNet.Voice\SetNet.Voice.csproj" />
         <ProjectReference Include="..\..\src\infra\SetNet.Cluster\SetNet.Cluster.csproj" />
+        <ProjectReference Include="..\..\src\net\SetNet.Relay\SetNet.Relay.csproj" />
+        <ProjectReference Include="..\..\src\infra\SetNet.Redis\SetNet.Redis.csproj" />
     </ItemGroup>
 
 </Project>

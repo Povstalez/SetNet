@@ -96,6 +96,7 @@ The core is one package (`SetNet`); everything else is an **optional companion**
 | [SetNet.Fragmentation](src/net/SetNet.Fragmentation/README.md) · [📦](https://www.nuget.org/packages/SetNet.Fragmentation) | Split/reassemble oversize UDP messages |
 | [SetNet.Priority](src/net/SetNet.Priority/README.md) · [📦](https://www.nuget.org/packages/SetNet.Priority) | Priority send queue with a per-flush byte budget |
 | [SetNet.Congestion](src/net/SetNet.Congestion/README.md) · [📦](https://www.nuget.org/packages/SetNet.Congestion) | AIMD send-rate controller |
+| [SetNet.Relay](src/net/SetNet.Relay/README.md) · [📦](https://www.nuget.org/packages/SetNet.Relay) | TURN-style relay hub (opaque forwarding, NAT fallback) |
 
 **Realtime & games**
 
@@ -125,6 +126,7 @@ The core is one package (`SetNet`); everything else is an **optional companion**
 | [SetNet.Inspector](src/infra/SetNet.Inspector/README.md) · [📦](https://www.nuget.org/packages/SetNet.Inspector) | Built-in HttpListener metrics dashboard |
 | [SetNet.Gateway](src/infra/SetNet.Gateway/README.md) · [📦](https://www.nuget.org/packages/SetNet.Gateway) | Raw-relay reverse proxy / player sharding |
 | [SetNet.Cluster](src/infra/SetNet.Cluster/README.md) · [📦](https://www.nuget.org/packages/SetNet.Cluster) | Server-to-server broadcast bus (mesh of nodes) |
+| [SetNet.Redis](src/infra/SetNet.Redis/README.md) · [📦](https://www.nuget.org/packages/SetNet.Redis) | Redis backplane: shared sessions/bans/room codes across nodes |
 
 **Logging & engine bindings**
 
@@ -368,6 +370,7 @@ src/
                 SetNet.Fragmentation ........ oversize-UDP split/reassemble
                 SetNet.Priority ............. priority send queue
                 SetNet.Congestion ........... AIMD rate control
+                SetNet.Relay ................ TURN-style relay hub (NAT fallback)
   realtime/     SetNet.Rooms ................ rooms/lobbies (join-by-code, broadcast)
                 SetNet.Rooms.HostMigration .. host designation + migration
                 SetNet.Matchmaking .......... FIFO/skill matchmaking on top of Rooms
@@ -387,6 +390,7 @@ src/
                 SetNet.Inspector ............ HttpListener metrics dashboard
                 SetNet.Gateway .............. raw-relay reverse proxy / sharding
                 SetNet.Cluster .............. server-to-server broadcast bus (mesh)
+                SetNet.Redis ................ Redis backplane (shared sessions/bans/rooms)
   logging/      SetNet.Logging.Serilog ...... Serilog ILogger adapter
                 SetNet.Logging.NLog ......... NLog ILogger adapter
                 SetNet.Logging.ZLogger ...... ZLogger ILogger adapter (zero-alloc)
