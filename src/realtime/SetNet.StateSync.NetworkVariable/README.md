@@ -50,6 +50,47 @@ float currentHp = healthVar.Value;       // read anytime, no polling needed
 
 `Watch<T>(index)` is an extension on `NetworkEntityView`; it returns a `NetworkVariable<T>` bound to that field. Reading `Value` always reflects the view's current (interpolated) value; `Changed` fires only from `Poll()`.
 
+## Attribute-based variables (`[SetNetVariable]`)
+
+If you'd rather declare replicated state as plain fields on a class and skip field indices entirely, tag them with `[SetNetVariable]`. The framework builds the entity schema from the attributes and copies values in both directions automatically.
+
+```csharp
+using SetNet.StateSync;
+using SetNet.StateSync.NetworkVariable;
+
+[SetNetObject(55)]                       // archetype id, identical on client + server
+public class MobState
+{
+    [SetNetVariable] public int Health = 100;
+    [SetNetVariable(Interpolate = true)] public Vec3 Position;
+    [SetNetVariable] public string Name = "";
+    [SetNetVariable] public MobKind Kind;     // enums are supported (sent as Int)
+}
+
+// Startup (both ends): build + register the schema from the attributes.
+NetworkVariables.Register<MobState>();        // reads [SetNetObject(55)]
+
+// --- Server ---
+var mob = world.SpawnBound(new MobState { Health = 42, Name = "boss" });
+mob.Target.Health = 17;                        // mutate your object...
+mob.Push();                                    // ...then Push so it's sampled next tick
+// world.Despawn(mob.Entity);
+
+// --- Client ---
+var mobs = replication.BindVariables<MobState>();   // tracks every archetype-55 entity
+mobs.Spawned   += m => Console.WriteLine($"spawned {m.Name}");
+mobs.Despawned += m => Console.WriteLine($"gone {m.Name}");
+
+// each frame:
+replication.Update();
+mobs.Pull();                                   // refresh every bound POCO from its view
+foreach (var m in mobs.Values) Draw(m);
+```
+
+**Supported field types:** `bool`, `byte`, `int`, `uint`, `long`, `float`, `double`, `string`, `Vec2`, `Vec3`, `Quat`, and any `enum` (stored as `Int`). Use `[SetNetVariable(Interpolate = true, Precision = 0.001f)]` for smooth/quantized floats and vectors, and `Order = n` to pin field order when client and server compile the type separately.
+
+> **Trade-off — read this.** A plain field can't notify on assignment (there's no setter to intercept), so `Push`/`Pull` **poll every tagged field via reflection**. That's perfectly fine for a .NET server and non-AOT clients. Under **Unity IL2CPP** (reflection on private fields is stripped/slow) or on very hot paths, prefer the wrapper `NetworkVariable<T>` above — real setter interception, zero per-frame reflection.
+
 ## API
 
 | Member | Purpose |
@@ -60,6 +101,17 @@ float currentHp = healthVar.Value;       // read anytime, no polling needed
 | `void Poll()` | Re-read the value and raise `Changed` if it changed — call once per frame |
 
 **Supported `T`:** `float`, `double`, `int`, `long`, `bool`, `string`, `Vec2`, `Vec3`, `Quat`. Any other type throws `NotSupportedException` at bind time.
+
+**Attribute API** (`[SetNetVariable]` path)
+
+| Member | Purpose |
+|---|---|
+| `[SetNetVariable]` (field) | mark a field for replication; `Interpolate`, `Precision`, `Order` options |
+| `[SetNetObject(id)]` (class) | declare the archetype id so `Register<T>()` needs no argument |
+| `NetworkVariables.Register<T>(id?)` | build + register the schema from the attributes (call on both ends) |
+| `world.SpawnBound<T>(T obj, owner?)` → `BoundEntity<T>` | spawn an entity bound to your object; `.Target`, `.Entity`, `.Push()` |
+| `view.Bind<T>()` → `BoundView<T>` | bind a fresh POCO to a client view; `.Target`, `.Pull()` |
+| `client.BindVariables<T>()` → `VariableSet<T>` | auto-track all archetype-`T` entities: `Spawned`/`Despawned`/`Pull()`/`Values` |
 
 ## Notes
 

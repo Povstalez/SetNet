@@ -33,6 +33,7 @@
         <ProjectReference Include="..\..\src\net\SetNet.Fragmentation\SetNet.Fragmentation.csproj" />
         <ProjectReference Include="..\..\src\realtime\SetNet.StateSync.Prediction\SetNet.StateSync.Prediction.csproj" />
         <ProjectReference Include="..\..\src\realtime\SetNet.StateSync.Rpc\SetNet.StateSync.Rpc.csproj" />
+        <ProjectReference Include="..\..\src\realtime\SetNet.StateSync.NetworkVariable\SetNet.StateSync.NetworkVariable.csproj" />
         <ProjectReference Include="..\..\src\realtime\SetNet.Chat\SetNet.Chat.csproj" />
         <ProjectReference Include="..\..\src\realtime\SetNet.Party\SetNet.Party.csproj" />
         <ProjectReference Include="..\..\src\realtime\SetNet.Lockstep\SetNet.Lockstep.csproj" />
