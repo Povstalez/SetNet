@@ -241,6 +241,18 @@ namespace SetNet.Party
             return PartyWire.EncodeReply(party.Code, PlayerId(self), leader, members);
         }
 
+        /// <summary>The live member peers of the party with the given code (empty if unknown). Used by the <see cref="IPeerGroups"/> view.</summary>
+        internal IReadOnlyList<BasePeer> MembersOf(string code)
+        {
+            if (code != null && _parties.TryGetValue(code, out var party))
+                lock (_gate) return new List<BasePeer>(party.Members.Values);
+            return Array.Empty<BasePeer>();
+        }
+
+        /// <summary>The party code this peer is in, or null.</summary>
+        internal string? GroupKeyOf(BasePeer peer)
+            => peer != null && _memberParty.TryGetValue(peer.CurrentPeerInfo.Id, out var code) ? code : null;
+
         private static string PlayerId(BasePeer peer) => peer.CurrentPeerInfo.Id.ToString("N");
         private static string PlayerId2(Guid id) => id == Guid.Empty ? "" : id.ToString("N");
 
@@ -339,6 +351,15 @@ namespace SetNet.Party
         public static PartyServer? GetServer(BaseServer? s) => s != null && Servers.TryGetValue(s, out var p) ? p : null;
     }
 
+    /// <summary><see cref="IPeerGroups"/> view over a server's parties — the same reusable primitive Rooms uses.</summary>
+    internal sealed class PartyGroupsView : IPeerGroups
+    {
+        private readonly PartyServer _server;
+        public PartyGroupsView(PartyServer server) => _server = server;
+        public IReadOnlyList<BasePeer> MembersOf(string groupKey) => _server.MembersOf(groupKey);
+        public string? GroupKeyOf(BasePeer peer) => _server.GroupKeyOf(peer);
+    }
+
     /// <summary>Attaches parties by composition — no base class.</summary>
     public static class PartyExtensions
     {
@@ -355,6 +376,21 @@ namespace SetNet.Party
             if (client == null) throw new ArgumentNullException(nameof(client));
             return new PartyClient(client);
         }
+
+        /// <summary>The parties grouping as an <see cref="IPeerGroups"/> (generic query/broadcast extensions apply); null if parties aren't enabled.</summary>
+        public static IPeerGroups? PartyGroups(this BaseServer server)
+        {
+            var p = PartyRegistry.GetServer(server);
+            return p == null ? null : new PartyGroupsView(p);
+        }
+
+        /// <summary>Every other member of the peer's party (all except the peer itself).</summary>
+        public static IReadOnlyList<BasePeer> OthersInPartyOf(this BaseServer server, BasePeer peer)
+            => server.PartyGroups() is { } g ? g.OthersOf(peer) : Array.Empty<BasePeer>();
+
+        /// <summary>Pushes an event to the peer's party — everyone else by default, or including the peer when <paramref name="includeSelf"/> is true.</summary>
+        public static Task BroadcastToPartyOfAsync<T>(this BaseServer server, BasePeer peer, ushort channel, ushort op, T message, bool includeSelf = false)
+            => server.PartyGroups() is { } g ? g.BroadcastToGroupOfAsync(peer, channel, op, message, includeSelf) : Task.CompletedTask;
     }
 
     /// <summary>Auto-discovered channel service for party commands.</summary>

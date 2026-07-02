@@ -38,6 +38,8 @@ namespace SetNet.Protocol
         /// <summary>Delivers an event body to every subscriber for (channel, op). Faulty callbacks are isolated.</summary>
         public static void Dispatch(ushort channel, ushort op, byte[] body)
         {
+            // Auto-subscribe any [Event]-attributed client handlers before the first delivery (one-time).
+            ClientEventDiscovery.EnsureDiscovered();
             if (!Subs.TryGetValue(Key(channel, op), out var bucket)) return;
             foreach (var cb in bucket.Values)
             {

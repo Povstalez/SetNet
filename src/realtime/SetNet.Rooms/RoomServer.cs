@@ -30,12 +30,16 @@ namespace SetNet.Rooms
         public RoomServerHooks? Hooks;
         public readonly ConcurrentDictionary<Guid, Room> MemberRoom = new ConcurrentDictionary<Guid, Room>();
 
+        /// <summary>Live code→room index of the rooms that have members on this node (for O(1) server-side membership queries).</summary>
+        public readonly ConcurrentDictionary<string, Room> Rooms = new ConcurrentDictionary<string, Room>();
+
         public static string PlayerId(BasePeer peer) => peer.CurrentPeerInfo.Id.ToString("N");
 
         public void AddMember(Room room, BasePeer peer)
         {
             room.Members[peer.CurrentPeerInfo.Id] = peer;
             MemberRoom[peer.CurrentPeerInfo.Id] = room;
+            Rooms[room.Code] = room;
             Hooks?.RaiseJoined(room.Code, peer);
         }
 
@@ -48,7 +52,11 @@ namespace SetNet.Rooms
             await NotifyOthersAsync(room, peer, (ushort)RoomEvt.PlayerLeft,
                 RoomWire.EncodePlayer(room.Code, PlayerId(peer))).ConfigureAwait(false);
             Hooks?.RaiseLeft(room.Code, peer, remaining);
-            if (room.Count == 0) await Store.RemoveAsync(room).ConfigureAwait(false);
+            if (room.Count == 0)
+            {
+                await Store.RemoveAsync(room).ConfigureAwait(false);
+                Rooms.TryRemove(room.Code, out _);
+            }
         }
 
         /// <summary>Pushes an event (op + body) to every member except <paramref name="except"/> (best-effort).</summary>

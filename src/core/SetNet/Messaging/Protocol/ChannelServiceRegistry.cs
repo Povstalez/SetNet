@@ -45,12 +45,22 @@ namespace SetNet.Protocol
                     foreach (var type in types)
                     {
                         if (type == null || type.IsAbstract || type.IsInterface) continue;
-                        if (!typeof(IChannelService).IsAssignableFrom(type)) continue;
 
                         var attr = type.GetCustomAttribute<ProtocolChannelAttribute>();
                         if (attr == null) continue;
 
-                        var service = (IChannelService)HandlerActivator.Create(type);
+                        // A [ProtocolChannel] class is a *server* channel only if it implements IChannelService
+                        // (manual dispatch) or has [Op]-attributed methods (auto-routed). Skip client-only classes
+                        // (e.g. those with just [Event] handlers) without instantiating them here.
+                        var isService = typeof(IChannelService).IsAssignableFrom(type);
+                        var hasOps = isService || type.GetMethods(BindingFlags.Public | BindingFlags.Instance)
+                            .Any(m => m.GetCustomAttribute<OpAttribute>() != null);
+                        if (!hasOps) continue;
+
+                        var instance = HandlerActivator.Create(type);
+                        var service = instance as IChannelService ?? OpRouter.Build(instance);
+                        if (service == null) continue;   // defensive: nothing to route
+
                         Services[attr.Channel] = service;   // last registration wins (module owns its channel)
                     }
                 }
