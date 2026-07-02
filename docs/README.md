@@ -64,7 +64,7 @@ Rule of thumb: **register a typed `On<T>` handler / use the typed `<T>` overload
 
 ## Reserved wire types
 
-Companion packages claim ids from the top of the `ushort` range so they never collide with your application message types (number yours from `0` upward). The reserved block is currently the contiguous range **65508–65535** — the full map is in [MODULES.md](MODULES.md).
+Companion packages claim ids from the top of the `ushort` range so they never collide with your application message types (number yours from `0` upward). The reserved block is currently the contiguous range **65501–65535** — the full map is in [MODULES.md](MODULES.md).
 
 ## Building & testing
 

@@ -5,6 +5,8 @@ using SetNet.Fragmentation;
 using SetNet.Lockstep;
 using SetNet.Matchmaking;
 using SetNet.Party;
+using SetNet.ProofOfWork;
+using SetNet.Voice;
 using SetNet.Rooms.HostMigration;
 using SetNet.Messaging;
 using SetNet.MessagePack;
@@ -37,5 +39,7 @@ internal static class TestModuleInit
         PartyRuntime.Enable();
         LockstepRuntime.Enable();
         HostMigrationRuntime.Enable();
+        ProofOfWorkRuntime.Enable();
+        VoiceRuntime.Enable();
     }
 }

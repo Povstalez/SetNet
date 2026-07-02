@@ -85,6 +85,8 @@ The core is one package (`SetNet`); everything else is an **optional companion**
 | [SetNet.Auth.OAuth](src/security/SetNet.Auth.OAuth/README.md) · [📦](https://www.nuget.org/packages/SetNet.Auth.OAuth) | OpenID Connect authenticator (auto-refreshed JWKS) |
 | [SetNet.BanList](src/security/SetNet.BanList/README.md) · [📦](https://www.nuget.org/packages/SetNet.BanList) | Ban gate (IP/account) + instant kick, pluggable store |
 | [SetNet.DdosGuard](src/security/SetNet.DdosGuard/README.md) · [📦](https://www.nuget.org/packages/SetNet.DdosGuard) | Per-IP connection-flood detection + timed auto-ban |
+| [SetNet.GeoBlock](src/security/SetNet.GeoBlock/README.md) · [📦](https://www.nuget.org/packages/SetNet.GeoBlock) | Reject connections by country (blocklist/allowlist), pluggable GeoIP |
+| [SetNet.ProofOfWork](src/security/SetNet.ProofOfWork/README.md) · [📦](https://www.nuget.org/packages/SetNet.ProofOfWork) | Hashcash admission gate — make bot/flood connections CPU-costly |
 
 **Net / QoS**
 
@@ -104,6 +106,7 @@ The core is one package (`SetNet`); everything else is an **optional companion**
 | [SetNet.Matchmaking](src/realtime/SetNet.Matchmaking/README.md) · [📦](https://www.nuget.org/packages/SetNet.Matchmaking) | FIFO/skill matchmaking → creates a room to join |
 | [SetNet.Party](src/realtime/SetNet.Party/README.md) · [📦](https://www.nuget.org/packages/SetNet.Party) | Parties: leader + ready, queue together |
 | [SetNet.Chat](src/realtime/SetNet.Chat/README.md) · [📦](https://www.nuget.org/packages/SetNet.Chat) | Channel text chat + moderation |
+| [SetNet.Voice](src/realtime/SetNet.Voice/README.md) · [📦](https://www.nuget.org/packages/SetNet.Voice) | Codec-agnostic voice-chat relay (channels, opaque frames) |
 | [SetNet.Lockstep](src/realtime/SetNet.Lockstep/README.md) · [📦](https://www.nuget.org/packages/SetNet.Lockstep) | Deterministic input-synchronous turn engine (RTS) |
 | [SetNet.StateSync](src/realtime/SetNet.StateSync/README.md) · [📦](https://www.nuget.org/packages/SetNet.StateSync) | Server-authoritative entity replication (snapshots, interpolation) |
 | [SetNet.StateSync.SpatialGrid](src/realtime/SetNet.StateSync.SpatialGrid/README.md) · [📦](https://www.nuget.org/packages/SetNet.StateSync.SpatialGrid) | Grid-based interest management |
@@ -121,12 +124,15 @@ The core is one package (`SetNet`); everything else is an **optional companion**
 | [SetNet.HealthChecks](src/infra/SetNet.HealthChecks/README.md) · [📦](https://www.nuget.org/packages/SetNet.HealthChecks) | `IHealthCheck` for liveness + connection count |
 | [SetNet.Inspector](src/infra/SetNet.Inspector/README.md) · [📦](https://www.nuget.org/packages/SetNet.Inspector) | Built-in HttpListener metrics dashboard |
 | [SetNet.Gateway](src/infra/SetNet.Gateway/README.md) · [📦](https://www.nuget.org/packages/SetNet.Gateway) | Raw-relay reverse proxy / player sharding |
+| [SetNet.Cluster](src/infra/SetNet.Cluster/README.md) · [📦](https://www.nuget.org/packages/SetNet.Cluster) | Server-to-server broadcast bus (mesh of nodes) |
 
 **Logging & engine bindings**
 
 | Package | What it does |
 |---|---|
 | [SetNet.Logging.Serilog](src/logging/SetNet.Logging.Serilog/README.md) · [📦](https://www.nuget.org/packages/SetNet.Logging.Serilog) | Route `ILogger` into Serilog |
+| [SetNet.Logging.NLog](src/logging/SetNet.Logging.NLog/README.md) · [📦](https://www.nuget.org/packages/SetNet.Logging.NLog) | Route `ILogger` into NLog |
+| [SetNet.Logging.ZLogger](src/logging/SetNet.Logging.ZLogger/README.md) · [📦](https://www.nuget.org/packages/SetNet.Logging.ZLogger) | Route `ILogger` into ZLogger (zero-alloc) |
 | [SetNet.Unity](src/engine/SetNet.Unity/README.md) · [📦](https://www.nuget.org/packages/SetNet.Unity) | Unity main-thread dispatcher |
 | [SetNet.StateSync.Unity](src/engine/SetNet.StateSync.Unity/README.md) | Unity replication components (**UPM source**, not NuGet) |
 | [SetNet.Godot](src/engine/SetNet.Godot/README.md) · [📦](https://www.nuget.org/packages/SetNet.Godot) | Godot 4 (C#) main-thread dispatcher + math conversions |
@@ -316,7 +322,7 @@ In-process benchmark (`dotnet run -c Release --project tests/SetNet.Tests -- ben
 
 ```bash
 dotnet build                                              # build (library targets netstandard2.1)
-dotnet test tests/SetNet.UnitTests/SetNet.UnitTests.csproj      # 119 unit + integration tests
+dotnet test tests/SetNet.UnitTests/SetNet.UnitTests.csproj      # 125 unit + integration tests
 dotnet run --project tests/SetNet.Tests -- <frag|tcp|udp|loss|both|idle|deadlock>   # in-process transport scenarios
 dotnet run --project tests/SetNet.Tests -- bench                # throughput / connection benchmark
 
@@ -354,6 +360,8 @@ src/
                 SetNet.Auth.OAuth ........... OpenID Connect authenticator (JWKS)
                 SetNet.BanList .............. ban gate (IP/account) + kick
                 SetNet.DdosGuard ............ connection-flood auto-ban
+                SetNet.GeoBlock ............. reject by country (pluggable GeoIP)
+                SetNet.ProofOfWork .......... hashcash admission gate (anti-bot)
   net/          SetNet.RateLimit ............ per-peer token-bucket gate
                 SetNet.Fragmentation ........ oversize-UDP split/reassemble
                 SetNet.Priority ............. priority send queue
@@ -363,6 +371,7 @@ src/
                 SetNet.Matchmaking .......... FIFO/skill matchmaking on top of Rooms
                 SetNet.Party ................ party/group with leader + ready
                 SetNet.Chat ................. channel text chat + moderation
+                SetNet.Voice ................ codec-agnostic voice relay
                 SetNet.Lockstep ............. deterministic turn engine
                 SetNet.StateSync ............ entity replication (snapshots, interpolation)
                 SetNet.StateSync.SpatialGrid  grid interest management
@@ -375,7 +384,10 @@ src/
                 SetNet.HealthChecks ......... IHealthCheck for liveness/connections
                 SetNet.Inspector ............ HttpListener metrics dashboard
                 SetNet.Gateway .............. raw-relay reverse proxy / sharding
+                SetNet.Cluster .............. server-to-server broadcast bus (mesh)
   logging/      SetNet.Logging.Serilog ...... Serilog ILogger adapter
+                SetNet.Logging.NLog ......... NLog ILogger adapter
+                SetNet.Logging.ZLogger ...... ZLogger ILogger adapter (zero-alloc)
   engine/       SetNet.Unity ................ Unity main-thread dispatcher
                 SetNet.StateSync.Unity ...... Unity replication components (UPM source)
                 SetNet.Godot ................ Godot 4 (C#) dispatcher + math

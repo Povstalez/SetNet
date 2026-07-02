@@ -36,6 +36,8 @@ Grouped by purpose (mirrors the `src/<category>/` layout). Each depends only on 
 | **SetNet.Auth.OAuth** | OpenID Connect authenticator (auto-refreshed JWKS) (deps `SetNet.Auth`) |
 | **SetNet.BanList** | inbound gate dropping banned peers (IP/custom key) + kick; pluggable `IBanStore` |
 | **SetNet.DdosGuard** | per-IP connection-flood detection + timed auto-ban (deps `SetNet.BanList`) |
+| **SetNet.GeoBlock** | reject connections by country (blocklist/allowlist) via a pluggable `IGeoResolver`; kick-on-connect |
+| **SetNet.ProofOfWork** | hashcash admission gate — drop a peer's frames until it solves a SHA-256 challenge (anti-bot) |
 
 **Net / QoS** (`src/net/`)
 | Package | What it adds |
@@ -53,6 +55,7 @@ Grouped by purpose (mirrors the `src/<category>/` layout). Each depends only on 
 | **SetNet.Matchmaking** | FIFO/skill queues with a widening window → creates a room (deps `SetNet.Rooms`) |
 | **SetNet.Party** | party/group by code, leader + ready state, events |
 | **SetNet.Chat** | channel-based text chat + moderation |
+| **SetNet.Voice** | codec-agnostic voice-chat relay: numeric channels, opaque audio frames, unreliable fan-out |
 | **SetNet.Lockstep** | deterministic wait-for-all turn engine |
 | **SetNet.StateSync** | server-authoritative entity replication: delta snapshots, interpolation, interest, input |
 | **SetNet.StateSync.SpatialGrid** | grid interest manager (deps `SetNet.StateSync`) |
@@ -69,11 +72,14 @@ Grouped by purpose (mirrors the `src/<category>/` layout). Each depends only on 
 | **SetNet.HealthChecks** | `IHealthCheck` for liveness + connections (`Microsoft.Extensions.Diagnostics.HealthChecks`) |
 | **SetNet.Inspector** | HttpListener dashboard (`/metrics` JSON + HTML) |
 | **SetNet.Gateway** | raw-relay reverse proxy: accept clients → forward to per-client backend |
+| **SetNet.Cluster** | server-to-server broadcast bus (mesh of nodes): `Publish`/`Received`/`On<T>` across nodes |
 
 **Logging** (`src/logging/`)
 | Package | What it adds |
 |---|---|
 | **SetNet.Logging.Serilog** | `SerilogLogger : ILogger` routing diagnostics into Serilog |
+| **SetNet.Logging.NLog** | `NLogLogger : ILogger` routing diagnostics into NLog |
+| **SetNet.Logging.ZLogger** | `ZLoggerLogger : ILogger` routing diagnostics into ZLogger (zero-alloc, via `Microsoft.Extensions.Logging`) |
 
 **Engine bindings** (`src/engine/`)
 | Package | What it adds |

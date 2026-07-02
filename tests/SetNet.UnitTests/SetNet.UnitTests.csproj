@@ -38,6 +38,10 @@
         <ProjectReference Include="..\..\src\realtime\SetNet.Lockstep\SetNet.Lockstep.csproj" />
         <ProjectReference Include="..\..\src\realtime\SetNet.Rooms.HostMigration\SetNet.Rooms.HostMigration.csproj" />
         <ProjectReference Include="..\..\src\infra\SetNet.Gateway\SetNet.Gateway.csproj" />
+        <ProjectReference Include="..\..\src\security\SetNet.GeoBlock\SetNet.GeoBlock.csproj" />
+        <ProjectReference Include="..\..\src\security\SetNet.ProofOfWork\SetNet.ProofOfWork.csproj" />
+        <ProjectReference Include="..\..\src\realtime\SetNet.Voice\SetNet.Voice.csproj" />
+        <ProjectReference Include="..\..\src\infra\SetNet.Cluster\SetNet.Cluster.csproj" />
     </ItemGroup>
 
 </Project>
