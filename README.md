@@ -242,6 +242,15 @@ dotnet run --project tests/SetNet.Tests -- bench                # throughput / c
 # chat example (two terminals)
 dotnet run --project examples/Chat.Server -- 127.0.0.1 5000
 dotnet run --project examples/Chat.Client -- 127.0.0.1 5000 alice
+
+# rooms lobby example — typed On<T> broadcast (three terminals: server + two clients)
+dotnet run --project examples/Rooms.Server -- 127.0.0.1 5001
+dotnet run --project examples/Rooms.Client -- 127.0.0.1 5001 create      # prints a room code
+dotnet run --project examples/Rooms.Client -- 127.0.0.1 5001 <ROOMCODE>
+
+# state replication example — server bounces balls, client prints their positions (two terminals)
+dotnet run --project examples/StateSync.Server -- 127.0.0.1 5002 8
+dotnet run --project examples/StateSync.Client -- 127.0.0.1 5002
 ```
 
 ## Project structure
@@ -293,7 +302,7 @@ src/
 tests/
   SetNet.UnitTests .................... xUnit unit + integration tests
   SetNet.Tests ....................... in-process scenario harness + benchmark
-examples/ ............................ runnable chat (Chat.Shared / Chat.Server / Chat.Client)
+examples/ ............................ runnable samples: Chat, Rooms (typed broadcast), StateSync (balls)
 docs/ ................................ MODULES.md, GUIDE.{en,ua}.md, PERFORMANCE.{en,ua}.md
 ```
 

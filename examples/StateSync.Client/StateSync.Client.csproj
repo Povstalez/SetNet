@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+    <PropertyGroup>
+        <OutputType>Exe</OutputType>
+        <TargetFramework>net8.0</TargetFramework>
+        <ImplicitUsings>enable</ImplicitUsings>
+        <Nullable>enable</Nullable>
+        <RootNamespace>StateSync.Client</RootNamespace>
+        <AssemblyName>StateSync.Client</AssemblyName>
+    </PropertyGroup>
+
+    <ItemGroup>
+        <ProjectReference Include="..\..\src\core\SetNet\SetNet.csproj" />
+        <ProjectReference Include="..\..\src\serializers\SetNet.MessagePack\SetNet.MessagePack.csproj" />
+        <ProjectReference Include="..\..\src\realtime\SetNet.StateSync\SetNet.StateSync.csproj" />
+        <ProjectReference Include="..\StateSync.Shared\StateSync.Shared.csproj" />
+    </ItemGroup>
+
+</Project>
