@@ -50,6 +50,21 @@
         <ProjectReference Include="..\..\src\net\SetNet.Multiplex\SetNet.Multiplex.csproj" />
         <ProjectReference Include="..\..\src\messaging\SetNet.Streams\SetNet.Streams.csproj" />
         <ProjectReference Include="..\..\src\infra\SetNet.Sharding\SetNet.Sharding.csproj" />
+        <ProjectReference Include="..\..\src\realtime\SetNet.Inventory\SetNet.Inventory.csproj" />
+        <ProjectReference Include="..\..\src\realtime\SetNet.Trade\SetNet.Trade.csproj" />
+        <ProjectReference Include="..\..\src\realtime\SetNet.Mail\SetNet.Mail.csproj" />
+        <ProjectReference Include="..\..\src\realtime\SetNet.Zones\SetNet.Zones.csproj" />
+        <ProjectReference Include="..\..\src\realtime\SetNet.Wallet\SetNet.Wallet.csproj" />
+        <ProjectReference Include="..\..\src\realtime\SetNet.Vendor\SetNet.Vendor.csproj" />
+        <ProjectReference Include="..\..\src\realtime\SetNet.Auction\SetNet.Auction.csproj" />
+        <ProjectReference Include="..\..\src\realtime\SetNet.Crafting\SetNet.Crafting.csproj" />
+        <ProjectReference Include="..\..\src\realtime\SetNet.Loot\SetNet.Loot.csproj" />
+        <ProjectReference Include="..\..\src\realtime\SetNet.Quests\SetNet.Quests.csproj" />
+        <ProjectReference Include="..\..\src\realtime\SetNet.Progression\SetNet.Progression.csproj" />
+        <ProjectReference Include="..\..\src\realtime\SetNet.Guilds\SetNet.Guilds.csproj" />
+        <ProjectReference Include="..\..\src\infra\SetNet.LoadBalancer\SetNet.LoadBalancer.csproj" />
+        <ProjectReference Include="..\..\src\realtime\SetNet.Marketplace\SetNet.Marketplace.csproj" />
+        <ProjectReference Include="..\..\src\realtime\SetNet.StatusEffects\SetNet.StatusEffects.csproj" />
     </ItemGroup>
 
 </Project>

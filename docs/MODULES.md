@@ -62,6 +62,20 @@ Grouped by purpose (mirrors the `src/<category>/` layout). Each depends only on 
 | **SetNet.Chat** | channel-based text chat + moderation |
 | **SetNet.Voice** | codec-agnostic voice-chat relay: numeric channels, opaque audio frames, unreliable fan-out |
 | **SetNet.Lockstep** | deterministic wait-for-all turn engine |
+| **SetNet.Inventory** | server-authoritative stackable inventory: grant/revoke by player key, atomic `TryRevoke`, read + push; pluggable `IInventoryStore` |
+| **SetNet.Trade** | player-to-player escrow trading: two-phase ready→confirm lock, atomic cross-swap through Inventory with rollback (deps `SetNet.Inventory`) |
+| **SetNet.Mail** | offline mail with item attachments escrowed from the sender and granted on claim; pluggable `IMailStore` (deps `SetNet.Inventory`) |
+| **SetNet.Zones** | seamless player handoff between world nodes: stash carried state under a one-time token, push a migrate instruction, claim on the destination; pluggable `IHandoffStore` |
+| **SetNet.Wallet** | server-authoritative currencies: atomic deposit/withdraw/transfer by player key, read + push; pluggable `IWalletStore` |
+| **SetNet.Vendor** | NPC shops: buy/sell catalogs with stock, settled atomically through Wallet + Inventory (deps `SetNet.Inventory` + `SetNet.Wallet`) |
+| **SetNet.Auction** | player auction house: escrow item + bids, timer-settled, outbid refunds + won/sold/returned events (deps `SetNet.Inventory` + `SetNet.Wallet`) |
+| **SetNet.Crafting** | recipes (inputs → outputs) crafted atomically through Inventory with rollback (deps `SetNet.Inventory`) |
+| **SetNet.Loot** | weighted server-side drop tables (guaranteed + weighted draws), granted through Inventory; gated client-open (deps `SetNet.Inventory`) |
+| **SetNet.Quests** | quests with objectives + item rewards: server-driven progress, `QuestCompleted` event, claim grants via Inventory (deps `SetNet.Inventory`) |
+| **SetNet.Progression** | levels/XP with a configurable curve, multi-level rollover, `LeveledUp` event, read + push; pluggable `IProgressionStore` |
+| **SetNet.Guilds** | guilds/clans: roles (member/officer/leader), promote/kick, shared bank as a guild-keyed inventory (deps `SetNet.Inventory`) |
+| **SetNet.Marketplace** | continuous double-sided order book: limit buy/sell, price-time matching at the resting price, escrow via Wallet + Inventory (deps `SetNet.Inventory` + `SetNet.Wallet`) |
+| **SetNet.StatusEffects** | server-authoritative buffs/debuffs on any target key: timed, stacking, timer-expired, pushed to the target + watchers |
 | **SetNet.StateSync** | server-authoritative entity replication: delta snapshots, interpolation, interest, input |
 | **SetNet.StateSync.SpatialGrid** | grid interest manager (deps `SetNet.StateSync`) |
 | **SetNet.StateSync.LagCompensation** | server rewind for fair hit detection (deps `SetNet.StateSync`) |
@@ -80,6 +94,7 @@ Grouped by purpose (mirrors the `src/<category>/` layout). Each depends only on 
 | **SetNet.Cluster** | server-to-server broadcast bus (mesh of nodes): `Publish`/`Received`/`On<T>` across nodes |
 | **SetNet.Redis** | Redis backplane: shared `ISessionStore`/`IBanStore`/`IRoomStore` across nodes (deps `SetNet.Auth`+`SetNet.Rooms`+`SetNet.BanList`+StackExchange.Redis) |
 | **SetNet.Sharding** | consistent-hash `ShardRing` (virtual nodes) + a shard directory every node answers: clients ask any node which node owns a key, then connect there |
+| **SetNet.LoadBalancer** | least-loaded node selection: an entry node keeps a registry of nodes with reported load/capacity and directs clients to the emptiest one |
 
 **Logging** (`src/logging/`)
 | Package | What it adds |
@@ -118,3 +133,5 @@ Grouped by purpose (mirrors the `src/<category>/` layout). Each depends only on 
 - **SetNet.Logging.MicrosoftExtensions** — an `ILogger` adapter over `Microsoft.Extensions.Logging` (sibling to the Serilog package).
 - **SetNet.WebRTC / SetNet.Quic / SetNet.Steam** — additional transports via the same `ITransportProvider` hook.
 - **SetNet.RateLimit** per-message-type budgets (`PerType = {...}`) on top of the current per-peer bucket.
+- **SetNet.NPC** — a unified abstraction for non-living interactive entities (vendors, bankers, quest-givers, buffers, teleporters): one `INpcBehaviour` per NPC type + spawn/interest/interact, delegating to the economy/quest/status modules via a capability hand-off. Detailed design: [design/SetNet.NPC.md](design/SetNet.NPC.md).
+- **SetNet.Mobs** — hostile AI entities with **per-mob AI** (`IMobBrain`): ready-made aggressive / retaliate-only / ranged-kiter / caster brains + composable behaviour components, server-authoritative tick loop, threat, telegraphed abilities, StateSync replication, loot/XP/respawn on death. Detailed design: [design/SetNet.Mobs.md](design/SetNet.Mobs.md).

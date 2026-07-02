@@ -43,6 +43,21 @@ SetNet is a **small core** (`SetNet`) plus **optional companion packages** you p
 | Text chat | [Chat](../src/realtime/SetNet.Chat/README.md) |
 | Replicate a moving world (positions, NPCs) | [StateSync](../src/realtime/SetNet.StateSync/README.md) (+ [SpatialGrid](../src/realtime/SetNet.StateSync.SpatialGrid/README.md), [LagCompensation](../src/realtime/SetNet.StateSync.LagCompensation/README.md), [Prediction](../src/realtime/SetNet.StateSync.Prediction/README.md), [NetworkVariable](../src/realtime/SetNet.StateSync.NetworkVariable/README.md), [Rpc](../src/realtime/SetNet.StateSync.Rpc/README.md)) |
 | Deterministic RTS-style networking | [Lockstep](../src/realtime/SetNet.Lockstep/README.md) |
+| Player inventories / items | [Inventory](../src/realtime/SetNet.Inventory/README.md) |
+| Player-to-player trading | [Trade](../src/realtime/SetNet.Trade/README.md) |
+| In-game mail with attachments | [Mail](../src/realtime/SetNet.Mail/README.md) |
+| Seamless world across many nodes | [Zones](../src/realtime/SetNet.Zones/README.md) (+ [Sharding](../src/infra/SetNet.Sharding/README.md)) |
+| Player currencies / money | [Wallet](../src/realtime/SetNet.Wallet/README.md) |
+| NPC shops (buy/sell) | [Vendor](../src/realtime/SetNet.Vendor/README.md) |
+| Player-driven marketplace | [Auction](../src/realtime/SetNet.Auction/README.md) |
+| Crafting recipes | [Crafting](../src/realtime/SetNet.Crafting/README.md) |
+| Loot / drop tables | [Loot](../src/realtime/SetNet.Loot/README.md) |
+| Quests & objectives | [Quests](../src/realtime/SetNet.Quests/README.md) |
+| Levels & XP | [Progression](../src/realtime/SetNet.Progression/README.md) |
+| Guilds / clans (+ bank) | [Guilds](../src/realtime/SetNet.Guilds/README.md) |
+| Commodity marketplace (order book) | [Marketplace](../src/realtime/SetNet.Marketplace/README.md) |
+| Buffs / debuffs (combat) | [StatusEffects](../src/realtime/SetNet.StatusEffects/README.md) |
+| Direct players to the emptiest node | [LoadBalancer](../src/infra/SetNet.LoadBalancer/README.md) |
 | Host in ASP.NET Core / use DI / probe health | [Hosting](../src/infra/SetNet.Hosting/README.md), [DependencyInjection](../src/infra/SetNet.DependencyInjection/README.md), [HealthChecks](../src/infra/SetNet.HealthChecks/README.md) |
 | Watch live metrics / shard players | [Inspector](../src/infra/SetNet.Inspector/README.md), [Gateway](../src/infra/SetNet.Gateway/README.md) |
 | Route keys/rooms across many nodes | [Sharding](../src/infra/SetNet.Sharding/README.md) (+ [Redis](../src/infra/SetNet.Redis/README.md), [Cluster](../src/infra/SetNet.Cluster/README.md)) |

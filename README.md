@@ -113,6 +113,20 @@ The core is one package (`SetNet`); everything else is an **optional companion**
 | [SetNet.Chat](src/realtime/SetNet.Chat/README.md) · [📦](https://www.nuget.org/packages/SetNet.Chat) | Channel text chat + moderation |
 | [SetNet.Voice](src/realtime/SetNet.Voice/README.md) · [📦](https://www.nuget.org/packages/SetNet.Voice) | Codec-agnostic voice-chat relay (channels, opaque frames) |
 | [SetNet.Lockstep](src/realtime/SetNet.Lockstep/README.md) · [📦](https://www.nuget.org/packages/SetNet.Lockstep) | Deterministic input-synchronous turn engine (RTS) |
+| [SetNet.Inventory](src/realtime/SetNet.Inventory/README.md) · [📦](https://www.nuget.org/packages/SetNet.Inventory) | Server-authoritative stackable inventory, atomic grant/revoke |
+| [SetNet.Trade](src/realtime/SetNet.Trade/README.md) · [📦](https://www.nuget.org/packages/SetNet.Trade) | Escrow player trading (two-phase confirm, atomic swap) |
+| [SetNet.Mail](src/realtime/SetNet.Mail/README.md) · [📦](https://www.nuget.org/packages/SetNet.Mail) | Offline mail with escrowed item attachments |
+| [SetNet.Zones](src/realtime/SetNet.Zones/README.md) · [📦](https://www.nuget.org/packages/SetNet.Zones) | Seamless player handoff between world nodes |
+| [SetNet.Wallet](src/realtime/SetNet.Wallet/README.md) · [📦](https://www.nuget.org/packages/SetNet.Wallet) | Server-authoritative currencies, atomic deposit/withdraw/transfer |
+| [SetNet.Vendor](src/realtime/SetNet.Vendor/README.md) · [📦](https://www.nuget.org/packages/SetNet.Vendor) | NPC shops (buy/sell, stock) via Wallet + Inventory |
+| [SetNet.Auction](src/realtime/SetNet.Auction/README.md) · [📦](https://www.nuget.org/packages/SetNet.Auction) | Player auction house (escrow, bids, timer settlement) |
+| [SetNet.Crafting](src/realtime/SetNet.Crafting/README.md) · [📦](https://www.nuget.org/packages/SetNet.Crafting) | Recipes crafted atomically through Inventory |
+| [SetNet.Loot](src/realtime/SetNet.Loot/README.md) · [📦](https://www.nuget.org/packages/SetNet.Loot) | Weighted server-side drop tables |
+| [SetNet.Quests](src/realtime/SetNet.Quests/README.md) · [📦](https://www.nuget.org/packages/SetNet.Quests) | Quests: objectives, progress, rewards |
+| [SetNet.Progression](src/realtime/SetNet.Progression/README.md) · [📦](https://www.nuget.org/packages/SetNet.Progression) | Levels/XP with a configurable curve |
+| [SetNet.Guilds](src/realtime/SetNet.Guilds/README.md) · [📦](https://www.nuget.org/packages/SetNet.Guilds) | Guilds/clans: roles + shared bank |
+| [SetNet.Marketplace](src/realtime/SetNet.Marketplace/README.md) · [📦](https://www.nuget.org/packages/SetNet.Marketplace) | Continuous order-book marketplace (limit orders, matching) |
+| [SetNet.StatusEffects](src/realtime/SetNet.StatusEffects/README.md) · [📦](https://www.nuget.org/packages/SetNet.StatusEffects) | Server-authoritative buffs/debuffs (timed, stacking) |
 | [SetNet.StateSync](src/realtime/SetNet.StateSync/README.md) · [📦](https://www.nuget.org/packages/SetNet.StateSync) | Server-authoritative entity replication (snapshots, interpolation) |
 | [SetNet.StateSync.SpatialGrid](src/realtime/SetNet.StateSync.SpatialGrid/README.md) · [📦](https://www.nuget.org/packages/SetNet.StateSync.SpatialGrid) | Grid-based interest management |
 | [SetNet.StateSync.LagCompensation](src/realtime/SetNet.StateSync.LagCompensation/README.md) · [📦](https://www.nuget.org/packages/SetNet.StateSync.LagCompensation) | Server rewind for fair hit detection |
@@ -132,6 +146,7 @@ The core is one package (`SetNet`); everything else is an **optional companion**
 | [SetNet.Cluster](src/infra/SetNet.Cluster/README.md) · [📦](https://www.nuget.org/packages/SetNet.Cluster) | Server-to-server broadcast bus (mesh of nodes) |
 | [SetNet.Redis](src/infra/SetNet.Redis/README.md) · [📦](https://www.nuget.org/packages/SetNet.Redis) | Redis backplane: shared sessions/bans/room codes across nodes |
 | [SetNet.Sharding](src/infra/SetNet.Sharding/README.md) · [📦](https://www.nuget.org/packages/SetNet.Sharding) | Consistent-hash key→node routing + cluster-wide shard directory |
+| [SetNet.LoadBalancer](src/infra/SetNet.LoadBalancer/README.md) · [📦](https://www.nuget.org/packages/SetNet.LoadBalancer) | Least-loaded node selection for new sessions |
 
 **Logging & engine bindings**
 

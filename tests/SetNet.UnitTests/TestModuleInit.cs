@@ -1,8 +1,19 @@
 using System.Runtime.CompilerServices;
+using SetNet.Auction;
 using SetNet.Auth;
 using SetNet.Chat;
+using SetNet.Crafting;
 using SetNet.Fragmentation;
+using SetNet.Guilds;
+using SetNet.Inventory;
 using SetNet.Lockstep;
+using SetNet.LoadBalancer;
+using SetNet.Loot;
+using SetNet.Mail;
+using SetNet.Marketplace;
+using SetNet.Progression;
+using SetNet.Quests;
+using SetNet.StatusEffects;
 using SetNet.Matchmaking;
 using SetNet.Party;
 using SetNet.ProofOfWork;
@@ -19,6 +30,10 @@ using SetNet.Sharding;
 using SetNet.StateSync;
 using SetNet.StateSync.Rpc;
 using SetNet.Streams;
+using SetNet.Trade;
+using SetNet.Vendor;
+using SetNet.Wallet;
+using SetNet.Zones;
 
 namespace SetNet.UnitTests;
 
@@ -51,5 +66,20 @@ internal static class TestModuleInit
         MultiplexRuntime.Enable();
         StreamsRuntime.Enable();
         ShardingRuntime.Enable();
+        InventoryRuntime.Enable();
+        TradeRuntime.Enable();
+        MailRuntime.Enable();
+        ZonesRuntime.Enable();
+        WalletRuntime.Enable();
+        VendorRuntime.Enable();
+        AuctionRuntime.Enable();
+        CraftingRuntime.Enable();
+        LootRuntime.Enable();
+        QuestRuntime.Enable();
+        ProgressionRuntime.Enable();
+        GuildRuntime.Enable();
+        LoadBalancerRuntime.Enable();
+        MarketplaceRuntime.Enable();
+        StatusEffectRuntime.Enable();
     }
 }
