@@ -1,0 +1,38 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+    <PropertyGroup>
+        <TargetFramework>netstandard2.1</TargetFramework>
+        <ImplicitUsings>false</ImplicitUsings>
+        <Nullable>enable</Nullable>
+        <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    </PropertyGroup>
+
+    <PropertyGroup>
+        <PackageId>SetNet.Spawning</PackageId>
+        <Version>1.0.0</Version>
+        <AssemblyVersion>1.0.0.0</AssemblyVersion>
+        <FileVersion>1.0.0.0</FileVersion>
+        <Authors>Artem Lemeshev</Authors>
+        <Description>Zone-based mob spawning for SetNet, on top of SetNet.Mobs: define spawn zones (box or circle areas), the mob types in each zone, how many of each to keep alive, and the respawn delay after one dies. The server keeps every zone populated, respawning on a timer, snapping spawn points to walkable ground via SetNet.GeoData when provided. Headless-drivable (Update(dt)) or self-timed. Depends on SetNet + SetNet.Mobs + SetNet.GeoData.</Description>
+        <PackageTags>networking;spawning;mobs;zones;respawn;game;setnet</PackageTags>
+        <PackageLicenseExpression>MIT</PackageLicenseExpression>
+        <RepositoryUrl>https://github.com/Povstalez/SetNet.git</RepositoryUrl>
+        <RepositoryType>git</RepositoryType>
+        <PackageProjectUrl>https://github.com/Povstalez/SetNet</PackageProjectUrl>
+        <PackageReadmeFile>README.md</PackageReadmeFile>
+        <PackageIcon>icon.png</PackageIcon>
+    </PropertyGroup>
+
+    <ItemGroup>
+      <None Include="README.md" Pack="true" PackagePath="\" />
+      <None Include="../../../assets/icon.png" Pack="true" PackagePath="\" Visible="false" />
+    </ItemGroup>
+
+    <ItemGroup>
+      <ProjectReference Include="../../core/SetNet/SetNet.csproj" />
+      <ProjectReference Include="../SetNet.Ticks/SetNet.Ticks.csproj" />
+      <ProjectReference Include="../SetNet.Mobs/SetNet.Mobs.csproj" />
+      <ProjectReference Include="../SetNet.GeoData/SetNet.GeoData.csproj" />
+    </ItemGroup>
+
+</Project>

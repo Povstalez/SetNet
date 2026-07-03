@@ -1,0 +1,8 @@
+- name: Home
+  href: index.md
+- name: Guide
+  href: articles/
+- name: Modules
+  href: modules/
+- name: API Reference
+  href: api/

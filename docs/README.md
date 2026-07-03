@@ -8,6 +8,7 @@ Everything about SetNet in one place. Start here, then dive into a specific guid
 
 ## Start here
 
+- **📖 [Full documentation site](https://povstalez.github.io/SetNet/)** — the browsable docs site: the guides, every module's README, and a **complete generated API reference** (every public type, property, method and option, from the source XML docs). Built with DocFX and hosted on GitHub Pages. Build it locally with `bash docfx/gen.sh` (needs `dotnet tool install -g docfx`) → opens `_site/`.
 - **[Main README](../README.md)** — what SetNet is, quick start, transport selection, lifecycle, hardening.
 - **[User guide (GUIDE.en.md)](GUIDE.en.md)** — the full manual: handlers, transports, reliable channels, reconnect, batching, the complete `Configuration` reference, production checklist. *(Українською: [GUIDE.ua.md](GUIDE.ua.md))*
 - **[Performance (PERFORMANCE.en.md)](PERFORMANCE.en.md)** — throughput model, scaling limits, roadmap. *(Українською: [PERFORMANCE.ua.md](PERFORMANCE.ua.md))*
@@ -58,12 +59,28 @@ SetNet is a **small core** (`SetNet`) plus **optional companion packages** you p
 | Guilds / clans (+ bank) | [Guilds](../src/realtime/SetNet.Guilds/README.md) |
 | Commodity marketplace (order book) | [Marketplace](../src/realtime/SetNet.Marketplace/README.md) |
 | Buffs / debuffs (combat) | [StatusEffects](../src/realtime/SetNet.StatusEffects/README.md) |
+| Server-side world geometry (walkable, line-of-sight, floors/multi-storey, sectors) | [GeoData](../src/realtime/SetNet.GeoData/README.md) |
+| Find paths & move entities along them | [PathFinding](../src/realtime/SetNet.PathFinding/README.md) |
+| Interactive NPCs (vendors, teleporters, dialogue) | [NPC](../src/realtime/SetNet.NPC/README.md) |
+| Hostile AI monsters (chase / attack / per-mob AI) | [Mobs](../src/realtime/SetNet.Mobs/README.md) (+ [Mobs.StateSync](../src/realtime/SetNet.Mobs.StateSync/README.md)) |
+| Move everything server-side through one tick (players/mobs/…) | [Locomotion](../src/realtime/SetNet.Locomotion/README.md) (+ [Locomotion.Unity](../src/engine/SetNet.Locomotion.Unity/README.md) NavAgent) |
+| Custom character stats (attack power, defense, speed…) | [Stats](../src/realtime/SetNet.Stats/README.md) |
+| Damage / combat resolution | [Combat](../src/realtime/SetNet.Combat/README.md) |
+| Abilities / skills (cooldowns, costs, effects) | [Abilities](../src/realtime/SetNet.Abilities/README.md) |
+| Equipment / gear that changes stats | [Equipment](../src/realtime/SetNet.Equipment/README.md) |
+| Reusable AI (state machine / behavior tree) | [StateMachine](../src/realtime/SetNet.StateMachine/README.md), [BehaviorTree](../src/realtime/SetNet.BehaviorTree/README.md) |
+| Keep zones populated with mobs (spawn/respawn) | [Spawning](../src/realtime/SetNet.Spawning/README.md) |
+| Toasts / notifications to players | [Notifications](../src/realtime/SetNet.Notifications/README.md) |
+| Branching NPC dialogue | [Dialogue](../src/realtime/SetNet.Dialogue/README.md) |
+| Persist module state (save-games, snapshots) | [Persistence](../src/infra/SetNet.Persistence/README.md) |
+| Auto-document your wire protocol | [Docs](../src/infra/SetNet.Docs/README.md) |
 | Direct players to the emptiest node | [LoadBalancer](../src/infra/SetNet.LoadBalancer/README.md) |
 | Host in ASP.NET Core / use DI / probe health | [Hosting](../src/infra/SetNet.Hosting/README.md), [DependencyInjection](../src/infra/SetNet.DependencyInjection/README.md), [HealthChecks](../src/infra/SetNet.HealthChecks/README.md) |
 | Watch live metrics / shard players | [Inspector](../src/infra/SetNet.Inspector/README.md), [Gateway](../src/infra/SetNet.Gateway/README.md) |
 | Route keys/rooms across many nodes | [Sharding](../src/infra/SetNet.Sharding/README.md) (+ [Redis](../src/infra/SetNet.Redis/README.md), [Cluster](../src/infra/SetNet.Cluster/README.md)) |
 | Log to Serilog | [Logging.Serilog](../src/logging/SetNet.Logging.Serilog/README.md) |
 | Use it in Unity / Godot | [Unity](../src/engine/SetNet.Unity/README.md) + [StateSync.Unity](../src/engine/SetNet.StateSync.Unity/README.md), [Godot](../src/engine/SetNet.Godot/README.md) |
+| Bake world geometry from a Unity scene | [GeoData.Unity](../src/engine/SetNet.GeoData.Unity/README.md) (NavMesh / colliders / multi-storey / sectors + Scene-view visualizer) |
 
 ## Serialization: typed payloads vs raw envelopes
 

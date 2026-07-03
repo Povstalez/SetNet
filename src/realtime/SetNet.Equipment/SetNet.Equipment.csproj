@@ -1,0 +1,37 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+    <PropertyGroup>
+        <TargetFramework>netstandard2.1</TargetFramework>
+        <ImplicitUsings>false</ImplicitUsings>
+        <Nullable>enable</Nullable>
+        <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    </PropertyGroup>
+
+    <PropertyGroup>
+        <PackageId>SetNet.Equipment</PackageId>
+        <Version>1.0.0</Version>
+        <AssemblyVersion>1.0.0.0</AssemblyVersion>
+        <FileVersion>1.0.0.0</FileVersion>
+        <Authors>Artem Lemeshev</Authors>
+        <Description>Server-authoritative equipment for SetNet: define your own slot schema (head, weapon, ring1/ring2, whatever — with per-slot accept rules), equip/unequip items pulled from SetNet.Inventory, and have each equipped item apply stat modifiers to the wearer's SetNet.Stats StatSet (so gear changes attack power, defense, speed, …). Clients equip/unequip and read the loadout; changes push. Rides the unified protocol. Depends on SetNet + SetNet.Stats + SetNet.Inventory.</Description>
+        <PackageTags>networking;equipment;gear;inventory;rpg;game;setnet</PackageTags>
+        <PackageLicenseExpression>MIT</PackageLicenseExpression>
+        <RepositoryUrl>https://github.com/Povstalez/SetNet.git</RepositoryUrl>
+        <RepositoryType>git</RepositoryType>
+        <PackageProjectUrl>https://github.com/Povstalez/SetNet</PackageProjectUrl>
+        <PackageReadmeFile>README.md</PackageReadmeFile>
+        <PackageIcon>icon.png</PackageIcon>
+    </PropertyGroup>
+
+    <ItemGroup>
+      <None Include="README.md" Pack="true" PackagePath="\" />
+      <None Include="../../../assets/icon.png" Pack="true" PackagePath="\" Visible="false" />
+    </ItemGroup>
+
+    <ItemGroup>
+      <ProjectReference Include="../../core/SetNet/SetNet.csproj" />
+      <ProjectReference Include="../SetNet.Stats/SetNet.Stats.csproj" />
+      <ProjectReference Include="../SetNet.Inventory/SetNet.Inventory.csproj" />
+    </ItemGroup>
+
+</Project>

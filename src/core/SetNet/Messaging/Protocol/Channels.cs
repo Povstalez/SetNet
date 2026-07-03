@@ -92,5 +92,17 @@ namespace SetNet.Protocol
 
         /// <summary>Hostile AI entities (SetNet.Mobs).</summary>
         public const ushort Mobs = 27;
+
+        /// <summary>Player abilities / skills (SetNet.Abilities).</summary>
+        public const ushort Abilities = 28;
+
+        /// <summary>Equipment slots (SetNet.Equipment).</summary>
+        public const ushort Equipment = 29;
+
+        /// <summary>Server→client notifications (SetNet.Notifications).</summary>
+        public const ushort Notifications = 30;
+
+        /// <summary>Branching dialogue (SetNet.Dialogue).</summary>
+        public const ushort Dialogue = 31;
     }
 }

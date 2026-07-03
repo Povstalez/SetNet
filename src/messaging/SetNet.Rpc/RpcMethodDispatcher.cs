@@ -5,6 +5,7 @@ using System.Reflection;
 using System.Threading;
 using System.Threading.Tasks;
 using SetNet.Core;
+using SetNet.Core.Commands;
 using SetNet.Messaging;
 
 namespace SetNet.Rpc
@@ -79,7 +80,7 @@ namespace SetNet.Rpc
                     if (attr == null) continue;
 
                     var args = closed.GetGenericArguments();          // [TRequest, TResponse]
-                    var handler = Activator.CreateInstance(type);
+                    var handler = HandlerActivator.Create(type);      // through the DI seam (SetNet.DependencyInjection)
                     var invoker = (IRpcInvoker)Activator.CreateInstance(
                         typeof(RpcMethodInvoker<,>).MakeGenericType(args[0], args[1]), handler);
                     map[attr.MethodId] = invoker;

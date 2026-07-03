@@ -102,11 +102,28 @@ Grouped by purpose (mirrors the `src/<category>/` layout). Each depends only on 
 | **SetNet.NPC** | non-living interactive entities (vendors/buffers/teleporters/dialogue): one `INpcBehaviour` per type + spawn/zone-interest/interact, delegating to the economy/status modules via a capability hand-off (deps `SetNet.GeoData` for `Vec3`) |
 | **SetNet.Mobs** | hostile AI entities with **per-mob AI** (`IMobBrain`: ready aggressive / retaliate-only / ranged-kiter / caster brains + a composer), server-authoritative tick loop, perception, threat, telegraphed abilities, loot/respawn on death. **StateSync-optional** — replicates via an `IMobReplication` seam (drive it with `Update(dtMs)` and no StateSync at all, or plug the adapter below) (deps `SetNet.GeoData` + `SetNet.PathFinding`) |
 | **SetNet.Mobs.StateSync** | optional adapter that replicates mobs over StateSync (`IMobReplication` → `ServerReplication`) (deps `SetNet.Mobs` + `SetNet.StateSync`) |
+| **SetNet.Locomotion** | one **unified server-side movement tick**: create a `Mover` (auto-subscribed) and it advances along a pathfound route N Hz; replicates **nothing** (a `Started` hook lets you send just the destination, L2-style) (deps `SetNet.GeoData` + `SetNet.PathFinding`) |
+| **SetNet.Mobs.Locomotion** | opt-in bridge (`loco.AsMobMover()` → `MobOptions.Mover`) that advances mob positions through the shared `SetNet.Locomotion` tick instead of the built-in follower — players + mobs in one system (deps `SetNet.Mobs` + `SetNet.Locomotion`) |
+| **SetNet.StateMachine** | tiny generic finite-state machine (states / guards / any-state transitions) for AI/gameplay — no wire protocol |
+| **SetNet.BehaviorTree** | generic behavior tree (Sequence/Selector/Parallel + Inverter/Repeat/Cooldown decorators + Action/Condition/Wait leaves, fluent builder) — no wire protocol |
+| **SetNet.Spawning** | zone-based mob spawning over `SetNet.Mobs`: box/circle areas + per-type counts + respawn delay, walkable-snapped via GeoData (deps `SetNet.Mobs` + `SetNet.GeoData`) |
+| **SetNet.Ticks** | one **central update loop**: register anything (`ITickable`/lambda) into a named channel with its own rate (Hz) + priority; drives them all from one place (30 Hz movement, 10 Hz AI, 1 Hz housekeeping) with per-channel fixed timestep; `Start()` internal timer **or** `Pump(dt)` from your loop. **Auto-subscription**: `new TickScheduler().MakeCurrent()` before your `UseXxx(...)` and `MobServer`/`LocomotionSystem`/`SpawningServer` subscribe themselves (no manual wiring); behaviour trees/state machines plug in via `Bind(ctx)`. **Zero deps** — the tick foundation lives here (not core), and the game-loop modules depend on it — no wire protocol |
+| **SetNet.Notifications** | server→client notifications / toasts with an offline queue flushed on reconnect |
+| **SetNet.Dialogue** | server-authoritative branching dialogue trees (guarded choices + side-effects), `StartAsync`/`ChooseAsync` |
+
+**Character / RPG systems** (`src/realtime/`) — the combat foundation; Stats underpins the rest
+| Package | What it adds |
+|---|---|
+| **SetNet.Stats** | your own stat schema + a `StatSet` whose values compute from a base plus flat / additive-% / multiplicative-% modifiers (clamped, cached, remove-by-source) — no wire protocol |
+| **SetNet.Combat** | damage resolution between two `StatSet`s: pluggable `ICombatFormula`, configurable `CombatStatKeys`, crit + armor mitigation, a `Health` pool (deps `SetNet.Stats`) |
+| **SetNet.Abilities** | abilities/skills with cooldown, resource cost, range and composable effects (damage / heal / timed buff) over stats/health/position seams — players and mobs alike (deps `SetNet.Stats` + `SetNet.Combat`) |
+| **SetNet.Equipment** | custom equip slots (with accept rules); equipped items apply stat modifiers to the wearer's `StatSet`, moved in/out of Inventory (deps `SetNet.Stats` + `SetNet.Inventory`) |
 
 **Infra** (`src/infra/`)
 | Package | What it adds |
 |---|---|
-| **SetNet.DependencyInjection** | construct handlers via an `IServiceProvider` (`Microsoft.Extensions.DependencyInjection`) |
+| **SetNet.DependencyInjection** | construct **every discovered component** (message handlers, `[ProtocolChannel]` channel services + `[Op]` classes, client `[Event]` handlers, `[RpcMethod]` RPC handlers) via an `IServiceProvider` with constructor injection — `provider.UseSetNet()` (`Microsoft.Extensions.DependencyInjection`) |
+| **SetNet.Services** | tiny **service locator** so you don't hand-store every `UseXxx()` instance: `hub.Add(server.UseInventory())` once, then `Service.Get<InventoryServer>()` anywhere — ambient (`MakeCurrent`) or per-server (`server.Services()`). Lets brains/handlers/helpers reach `loco`/`ticks`/`dialogue`/… without constructor plumbing (deps `SetNet`) |
 | **SetNet.Hosting** | run a server as an `IHostedService` (`Microsoft.Extensions.Hosting`) |
 | **SetNet.HealthChecks** | `IHealthCheck` for liveness + connections (`Microsoft.Extensions.Diagnostics.HealthChecks`) |
 | **SetNet.Inspector** | HttpListener dashboard (`/metrics` JSON + HTML) |
@@ -115,6 +132,8 @@ Grouped by purpose (mirrors the `src/<category>/` layout). Each depends only on 
 | **SetNet.Redis** | Redis backplane: shared `ISessionStore`/`IBanStore`/`IRoomStore` across nodes (deps `SetNet.Auth`+`SetNet.Rooms`+`SetNet.BanList`+StackExchange.Redis) |
 | **SetNet.Sharding** | consistent-hash `ShardRing` (virtual nodes) + a shard directory every node answers: clients ask any node which node owns a key, then connect there |
 | **SetNet.LoadBalancer** | least-loaded node selection: an entry node keeps a registry of nodes with reported load/capacity and directs clients to the emptiest one |
+| **SetNet.Persistence** | durable-state seam for module stores: `IDocumentStore<T>` (get/set/enumerate) + `ISnapshotStore` (byte blobs), with in-memory and JSON-file implementations (deps `System.Text.Json`) |
+| **SetNet.Docs** | reflects `[MessageHandler]` / `[ProtocolChannel]`+`[Op]`/`[Event]` / `[RpcMethod]` into a Markdown protocol report (`ProtocolDocs.Generate()`) |
 
 **Logging** (`src/logging/`)
 | Package | What it adds |
@@ -129,6 +148,7 @@ Grouped by purpose (mirrors the `src/<category>/` layout). Each depends only on 
 | **SetNet.Unity** | `MainThreadDispatcher` for Unity's main thread |
 | **SetNet.StateSync.Unity** | Unity components: NetworkObject/Transform/Animator/Rigidbody/Behaviour + NetworkManager (**UPM source**, not NuGet) |
 | **SetNet.GeoData.Unity** | Editor tool to bake a `SetNet.GeoData` file from a Unity NavMesh, colliders (flat grid), a **multi-surface sweep** (multi-storey layered grid), or **tiled sectors** (+ `.geomap` manifest); one-click auto-bounds + a Scene-view **debug visualizer** (`GeoDataGizmo`) (**UPM source**, not NuGet) |
+| **SetNet.Locomotion.Unity** | client-side **`NavAgent`** component: walks a GameObject along a path (that the client computed from the destination point the server sent) at a `Speed` you set (your replicated move-speed) (**UPM source**, not NuGet) |
 | **SetNet.Godot** | Godot 4 (C#) main-thread dispatcher + math conversions (deps `SetNet.StateSync` + `GodotSharp`) |
 | **SetNet.StateSync.Godot** | Godot 4 replication components: NetworkObject/Transform/AnimationPlayer/RigidBody/Behaviour + NetworkManager (deps `SetNet.StateSync` + `SetNet.Godot` + `GodotSharp`) |
 

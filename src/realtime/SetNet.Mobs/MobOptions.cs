@@ -48,6 +48,9 @@ namespace SetNet.Mobs
         /// <summary>The replication seam. Default <see cref="NullMobReplication"/> — plug an adapter (e.g. SetNet.Mobs.StateSync) to push state.</summary>
         public IMobReplication Replication { get; set; } = NullMobReplication.Instance;
 
+        /// <summary>Optional movement seam. Default null = built-in path-follower. Plug an adapter (e.g. SetNet.Mobs.Locomotion) to advance mob positions through a unified external system.</summary>
+        public IMobMover? Mover { get; set; }
+
         /// <summary>Maps a connected peer to the stable player key used in threat/targeting/damage. Default = connection id.</summary>
         public Func<BasePeer, string> PlayerKey { get; set; } = peer => peer.CurrentPeerInfo.Id.ToString();
 
@@ -62,6 +65,17 @@ namespace SetNet.Mobs
         /// Set false to drive the tick yourself via <c>MobServer.Update(dtMs)</c> (e.g. from your game loop).
         /// </summary>
         public bool UseInternalTimer { get; set; } = true;
+
+        /// <summary>
+        /// When true (default) and a <c>SetNet.Ticks.TickHost.Current</c> is set, the hub auto-subscribes to it (on the
+        /// <see cref="TickChannel"/> at <see cref="TickRateHz"/>) instead of running its own timer — so you don't register
+        /// it by hand. Set false to always use the internal timer even when a tick host exists.
+        /// </summary>
+        public bool AutoTick { get; set; } = true;
+        /// <summary>The tick-scheduler channel this hub auto-subscribes into. Default "mobs".</summary>
+        public string TickChannel { get; set; } = "mobs";
+        /// <summary>Priority of the auto-subscribed channel (higher ticks first). Default 50 (AI after movement).</summary>
+        public int TickPriority { get; set; } = 50;
 
         /// <summary>Threat added per point of player-dealt damage. Default 1.</summary>
         public float ThreatPerDamage { get; set; } = 1f;

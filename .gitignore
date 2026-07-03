@@ -5,3 +5,9 @@ riderModule.iml
 /_ReSharper.Caches/
 # NuGet pack output
 artifacts/
+
+# DocFX generated docs site (reproduced by docfx/gen.sh + the Docs workflow)
+_site/
+docfx/api/
+docfx/articles/
+docfx/modules/

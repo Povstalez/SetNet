@@ -25,6 +25,8 @@ Most map directly onto the communication model — see **[docs/COMMUNICATION.md]
 | **StateSync** | Server-authoritative entity replication (server bounces balls, client renders positions) | `SetNet.StateSync` |
 | **Npc** | Walk into a zone, discover NPCs, interact → **capability hand-off** (`vendor:blacksmith`, `teleport:dungeon`) | `SetNet.NPC` |
 | **World** | *(single project, no networking)* multi-storey **layered grid** + cross-floor A*, a **headless mob** chasing a player around a wall (no StateSync), and a pathfinder **micro-benchmark** | `SetNet.GeoData` + `SetNet.PathFinding` + `SetNet.Mobs` |
+| **UnifiedMove** | *(single project)* a player **and** a mob move through **one** `SetNet.Locomotion` tick, one `Started` hook fires for both (send-the-point, L2-style); the mob chases the player in the shared system | `SetNet.Locomotion` + `SetNet.Mobs` + `SetNet.Mobs.Locomotion` |
+| **MobBrains** | *(single project)* three mobs — one **BehaviorTree**, one **StateMachine**, one plain follower — all driven by **one** `SetNet.Ticks` scheduler (auto-subscribed), moving through **one** `SetNet.Locomotion`, each reaching the moving player via a `SetNet.Services` locator | `SetNet.Ticks` + `SetNet.Locomotion` + `SetNet.Mobs` + `SetNet.BehaviorTree` + `SetNet.StateMachine` + `SetNet.Services` |
 
 ## Run commands
 
@@ -96,6 +98,13 @@ dotnet run --project examples/World                                 # runs all t
 dotnet run --project examples/World -- floors                       # just the multi-storey grid + cross-floor A*
 dotnet run --project examples/World -- chase                        # just the headless mob chase
 dotnet run --project examples/World -- bench                        # just the pathfinder micro-benchmark
+
+# UnifiedMove — ONE project, no networking. Player + mob in one SetNet.Locomotion tick + one Started hook.
+dotnet run --project examples/UnifiedMove
+
+# MobBrains — ONE project, no networking. BehaviorTree + StateMachine + follower mobs, all via ONE TickScheduler
+# (auto-subscribed), moving through ONE Locomotion, each reading the player through a SetNet.Services locator.
+dotnet run --project examples/MobBrains
 ```
 
 All examples build as part of the solution (`dotnet build SetNet.sln`).

@@ -1,0 +1,38 @@
+{
+  "$schema": "https://raw.githubusercontent.com/dotnet/docfx/main/schemas/docfx.schema.json",
+  "metadata": [
+    {
+      "src": [
+        {
+          "src": "src",
+          "files": [ "**/*.csproj" ]
+        }
+      ],
+      "dest": "docfx/api",
+      "namespaceLayout": "nested",
+      "memberLayout": "separatePages",
+      "enumSortOrder": "declaringOrder"
+    }
+  ],
+  "build": {
+    "content": [
+      { "files": [ "**/*.{md,yml}" ], "src": "docfx/api", "dest": "api" },
+      { "files": [ "index.md", "toc.yml", "articles/**.md", "articles/**/toc.yml" ], "src": "docfx" },
+      { "files": [ "modules/**.md", "modules/**/toc.yml" ], "src": "docfx" }
+    ],
+    "resource": [
+      { "files": [ "assets/**" ] }
+    ],
+    "output": "_site",
+    "template": [ "default", "modern" ],
+    "globalMetadata": {
+      "_appName": "SetNet",
+      "_appTitle": "SetNet — .NET networking for games",
+      "_appFooter": "SetNet — MIT. Built with DocFX.",
+      "_enableSearch": true,
+      "_disableContribution": true,
+      "pdf": false
+    },
+    "sitemap": { "baseUrl": "https://povstalez.github.io/SetNet" }
+  }
+}

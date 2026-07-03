@@ -13,6 +13,7 @@
         <PackageReference Include="xunit" Version="2.9.2" />
         <PackageReference Include="xunit.runner.visualstudio" Version="2.8.2" />
         <PackageReference Include="Xunit.SkippableFact" Version="1.5.23" />
+        <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="8.0.1" />
     </ItemGroup>
 
     <ItemGroup>
@@ -69,6 +70,22 @@
         <ProjectReference Include="..\..\src\realtime\SetNet.PathFinding\SetNet.PathFinding.csproj" />
         <ProjectReference Include="..\..\src\realtime\SetNet.NPC\SetNet.NPC.csproj" />
         <ProjectReference Include="..\..\src\realtime\SetNet.Mobs\SetNet.Mobs.csproj" />
+        <ProjectReference Include="..\..\src\realtime\SetNet.Stats\SetNet.Stats.csproj" />
+        <ProjectReference Include="..\..\src\realtime\SetNet.Combat\SetNet.Combat.csproj" />
+        <ProjectReference Include="..\..\src\realtime\SetNet.Abilities\SetNet.Abilities.csproj" />
+        <ProjectReference Include="..\..\src\realtime\SetNet.Equipment\SetNet.Equipment.csproj" />
+        <ProjectReference Include="..\..\src\realtime\SetNet.StateMachine\SetNet.StateMachine.csproj" />
+        <ProjectReference Include="..\..\src\realtime\SetNet.BehaviorTree\SetNet.BehaviorTree.csproj" />
+        <ProjectReference Include="..\..\src\realtime\SetNet.Spawning\SetNet.Spawning.csproj" />
+        <ProjectReference Include="..\..\src\realtime\SetNet.Notifications\SetNet.Notifications.csproj" />
+        <ProjectReference Include="..\..\src\realtime\SetNet.Dialogue\SetNet.Dialogue.csproj" />
+        <ProjectReference Include="..\..\src\infra\SetNet.Persistence\SetNet.Persistence.csproj" />
+        <ProjectReference Include="..\..\src\infra\SetNet.Docs\SetNet.Docs.csproj" />
+        <ProjectReference Include="..\..\src\realtime\SetNet.Locomotion\SetNet.Locomotion.csproj" />
+        <ProjectReference Include="..\..\src\realtime\SetNet.Ticks\SetNet.Ticks.csproj" />
+        <ProjectReference Include="..\..\src\infra\SetNet.Services\SetNet.Services.csproj" />
+        <ProjectReference Include="..\..\src\infra\SetNet.DependencyInjection\SetNet.DependencyInjection.csproj" />
+        <ProjectReference Include="..\..\src\realtime\SetNet.Mobs.Locomotion\SetNet.Mobs.Locomotion.csproj" />
     </ItemGroup>
 
 </Project>

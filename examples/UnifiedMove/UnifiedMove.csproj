@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+    <PropertyGroup>
+        <OutputType>Exe</OutputType>
+        <TargetFramework>net8.0</TargetFramework>
+        <IsPackable>false</IsPackable>
+        <ImplicitUsings>enable</ImplicitUsings>
+        <Nullable>enable</Nullable>
+        <RootNamespace>UnifiedMove</RootNamespace>
+        <AssemblyName>UnifiedMove</AssemblyName>
+    </PropertyGroup>
+
+    <ItemGroup>
+        <ProjectReference Include="..\..\src\core\SetNet\SetNet.csproj" />
+        <ProjectReference Include="..\..\src\realtime\SetNet.GeoData\SetNet.GeoData.csproj" />
+        <ProjectReference Include="..\..\src\realtime\SetNet.PathFinding\SetNet.PathFinding.csproj" />
+        <ProjectReference Include="..\..\src\realtime\SetNet.Mobs\SetNet.Mobs.csproj" />
+        <ProjectReference Include="..\..\src\realtime\SetNet.Locomotion\SetNet.Locomotion.csproj" />
+        <ProjectReference Include="..\..\src\realtime\SetNet.Mobs.Locomotion\SetNet.Mobs.Locomotion.csproj" />
+    </ItemGroup>
+
+</Project>

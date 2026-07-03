@@ -1,0 +1,36 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+    <PropertyGroup>
+        <TargetFramework>netstandard2.1</TargetFramework>
+        <ImplicitUsings>false</ImplicitUsings>
+        <Nullable>enable</Nullable>
+        <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    </PropertyGroup>
+
+    <PropertyGroup>
+        <PackageId>SetNet.StateMachine</PackageId>
+        <Version>1.0.0</Version>
+        <AssemblyVersion>1.0.0.0</AssemblyVersion>
+        <FileVersion>1.0.0.0</FileVersion>
+        <Authors>Artem Lemeshev</Authors>
+        <Description>A tiny generic finite-state machine for SetNet AI/gameplay: states with enter/update/exit, guarded transitions (and any-state transitions), driven by Update(context, dt). Engine-agnostic and allocation-light; wrap one in an IMobBrain for mob AI, or use it anywhere. No wire protocol. Depends only on SetNet.</Description>
+        <PackageTags>networking;state-machine;fsm;ai;game;setnet</PackageTags>
+        <PackageLicenseExpression>MIT</PackageLicenseExpression>
+        <RepositoryUrl>https://github.com/Povstalez/SetNet.git</RepositoryUrl>
+        <RepositoryType>git</RepositoryType>
+        <PackageProjectUrl>https://github.com/Povstalez/SetNet</PackageProjectUrl>
+        <PackageReadmeFile>README.md</PackageReadmeFile>
+        <PackageIcon>icon.png</PackageIcon>
+    </PropertyGroup>
+
+    <ItemGroup>
+      <None Include="README.md" Pack="true" PackagePath="\" />
+      <None Include="../../../assets/icon.png" Pack="true" PackagePath="\" Visible="false" />
+    </ItemGroup>
+
+    <ItemGroup>
+      <ProjectReference Include="../../core/SetNet/SetNet.csproj" />
+      <ProjectReference Include="../SetNet.Ticks/SetNet.Ticks.csproj" />
+    </ItemGroup>
+
+</Project>

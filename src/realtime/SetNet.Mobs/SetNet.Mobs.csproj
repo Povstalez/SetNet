@@ -31,6 +31,7 @@
 
     <ItemGroup>
       <ProjectReference Include="../../core/SetNet/SetNet.csproj" />
+      <ProjectReference Include="../SetNet.Ticks/SetNet.Ticks.csproj" />
       <ProjectReference Include="../SetNet.GeoData/SetNet.GeoData.csproj" />
       <ProjectReference Include="../SetNet.PathFinding/SetNet.PathFinding.csproj" />
     </ItemGroup>

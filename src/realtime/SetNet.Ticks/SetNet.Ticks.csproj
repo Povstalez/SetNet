@@ -1,0 +1,33 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+    <PropertyGroup>
+        <TargetFramework>netstandard2.1</TargetFramework>
+        <ImplicitUsings>false</ImplicitUsings>
+        <Nullable>enable</Nullable>
+        <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    </PropertyGroup>
+
+    <PropertyGroup>
+        <PackageId>SetNet.Ticks</PackageId>
+        <Version>1.0.0</Version>
+        <AssemblyVersion>1.0.0.0</AssemblyVersion>
+        <FileVersion>1.0.0.0</FileVersion>
+        <Authors>Artem Lemeshev</Authors>
+        <Description>The tick foundation for SetNet: the ITickable / IAsyncTickable contracts, the ITickHost registration seam + ambient TickHost.Current, and the TickScheduler central update loop. Register anything into a named channel with its own rate (Hz) and priority; the scheduler drives them all from one place — 30 Hz movement, 10 Hz AI, 1 Hz housekeeping — with per-channel fixed timestep. Drive it with an internal timer (Start) or pump it from your own loop (Pump), Unity-friendly. Set one MakeCurrent() host and SetNet's game-loop modules (Mobs, Locomotion, Spawning) auto-subscribe. Zero dependencies — the game-loop modules depend on THIS, not the other way round, so SetNet core stays a pure transport.</Description>
+        <PackageTags>networking;game-loop;tick;scheduler;update;ai;game;setnet</PackageTags>
+        <PackageLicenseExpression>MIT</PackageLicenseExpression>
+        <RepositoryUrl>https://github.com/Povstalez/SetNet.git</RepositoryUrl>
+        <RepositoryType>git</RepositoryType>
+        <PackageProjectUrl>https://github.com/Povstalez/SetNet</PackageProjectUrl>
+        <PackageReadmeFile>README.md</PackageReadmeFile>
+        <PackageIcon>icon.png</PackageIcon>
+    </PropertyGroup>
+
+    <ItemGroup>
+      <None Include="README.md" Pack="true" PackagePath="\" />
+      <None Include="../../../assets/icon.png" Pack="true" PackagePath="\" Visible="false" />
+    </ItemGroup>
+
+    <!-- Zero SetNet dependencies on purpose: this is a foundation the game-loop modules depend on. -->
+
+</Project>

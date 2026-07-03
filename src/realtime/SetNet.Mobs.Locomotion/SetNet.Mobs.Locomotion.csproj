@@ -1,0 +1,37 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+    <PropertyGroup>
+        <TargetFramework>netstandard2.1</TargetFramework>
+        <ImplicitUsings>false</ImplicitUsings>
+        <Nullable>enable</Nullable>
+        <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    </PropertyGroup>
+
+    <PropertyGroup>
+        <PackageId>SetNet.Mobs.Locomotion</PackageId>
+        <Version>1.0.0</Version>
+        <AssemblyVersion>1.0.0.0</AssemblyVersion>
+        <FileVersion>1.0.0.0</FileVersion>
+        <Authors>Artem Lemeshev</Authors>
+        <Description>The opt-in bridge that makes SetNet.Mobs advance mob positions through the unified SetNet.Locomotion tick instead of their own path-follower: loco.AsMobMover() → MobOptions.Mover. Mob AI/perception/threat/combat/replication are unchanged; only the movement stepping moves into the one shared system, so players and mobs share it (and its Started hook, for L2-style "send the point" replication). Depends on SetNet.Mobs + SetNet.Locomotion.</Description>
+        <PackageTags>networking;mobs;locomotion;movement;mmo;game;setnet</PackageTags>
+        <PackageLicenseExpression>MIT</PackageLicenseExpression>
+        <RepositoryUrl>https://github.com/Povstalez/SetNet.git</RepositoryUrl>
+        <RepositoryType>git</RepositoryType>
+        <PackageProjectUrl>https://github.com/Povstalez/SetNet</PackageProjectUrl>
+        <PackageReadmeFile>README.md</PackageReadmeFile>
+        <PackageIcon>icon.png</PackageIcon>
+    </PropertyGroup>
+
+    <ItemGroup>
+      <None Include="README.md" Pack="true" PackagePath="\" />
+      <None Include="../../../assets/icon.png" Pack="true" PackagePath="\" Visible="false" />
+    </ItemGroup>
+
+    <ItemGroup>
+      <ProjectReference Include="../../core/SetNet/SetNet.csproj" />
+      <ProjectReference Include="../SetNet.Mobs/SetNet.Mobs.csproj" />
+      <ProjectReference Include="../SetNet.Locomotion/SetNet.Locomotion.csproj" />
+    </ItemGroup>
+
+</Project>

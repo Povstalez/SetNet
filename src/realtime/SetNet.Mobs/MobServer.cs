@@ -18,7 +18,7 @@ namespace SetNet.Mobs
     /// with no players in interest range are skipped ("sleep when unobserved"). Replication is a seam: the default
     /// no-op leaves you to read <see cref="Mobs"/> / handle <see cref="MobMoved"/>, or plug an <see cref="IMobReplication"/>.
     /// </summary>
-    public sealed class MobServer : IDisposable
+    public sealed class MobServer : IDisposable, SetNet.Ticks.IAsyncTickable
     {
         private static readonly ConcurrentDictionary<BaseServer, MobServer> Servers
             = new ConcurrentDictionary<BaseServer, MobServer>();
@@ -37,6 +37,7 @@ namespace SetNet.Mobs
         private long _nextId;
         private int _ticking;
         private Timer? _timer;
+        private readonly IDisposable? _tickReg;
 
         /// <summary>Raised (on the tick) when a mob's position changes — for apps replicating without an adapter.</summary>
         public event Action<MobInstance>? MobMoved;
@@ -60,7 +61,12 @@ namespace SetNet.Mobs
                 if (_online.TryGetValue(key, out var cur) && ReferenceEquals(cur, peer)) _online.TryRemove(key, out _);
             };
 
-            if (options.UseInternalTimer)
+            // Prefer the ambient tick host (auto-subscribe, one place drives everything); fall back to the internal timer.
+            if (options.AutoTick && SetNet.Ticks.TickHost.Current is { } host)
+            {
+                _tickReg = host.Register((SetNet.Ticks.IAsyncTickable)this, options.TickChannel, options.TickRateHz, options.TickPriority);
+            }
+            else if (options.UseInternalTimer)
             {
                 var period = Math.Max(1, 1000 / Math.Max(1, options.TickRateHz));
                 _timer = new Timer(_ => TickFromTimer(), null, period, period);
@@ -97,6 +103,7 @@ namespace SetNet.Mobs
             };
             var runtime = new MobRuntime(mob, brain, spawn.RespawnMs);
             _mobs[id] = runtime;
+            _options.Mover?.OnSpawn(mob, _options.MoveSpeed);
 
             var ctx = new Ctx(this, runtime);
             try { brain.OnSpawn(ctx); } catch { /* brain isolation */ }
@@ -109,7 +116,8 @@ namespace SetNet.Mobs
         /// <summary>Removes a mob immediately (no death event). Notifies clients and the replication seam.</summary>
         public void Despawn(string mobId)
         {
-            if (mobId == null || !_mobs.TryRemove(mobId, out _)) return;
+            if (mobId == null || !_mobs.TryRemove(mobId, out var removed)) return;
+            _options.Mover?.OnDespawn(removed.Mob);
             _options.Replication.OnMobDespawned(mobId);
             _ = PublishToInterestedAsync((ushort)MobsEvt.MobDespawned, MobsWire.EncodeId(mobId), null);
         }
@@ -143,6 +151,9 @@ namespace SetNet.Mobs
         /// single loop; overlapping calls are skipped.
         /// </summary>
         public Task Update(double dtMs) => TickAsync(dtMs);
+
+        /// <summary>Lets a <c>SetNet.Ticks.TickScheduler</c> drive mob AI: <c>channel.Add(mobs)</c>. (Overlaps are self-guarded.)</summary>
+        Task SetNet.Ticks.IAsyncTickable.TickAsync(SetNet.Ticks.TickInfo tick) => Update(tick.DeltaMs);
 
         private async Task TickAsync(double dtMs)
         {
@@ -198,6 +209,33 @@ namespace SetNet.Mobs
         private void AdvanceMovement(MobRuntime runtime, double dtMs)
         {
             var mob = runtime.Mob;
+
+            // Delegated movement: an external mover (e.g. SetNet.Mobs.Locomotion) owns the position stepping. We only
+            // push the goal when it changes and read the advanced position back — the AI/perception/combat is unchanged.
+            if (_options.Mover != null)
+            {
+                if (runtime.MoveGoal is { } g)
+                {
+                    if (!runtime.MoverActive || Vec3.DistanceSquared(runtime.PathGoal, g) > 0.25f)
+                    {
+                        _options.Mover.SetGoal(mob, g);
+                        runtime.PathGoal = g;
+                        runtime.MoverActive = true;
+                    }
+                }
+                else if (runtime.MoverActive)
+                {
+                    _options.Mover.Stop(mob);
+                    runtime.MoverActive = false;
+                }
+
+                var was = mob.Position;
+                mob.Position = _options.Mover.Position(mob);
+                mob.Velocity = dtMs > 0 ? (mob.Position - was) * (float)(1000.0 / dtMs) : Vec3.Zero;
+                if (Vec3.DistanceSquared(was, mob.Position) > 1e-6f) RaiseMoved(mob);
+                return;
+            }
+
             if (runtime.MoveGoal == null) { mob.Velocity = Vec3.Zero; return; }
 
             var goal = runtime.MoveGoal.Value;
@@ -378,6 +416,7 @@ namespace SetNet.Mobs
                 MobsWire.EncodeDeath(mob.Id, killerKey, mob.Position), null).ConfigureAwait(false);
 
             _mobs.TryRemove(mob.Id, out _);
+            _options.Mover?.OnDespawn(mob);
             _options.Replication.OnMobDespawned(mob.Id);
 
             if (runtime.RespawnMs > 0)
@@ -505,7 +544,7 @@ namespace SetNet.Mobs
             => server != null && Servers.TryGetValue(server, out var s) ? s : null;
 
         /// <inheritdoc/>
-        public void Dispose() { _timer?.Dispose(); _timer = null; }
+        public void Dispose() { _tickReg?.Dispose(); _timer?.Dispose(); _timer = null; }
 
         // ---- MobContext implementation ----
 
@@ -562,6 +601,7 @@ namespace SetNet.Mobs
         public Vec3 Facing;                // last Face direction
         public PathFollower? Follower;     // active path follower (pathfinder mode)
         public Vec3 PathGoal;              // the goal the current path was computed toward
+        public bool MoverActive;           // a delegated IMobMover currently has a goal for this mob
 
         private readonly Dictionary<string, long> _cooldownUntil = new Dictionary<string, long>();          // mob ability cooldowns
         private readonly Dictionary<string, long> _playerAttackAt = new Dictionary<string, long>();          // player→mob attack pacing
