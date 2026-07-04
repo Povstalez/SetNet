@@ -1,0 +1,37 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+    <PropertyGroup>
+        <TargetFramework>net8.0</TargetFramework>
+        <ImplicitUsings>false</ImplicitUsings>
+        <Nullable>enable</Nullable>
+        <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    </PropertyGroup>
+
+    <PropertyGroup>
+        <PackageId>SetNet.Persistence.Dapper</PackageId>
+        <Version>1.0.0</Version>
+        <Authors>Artem Lemeshev</Authors>
+        <Description>Dapper-backed IDocumentStore&lt;T&gt; / ISnapshotStore for SetNet.Persistence: store any POCO as JSON in a key/value table on any ADO.NET database (SQLite, PostgreSQL, MySQL, SQL Server, …). Custom fields need no schema change — the whole object is serialized. Portable upsert (delete+insert in a transaction). Depends on SetNet.Persistence + Dapper.</Description>
+        <PackageTags>networking;persistence;dapper;sql;store;setnet</PackageTags>
+        <PackageLicenseExpression>MIT</PackageLicenseExpression>
+        <RepositoryUrl>https://github.com/Povstalez/SetNet.git</RepositoryUrl>
+        <RepositoryType>git</RepositoryType>
+        <PackageProjectUrl>https://github.com/Povstalez/SetNet</PackageProjectUrl>
+        <PackageReadmeFile>README.md</PackageReadmeFile>
+        <PackageIcon>icon.png</PackageIcon>
+    </PropertyGroup>
+
+    <ItemGroup>
+      <None Include="README.md" Pack="true" PackagePath="\" />
+      <None Include="../../../assets/icon.png" Pack="true" PackagePath="\" Visible="false" />
+    </ItemGroup>
+
+    <ItemGroup>
+      <PackageReference Include="Dapper" Version="2.1.35" />
+    </ItemGroup>
+
+    <ItemGroup>
+      <ProjectReference Include="../SetNet.Persistence/SetNet.Persistence.csproj" />
+    </ItemGroup>
+
+</Project>

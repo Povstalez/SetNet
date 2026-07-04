@@ -14,6 +14,7 @@
         <PackageReference Include="xunit.runner.visualstudio" Version="2.8.2" />
         <PackageReference Include="Xunit.SkippableFact" Version="1.5.23" />
         <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="8.0.1" />
+        <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" Version="8.0.8" />
     </ItemGroup>
 
     <ItemGroup>
@@ -80,6 +81,13 @@
         <ProjectReference Include="..\..\src\realtime\SetNet.Notifications\SetNet.Notifications.csproj" />
         <ProjectReference Include="..\..\src\realtime\SetNet.Dialogue\SetNet.Dialogue.csproj" />
         <ProjectReference Include="..\..\src\infra\SetNet.Persistence\SetNet.Persistence.csproj" />
+        <ProjectReference Include="..\..\src\infra\SetNet.Persistence.Dapper\SetNet.Persistence.Dapper.csproj" />
+        <ProjectReference Include="..\..\src\infra\SetNet.Persistence.EfCore\SetNet.Persistence.EfCore.csproj" />
+        <ProjectReference Include="..\..\src\realtime\SetNet.Accounts\SetNet.Accounts.csproj" />
+        <ProjectReference Include="..\..\src\realtime\SetNet.CharacterStore\SetNet.CharacterStore.csproj" />
+        <ProjectReference Include="..\..\src\realtime\SetNet.GameData\SetNet.GameData.csproj" />
+        <ProjectReference Include="..\..\src\realtime\SetNet.LoginServer\SetNet.LoginServer.csproj" />
+        <ProjectReference Include="..\..\src\realtime\SetNet.BoardGame\SetNet.BoardGame.csproj" />
         <ProjectReference Include="..\..\src\infra\SetNet.Docs\SetNet.Docs.csproj" />
         <ProjectReference Include="..\..\src\realtime\SetNet.Locomotion\SetNet.Locomotion.csproj" />
         <ProjectReference Include="..\..\src\realtime\SetNet.Ticks\SetNet.Ticks.csproj" />

@@ -34,6 +34,7 @@ using SetNet.Trade;
 using SetNet.Vendor;
 using SetNet.Wallet;
 using SetNet.Zones;
+using SetNet.LoginServer;
 
 namespace SetNet.UnitTests;
 
@@ -81,5 +82,6 @@ internal static class TestModuleInit
         LoadBalancerRuntime.Enable();
         MarketplaceRuntime.Enable();
         StatusEffectRuntime.Enable();
+        LoginRuntime.Enable();
     }
 }

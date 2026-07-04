@@ -8,7 +8,7 @@ Everything about SetNet in one place. Start here, then dive into a specific guid
 
 ## Start here
 
-- **📖 [Full documentation site](https://povstalez.github.io/SetNet/)** — the browsable docs site: the guides, every module's README, and a **complete generated API reference** (every public type, property, method and option, from the source XML docs). Built with DocFX and hosted on GitHub Pages. Build it locally with `bash docfx/gen.sh` (needs `dotnet tool install -g docfx`) → opens `_site/`.
+- **📖 [Full documentation site — setnet.lemeshev.dev](https://setnet.lemeshev.dev)** — the browsable docs site: the guides, every module's README, and a **complete generated API reference** (every public type, property, method and option, from the source XML docs). Built with DocFX. Build it locally with `bash docfx/gen.sh` (needs `dotnet tool install -g docfx`) → opens `_site/`.
 - **[Main README](../README.md)** — what SetNet is, quick start, transport selection, lifecycle, hardening.
 - **[User guide (GUIDE.en.md)](GUIDE.en.md)** — the full manual: handlers, transports, reliable channels, reconnect, batching, the complete `Configuration` reference, production checklist. *(Українською: [GUIDE.ua.md](GUIDE.ua.md))*
 - **[Performance (PERFORMANCE.en.md)](PERFORMANCE.en.md)** — throughput model, scaling limits, roadmap. *(Українською: [PERFORMANCE.ua.md](PERFORMANCE.ua.md))*

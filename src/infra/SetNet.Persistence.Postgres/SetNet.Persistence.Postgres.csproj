@@ -1,0 +1,37 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+    <PropertyGroup>
+        <TargetFramework>net8.0</TargetFramework>
+        <ImplicitUsings>false</ImplicitUsings>
+        <Nullable>enable</Nullable>
+        <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    </PropertyGroup>
+
+    <PropertyGroup>
+        <PackageId>SetNet.Persistence.Postgres</PackageId>
+        <Version>1.0.0</Version>
+        <Authors>Artem Lemeshev</Authors>
+        <Description>PostgreSQL-backed IDocumentStore&lt;T&gt; / ISnapshotStore for SetNet.Persistence via Npgsql. Each value is stored in a JSONB column, so custom fields need no schema change AND stay queryable/indexable in SQL (e.g. WHERE doc-&gt;&gt;'vipUntil' &gt; now()). Native upsert (INSERT … ON CONFLICT). Depends on SetNet.Persistence + Npgsql.</Description>
+        <PackageTags>networking;persistence;postgres;postgresql;npgsql;jsonb;store;setnet</PackageTags>
+        <PackageLicenseExpression>MIT</PackageLicenseExpression>
+        <RepositoryUrl>https://github.com/Povstalez/SetNet.git</RepositoryUrl>
+        <RepositoryType>git</RepositoryType>
+        <PackageProjectUrl>https://github.com/Povstalez/SetNet</PackageProjectUrl>
+        <PackageReadmeFile>README.md</PackageReadmeFile>
+        <PackageIcon>icon.png</PackageIcon>
+    </PropertyGroup>
+
+    <ItemGroup>
+      <None Include="README.md" Pack="true" PackagePath="\" />
+      <None Include="../../../assets/icon.png" Pack="true" PackagePath="\" Visible="false" />
+    </ItemGroup>
+
+    <ItemGroup>
+      <PackageReference Include="Npgsql" Version="8.0.3" />
+    </ItemGroup>
+
+    <ItemGroup>
+      <ProjectReference Include="../SetNet.Persistence/SetNet.Persistence.csproj" />
+    </ItemGroup>
+
+</Project>

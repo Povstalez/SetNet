@@ -1,0 +1,37 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+    <PropertyGroup>
+        <TargetFramework>net8.0</TargetFramework>
+        <ImplicitUsings>false</ImplicitUsings>
+        <Nullable>enable</Nullable>
+        <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    </PropertyGroup>
+
+    <PropertyGroup>
+        <PackageId>SetNet.Persistence.MongoDB</PackageId>
+        <Version>1.0.0</Version>
+        <Authors>Artem Lemeshev</Authors>
+        <Description>MongoDB-backed IDocumentStore&lt;T&gt; / ISnapshotStore for SetNet.Persistence via MongoDB.Driver. Each value is stored as a native BSON document, so custom fields need no schema change AND stay queryable/indexable in Mongo. Upsert via ReplaceOne(IsUpsert). Depends on SetNet.Persistence + MongoDB.Driver.</Description>
+        <PackageTags>networking;persistence;mongodb;mongo;nosql;store;setnet</PackageTags>
+        <PackageLicenseExpression>MIT</PackageLicenseExpression>
+        <RepositoryUrl>https://github.com/Povstalez/SetNet.git</RepositoryUrl>
+        <RepositoryType>git</RepositoryType>
+        <PackageProjectUrl>https://github.com/Povstalez/SetNet</PackageProjectUrl>
+        <PackageReadmeFile>README.md</PackageReadmeFile>
+        <PackageIcon>icon.png</PackageIcon>
+    </PropertyGroup>
+
+    <ItemGroup>
+      <None Include="README.md" Pack="true" PackagePath="\" />
+      <None Include="../../../assets/icon.png" Pack="true" PackagePath="\" Visible="false" />
+    </ItemGroup>
+
+    <ItemGroup>
+      <PackageReference Include="MongoDB.Driver" Version="2.28.0" />
+    </ItemGroup>
+
+    <ItemGroup>
+      <ProjectReference Include="../SetNet.Persistence/SetNet.Persistence.csproj" />
+    </ItemGroup>
+
+</Project>

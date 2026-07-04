@@ -22,6 +22,11 @@
 ![.NET Standard 2.1](https://img.shields.io/badge/.NET%20Standard-2.1-512BD4)
 ![Transports](https://img.shields.io/badge/transport-TCP%20%7C%20UDP%20%7C%20Both-success)
 ![License](https://img.shields.io/badge/license-MIT-green)
+[![Docs](https://img.shields.io/badge/docs-setnet.lemeshev.dev-2C7BE5)](https://setnet.lemeshev.dev)
+
+### 📖 Full documentation: **[setnet.lemeshev.dev](https://setnet.lemeshev.dev)**
+
+The complete docs site — guides, every module's reference, and the full generated API — lives at **[setnet.lemeshev.dev](https://setnet.lemeshev.dev)**.
 
 SetNet gives you a persistent, message-oriented connection with automatic handler registration, a pluggable transport (reliable TCP, raw/reliable UDP, or both together), per-message delivery selection, and production-grade hardening — so you can focus on your game/app logic instead of sockets.
 

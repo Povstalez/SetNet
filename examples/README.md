@@ -27,6 +27,8 @@ Most map directly onto the communication model — see **[docs/COMMUNICATION.md]
 | **World** | *(single project, no networking)* multi-storey **layered grid** + cross-floor A*, a **headless mob** chasing a player around a wall (no StateSync), and a pathfinder **micro-benchmark** | `SetNet.GeoData` + `SetNet.PathFinding` + `SetNet.Mobs` |
 | **UnifiedMove** | *(single project)* a player **and** a mob move through **one** `SetNet.Locomotion` tick, one `Started` hook fires for both (send-the-point, L2-style); the mob chases the player in the shared system | `SetNet.Locomotion` + `SetNet.Mobs` + `SetNet.Mobs.Locomotion` |
 | **MobBrains** | *(single project)* three mobs — one **BehaviorTree**, one **StateMachine**, one plain follower — all driven by **one** `SetNet.Ticks` scheduler (auto-subscribed), moving through **one** `SetNet.Locomotion`, each reaching the moving player via a `SetNet.Services` locator | `SetNet.Ticks` + `SetNet.Locomotion` + `SetNet.Mobs` + `SetNet.BehaviorTree` + `SetNet.StateMachine` + `SetNet.Services` |
+| **LoginFlow** | *(single project)* the full L2-style entry: account → **login over the wire** → server list → one-time **token** → **character select** (with a custom `VipUntil` field) → enter world + a `GameData` lookup | `SetNet.LoginServer` + `SetNet.Accounts` + `SetNet.CharacterStore` + `SetNet.GameData` + `SetNet.InMemory` |
+| **Durak** | *(single project)* a full game of **Дурак** played by two bots on the `SetNet.BoardGame` engine — each bot decides from **only its own `View`** (hidden hands), the engine validates every move | `SetNet.BoardGame` |
 
 ## Run commands
 
@@ -105,6 +107,12 @@ dotnet run --project examples/UnifiedMove
 # MobBrains — ONE project, no networking. BehaviorTree + StateMachine + follower mobs, all via ONE TickScheduler
 # (auto-subscribed), moving through ONE Locomotion, each reading the player through a SetNet.Services locator.
 dotnet run --project examples/MobBrains
+
+# LoginFlow — ONE project. The full L2 entry: login (over the wire) → server list → token → character select → world.
+dotnet run --project examples/LoginFlow
+
+# Durak — ONE project. A full game of Дурак by two bots on the SetNet.BoardGame engine (hidden hands via per-player View).
+dotnet run --project examples/Durak            # or: -- 42  for a specific deal
 ```
 
 All examples build as part of the solution (`dotnet build SetNet.sln`).

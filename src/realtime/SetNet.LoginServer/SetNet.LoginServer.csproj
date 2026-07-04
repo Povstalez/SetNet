@@ -1,0 +1,33 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+    <PropertyGroup>
+        <TargetFramework>netstandard2.1</TargetFramework>
+        <ImplicitUsings>false</ImplicitUsings>
+        <Nullable>enable</Nullable>
+        <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    </PropertyGroup>
+
+    <PropertyGroup>
+        <PackageId>SetNet.LoginServer</PackageId>
+        <Version>1.0.0</Version>
+        <Authors>Artem Lemeshev</Authors>
+        <Description>L2-style login coordinator for SetNet: a dedicated login node authenticates the account, returns the game-server list, and issues a one-time session token the client uses to enter the chosen game server (which validates it against a shared token store). server.UseLoginServer(...) + client.UseLogin(). Composition over SetNet.Accounts (auth delegate) / SetNet.LoadBalancer (server list). Depends only on SetNet.</Description>
+        <PackageTags>networking;login;auth;server-list;mmo;setnet</PackageTags>
+        <PackageLicenseExpression>MIT</PackageLicenseExpression>
+        <RepositoryUrl>https://github.com/Povstalez/SetNet.git</RepositoryUrl>
+        <RepositoryType>git</RepositoryType>
+        <PackageProjectUrl>https://github.com/Povstalez/SetNet</PackageProjectUrl>
+        <PackageReadmeFile>README.md</PackageReadmeFile>
+        <PackageIcon>icon.png</PackageIcon>
+    </PropertyGroup>
+
+    <ItemGroup>
+      <None Include="README.md" Pack="true" PackagePath="\" />
+      <None Include="../../../assets/icon.png" Pack="true" PackagePath="\" Visible="false" />
+    </ItemGroup>
+
+    <ItemGroup>
+      <ProjectReference Include="../../core/SetNet/SetNet.csproj" />
+    </ItemGroup>
+
+</Project>

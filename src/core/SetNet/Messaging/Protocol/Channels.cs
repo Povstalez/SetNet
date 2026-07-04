@@ -104,5 +104,11 @@ namespace SetNet.Protocol
 
         /// <summary>Branching dialogue (SetNet.Dialogue).</summary>
         public const ushort Dialogue = 31;
+
+        /// <summary>Login coordinator: auth + server list + session-token handoff (SetNet.LoginServer).</summary>
+        public const ushort Login = 32;
+
+        /// <summary>Turn-based board/card game hub — reserved for the future networked layer (SetNet.BoardGame).</summary>
+        public const ushort BoardGame = 33;
     }
 }

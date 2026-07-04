@@ -44,4 +44,5 @@ sourced directly from the inline XML documentation. Browse by namespace in the l
 Every member carries its summary, so this is where you find *what a class does* and *what each field means*.
 EOF
 docfx build docfx.json
+echo "setnet.lemeshev.dev" > _site/CNAME     # GitHub Pages custom domain
 echo "Site built → _site/"
