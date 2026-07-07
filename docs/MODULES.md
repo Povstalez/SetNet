@@ -31,7 +31,8 @@ Grouped by purpose (mirrors the `src/<category>/` layout). Each depends only on 
 **Transports** (`src/transports/`)
 | Package | What it adds |
 |---|---|
-| **SetNet.WebSockets** | WebSocket transport via `config.UseWebSockets()` |
+| **SetNet.WebSockets** | WebSocket transport via `config.UseWebSockets()` (server via HttpListener, client via ClientWebSocket) |
+| **SetNet.WebSockets.Unity** | WebSocket **client** transport for Unity **including WebGL** (browser) via a `.jslib` bridge; `config.UseUnityWebSockets(secure)` — ClientWebSocket off WebGL, browser WebSocket on WebGL; one `SetNet.WebSockets` server serves both (**UPM source**, not NuGet) |
 | **SetNet.InMemory** | in-process loopback transport via `config.UseInMemory()` (no sockets; great for tests) |
 
 **Messaging** (`src/messaging/`)
@@ -58,6 +59,7 @@ Grouped by purpose (mirrors the `src/<category>/` layout). Each depends only on 
 | **SetNet.Fragmentation** | split/reassemble oversize UDP messages transparently |
 | **SetNet.Priority** | priority send queue with an optional per-flush byte budget |
 | **SetNet.Congestion** | AIMD congestion controller → per-tick byte budget |
+| **SetNet.Ping** | round-trip **latency** measurement: `server.UsePing().Of(peer)` reads any player's RTT (ms) at any moment; `client.UsePing()` echoes + measures its own ping. Rides `Channels.Ping`, monotonic Stopwatch timing (deps `SetNet`) |
 | **SetNet.Relay** | TURN-style relay hub: allocate/join a session by code, forward opaque bytes (NAT fallback/tunnel) |
 | **SetNet.NatPunch** | UDP hole-punching: coordinator exchanges public/private endpoint candidates + `NatPuncher.TryPunchAsync` opens the direct path (fallback: Relay) |
 | **SetNet.Upnp** | UPnP IGD port mapping: SSDP discovery + AddPortMapping/DeletePortMapping/GetExternalIPAddress; `config.MapServerPortsAsync()` (no wire types) |
@@ -110,6 +112,9 @@ Grouped by purpose (mirrors the `src/<category>/` layout). Each depends only on 
 | **SetNet.Accounts** | server-side **account store + auth**: generic `AccountServer<TAccount>` over any `IDocumentStore`; register/authenticate (pluggable PBKDF2 hasher), ban/unban, change password; subclass `AccountBase` for custom fields (deps `SetNet` + `SetNet.Persistence`) |
 | **SetNet.CharacterStore** | server-side **character store**: generic `CharacterServer<TChar>` — create/list-by-account/rename, per-account slot limit, unique names, soft-delete + restore; subclass `CharacterBase` for custom fields (e.g. `VipUntil`) (deps `SetNet` + `SetNet.Persistence`) |
 | **SetNet.GameData** | static **game-data tables** from JSON (item/skill/npc/spawn) → id-keyed `DataTable<TId,TRow>` lookups, hot-reloadable; rows are your POCOs with any custom columns (deps `System.Text.Json`) |
+| **SetNet.Hitscan** | server-authoritative **instant-hit shooting** with a **pluggable `IHitDetector`** (bring your own collision) + shipped detectors: sphere targets (`ITargetProvider`), `IGeoData` world raycast, and a `CompositeHitDetector` (closest wins). `HitscanResolver.Fire(...)` → `HitResult` (deps `SetNet.GeoData`) |
+| **SetNet.Projectiles** | server-authoritative **travelling projectiles**: spawn with velocity, advance each tick, **sweep-test** the path via the **same `IHitDetector`** as Hitscan; gravity, lifetime/range, `Hit`/`Expired`; auto-ticks via `SetNet.Ticks` (deps `SetNet.Hitscan` + `SetNet.GeoData` + `SetNet.Ticks`) |
+| **SetNet.Inventory.Grid** | spatial **"tetris" inventory** (Diablo/Tarkov): width×height footprints, 90° rotation, occupancy checks, auto-fit add, move/rotate/remove, optional all-or-nothing stacking; pure data, zero deps |
 | **SetNet.BoardGame** | **turn-based board/card game framework**: card primitives (deck/shuffle) + server-authoritative `ITurnGame<TState,TMove,TView>` with **per-player hidden-information views** + headless `TurnGameHost`; ships a complete deterministic **Durak (Подкидной дурак)** engine (deps `SetNet`) |
 | **SetNet.LoginServer** | **L2-style login coordinator**: `server.UseLoginServer(...)` + `client.UseLogin()` → authenticate ▸ server list ▸ **one-time session token** handed to the chosen game server (validated against a shared `ILoginTokenStore`); composition over Accounts + LoadBalancer (deps `SetNet`) |
 | **SetNet.Ticks** | one **central update loop**: register anything (`ITickable`/lambda) into a named channel with its own rate (Hz) + priority; drives them all from one place (30 Hz movement, 10 Hz AI, 1 Hz housekeeping) with per-channel fixed timestep; `Start()` internal timer **or** `Pump(dt)` from your loop. **Auto-subscription**: `new TickScheduler().MakeCurrent()` before your `UseXxx(...)` and `MobServer`/`LocomotionSystem`/`SpawningServer` subscribe themselves (no manual wiring); behaviour trees/state machines plug in via `Bind(ctx)`. **Zero deps** — the tick foundation lives here (not core), and the game-loop modules depend on it — no wire protocol |

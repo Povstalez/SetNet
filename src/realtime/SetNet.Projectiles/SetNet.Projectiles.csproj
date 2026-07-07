@@ -1,0 +1,35 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+    <PropertyGroup>
+        <TargetFramework>netstandard2.1</TargetFramework>
+        <ImplicitUsings>false</ImplicitUsings>
+        <Nullable>enable</Nullable>
+        <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    </PropertyGroup>
+
+    <PropertyGroup>
+        <PackageId>SetNet.Projectiles</PackageId>
+        <Version>1.0.0</Version>
+        <Authors>Artem Lemeshev</Authors>
+        <Description>Server-authoritative travelling projectiles for SetNet: spawn with a velocity, advance each tick (optional gravity), and sweep-test the path with the SAME pluggable IHitDetector as SetNet.Hitscan — so you bring your own hit detection. Lifetime/range, Hit/Expired events, on-hit callback. Auto-subscribes to SetNet.Ticks (or drive Update(dt) yourself). Depends on SetNet.Hitscan + SetNet.GeoData + SetNet.Ticks.</Description>
+        <PackageTags>projectiles;ballistics;shooting;combat;game;setnet</PackageTags>
+        <PackageLicenseExpression>MIT</PackageLicenseExpression>
+        <RepositoryUrl>https://github.com/Povstalez/SetNet.git</RepositoryUrl>
+        <RepositoryType>git</RepositoryType>
+        <PackageProjectUrl>https://github.com/Povstalez/SetNet</PackageProjectUrl>
+        <PackageReadmeFile>README.md</PackageReadmeFile>
+        <PackageIcon>icon.png</PackageIcon>
+    </PropertyGroup>
+
+    <ItemGroup>
+      <None Include="README.md" Pack="true" PackagePath="\" />
+      <None Include="../../../assets/icon.png" Pack="true" PackagePath="\" Visible="false" />
+    </ItemGroup>
+
+    <ItemGroup>
+      <ProjectReference Include="../SetNet.Hitscan/SetNet.Hitscan.csproj" />
+      <ProjectReference Include="../SetNet.GeoData/SetNet.GeoData.csproj" />
+      <ProjectReference Include="../SetNet.Ticks/SetNet.Ticks.csproj" />
+    </ItemGroup>
+
+</Project>

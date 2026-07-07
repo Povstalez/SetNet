@@ -34,7 +34,7 @@ namespace SetNet.Protocol
             var frame = new ProtocolEnvelope(ProtocolKind.Event, channel, op, 0, body).Encode();
             foreach (var peer in peers)
             {
-                try { await peer.SendAsync(ProtocolTypes.Envelope, frame, DeliveryMethod.Reliable).ConfigureAwait(false); }
+                try { await peer.SendAsync(ProtocolTypes.Envelope, frame, DeliveryMethod.Reliable).ConfigureAwait(global::SetNet.SetNetSync.ContinueOnCapturedContext); }
                 catch { /* member dropping; skip */ }
             }
         }

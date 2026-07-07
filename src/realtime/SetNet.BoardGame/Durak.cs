@@ -72,6 +72,13 @@ namespace SetNet.BoardGame
         public List<Card> Attacks = new List<Card>();
         /// <summary>Beating cards parallel to <see cref="Attacks"/>; null = not yet beaten.</summary>
         public List<Card?> Defenses = new List<Card?>();
+        /// <summary>True once the defender has said "take": the attackers may still throw in matching cards before the pickup.</summary>
+        public bool Taking;
+        /// <summary>Seat that picked up the cards at the MOST RECENT bout end, or -1 if that bout was a clean beat (Бито).
+        /// Purely informational (drives the client's "cards fly to the taker" animation); set in EndBout.</summary>
+        public int LastTaker = -1;
+        /// <summary>Per-seat "I'm done adding to this bout" flag (podkidnoy). Reset whenever a new card is thrown in.</summary>
+        public bool[] Passed = Array.Empty<bool>();
         /// <summary>Seats that are out of the game (no cards, empty deck).</summary>
         public bool[] Finished = Array.Empty<bool>();
         /// <summary>The outcome, or null while playing.</summary>
@@ -90,6 +97,9 @@ namespace SetNet.BoardGame
             Defender = Defender,
             Attacks = new List<Card>(Attacks),
             Defenses = new List<Card?>(Defenses),
+            Taking = Taking,
+            LastTaker = LastTaker,
+            Passed = (bool[])Passed.Clone(),
             Finished = (bool[])Finished.Clone(),
             Result = Result,
         };
@@ -118,6 +128,8 @@ namespace SetNet.BoardGame
         public int Attacker;
         /// <summary>Defending seat.</summary>
         public int Defender;
+        /// <summary>True while the defender is taking — the attacker may still throw in matching cards.</summary>
+        public bool Taking;
         /// <summary>The seat to move (-1 if over).</summary>
         public int ToMove;
         /// <summary>Player ids by seat.</summary>
@@ -142,11 +154,16 @@ namespace SetNet.BoardGame
         /// <inheritdoc/>
         public int Seats { get; }
 
-        /// <summary>Creates a Durak game for 2..6 players (default 2).</summary>
-        public DurakGame(int seats = 2)
+        /// <summary>The deck size in cards: 36 (ranks 6–A, the classic variant) or 52 (ranks 2–A).</summary>
+        public int DeckSize { get; }
+
+        /// <summary>Creates a Durak game for 2..6 players (default 2) with a 36- or 52-card deck (default 36).</summary>
+        public DurakGame(int seats = 2, int deckSize = 36)
         {
             if (seats < 2 || seats > 6) throw new ArgumentOutOfRangeException(nameof(seats), "Durak is for 2..6 players");
+            if (deckSize != 36 && deckSize != 52) throw new ArgumentOutOfRangeException(nameof(deckSize), "Durak deck must be 36 or 52 cards");
             Seats = seats;
+            DeckSize = deckSize;
         }
 
         /// <summary>True if <paramref name="defense"/> beats <paramref name="attack"/> under <paramref name="trump"/>.</summary>
@@ -163,7 +180,7 @@ namespace SetNet.BoardGame
             if (players == null) throw new ArgumentNullException(nameof(players));
             if (players.Count != Seats) throw new GameException($"Durak needs {Seats} players, got {players.Count}");
 
-            var deck = Decks.Standard36();
+            var deck = DeckSize == 52 ? Decks.Standard52() : Decks.Standard36();
             Decks.Shuffle(deck, new Random(seed));
 
             var s = new DurakState
@@ -173,6 +190,7 @@ namespace SetNet.BoardGame
                 Deck = deck,
                 Hands = new List<Card>[Seats],
                 Finished = new bool[Seats],
+                Passed = new bool[Seats],
                 Trump = deck[deck.Count - 1].Suit,      // bottom card sets the trump
                 TrumpCard = deck[deck.Count - 1],
             };
@@ -226,11 +244,73 @@ namespace SetNet.BoardGame
             return true;
         }
 
+        // Attacks still awaiting a defence (a defender needs one card per unbeaten attack to beat them all).
+        private static int UnbeatenCount(DurakState s)
+        {
+            var n = 0;
+            for (var i = 0; i < s.Defenses.Count; i++) if (s.Defenses[i] == null) n++;
+            return n;
+        }
+
+        // A throw-in is only allowed while the DEFENDER still has enough cards to beat everything unbeaten — you can't
+        // pile on more cards than the defender holds (else they're forced to Take through no fault of their own). During
+        // a Take the defender is picking everything up anyway, so this cap doesn't apply.
+        private static bool DefenderCanTakeAnotherAttack(DurakState s)
+            => s.Taking || UnbeatenCount(s) < s.Hands[s.Defender].Count;
+
         /// <inheritdoc/>
+        // A single "primary" mover for turn-based consumers (bots): the defender must respond to unbeaten cards;
+        // otherwise it is the first attacker (in turn order from the primary attacker) who still has a legal move.
+        // Real multiplayer play is NOT limited to this seat — any seat with a legal move may act (see LegalMoves/Apply).
         public int CurrentSeat(DurakState state)
         {
             if (state.Result != null) return -1;
-            return AllBeaten(state) ? state.Attacker : state.Defender;   // unbeaten card → defender must respond
+            if (!state.Taking && !AllBeaten(state) && LegalMoves(state, state.Defender).Count > 0) return state.Defender;
+            for (var step = 0; step < state.Seats; step++)
+            {
+                var seat = (state.Attacker + step) % state.Seats;
+                if (LegalMoves(state, seat).Count > 0) return seat;
+            }
+            return -1;
+        }
+
+        // Is this seat an attacker (anyone who isn't the defender and hasn't finished)?
+        private static bool IsAttacker(DurakState s, int seat) => seat != s.Defender && !s.Finished[seat];
+
+        // Read the pass flag defensively — a hand-built state (tests) may not have sized the Passed array.
+        private static bool HasPassed(DurakState s, int seat) => seat < s.Passed.Length && s.Passed[seat];
+
+        // Can THIS seat still throw a matching-rank card in (room on the table + a matching card in hand)?
+        private bool SeatCanThrowIn(DurakState s, int seat)
+        {
+            if (!IsAttacker(s, seat) || HasPassed(s, seat)) return false;
+            if (s.Attacks.Count == 0 || s.Attacks.Count >= MaxTable) return false;
+            if (!DefenderCanTakeAnotherAttack(s)) return false; // can't pile on more cards than the defender can beat
+            var ranks = TableRanks(s);
+            return s.Hands[seat].Any(c => ranks.Contains(c.Rank));
+        }
+
+        // Any attacker at all who can still throw a matching card in.
+        private bool AnyAttackerCanThrowIn(DurakState s)
+        {
+            for (var seat = 0; seat < s.Seats; seat++)
+                if (SeatCanThrowIn(s, seat)) return true;
+            return false;
+        }
+
+        // The bout is "closed" (podkidnoy over) only when every attacker has EXPLICITLY passed ("I'm done adding" —
+        // the Skip/Бито button). It is deliberately NOT auto-closed just because a player has no matching card to throw:
+        // the turn ends when everyone confirms, so a player who can't add anything still taps Skip to end their turn.
+        private bool AllAttackersDone(DurakState s)
+        {
+            for (var seat = 0; seat < s.Seats; seat++)
+                if (IsAttacker(s, seat) && !HasPassed(s, seat)) return false;
+            return true;
+        }
+
+        private static void ResetPasses(DurakState s)
+        {
+            for (var i = 0; i < s.Passed.Length; i++) s.Passed[i] = false;
         }
 
         // Ranks currently present on the table (attacks + defenses) — throw-ins must match one of these.
@@ -243,14 +323,16 @@ namespace SetNet.BoardGame
         }
 
         /// <inheritdoc/>
+        // NOTE: attacker and defender can BOTH have legal moves at the same moment (the attacker piles on matching
+        // cards while the defender is still deciding / taking). The bout is no longer strictly one-at-a-time.
         public IReadOnlyList<DurakMove> LegalMoves(DurakState state, int seat)
         {
             var moves = new List<DurakMove>();
-            if (state.Result != null || seat != CurrentSeat(state)) return moves;
+            if (state.Result != null) return moves;
 
-            if (!AllBeaten(state))
+            // Defender: beat unbeaten attacks or take (only while not already taking).
+            if (seat == state.Defender && !state.Taking && !AllBeaten(state))
             {
-                // Defender's turn.
                 var hand = state.Hands[state.Defender];
                 for (var i = 0; i < state.Attacks.Count; i++)
                 {
@@ -260,68 +342,97 @@ namespace SetNet.BoardGame
                             moves.Add(DurakMove.Defend(i, c));
                 }
                 moves.Add(DurakMove.Take());
-                return moves;
             }
 
-            // Attacker's turn.
-            var attackerHand = state.Hands[state.Attacker];
-            if (state.Attacks.Count == 0)
+            // Attackers (ANY seat that isn't the defender): the primary attacker opens; then anyone may throw in a
+            // matching-rank card (podkidnoy) or pass. The bout closes once every attacker has passed / has nothing left.
+            if (IsAttacker(state, seat))
             {
-                // Opening attack: any card.
-                foreach (var c in attackerHand) moves.Add(DurakMove.Attack(c));
-            }
-            else
-            {
-                moves.Add(DurakMove.Done());
-                // Throw-in: a card whose rank is already on the table, capped by table size and the defender's hand.
-                if (state.Attacks.Count < MaxTable && state.Hands[state.Defender].Count > 0)
+                if (state.Attacks.Count == 0)
                 {
-                    var ranks = TableRanks(state);
-                    foreach (var c in attackerHand)
-                        if (ranks.Contains(c.Rank)) moves.Add(DurakMove.Attack(c));
+                    if (seat == state.Attacker && !state.Taking)
+                        foreach (var c in state.Hands[seat]) moves.Add(DurakMove.Attack(c));   // opening: any card
+                }
+                else if (!HasPassed(state, seat))
+                {
+                    if (SeatCanThrowIn(state, seat))
+                    {
+                        var ranks = TableRanks(state);
+                        foreach (var c in state.Hands[seat])
+                            if (ranks.Contains(c.Rank)) moves.Add(DurakMove.Attack(c));        // throw-in / pile on / on take
+                    }
+                    moves.Add(DurakMove.Done());   // "I'm done adding" (pass / Бито / finish the take)
                 }
             }
             return moves;
         }
 
         /// <inheritdoc/>
+        // Validates the move against the SUBMITTING seat's role (attacker vs defender), not a single "current" seat,
+        // so the attacker can throw in while it is nominally the defender's turn.
         public DurakState Apply(DurakState state, int seat, DurakMove move)
         {
             if (state.Result != null) throw new GameException("game is over");
-            if (seat != CurrentSeat(state)) throw new GameException("not this seat's turn");
             var s = state.Clone();
+            if (s.Passed.Length != s.Seats) s.Passed = new bool[s.Seats]; // tolerate a hand-built state with no pass array
 
             switch (move.Kind)
             {
                 case DurakMoveKind.Attack:
-                    ApplyAttack(s, move.Card);
+                    if (!IsAttacker(s, seat)) throw new GameException("only an attacker plays attacking cards");
+                    if (s.Attacks.Count == 0 && seat != s.Attacker) throw new GameException("only the primary attacker opens the bout");
+                    if (s.Passed[seat]) throw new GameException("you already passed this bout");
+                    ApplyAttack(s, seat, move.Card);
+                    ResetPasses(s);   // a new card is on the table → every attacker gets to react again
                     break;
                 case DurakMoveKind.Defend:
+                    if (seat != s.Defender) throw new GameException("only the defender beats cards");
+                    if (s.Taking) throw new GameException("the defender is already taking");
                     ApplyDefend(s, move.DefendIndex, move.Card);
                     break;
                 case DurakMoveKind.Take:
-                    EndBout(s, defenderTook: true);
+                    if (seat != s.Defender) throw new GameException("only the defender can take");
+                    if (s.Taking) throw new GameException("already taking");
+                    if (s.Attacks.Count == 0) throw new GameException("nothing to take");
+                    // Open a throw-in window if ANY attacker can still add a matching card; otherwise resolve now.
+                    if (AnyAttackerCanThrowIn(s)) s.Taking = true;
+                    else EndBout(s, defenderTook: true);
                     break;
-                case DurakMoveKind.Done:
-                    if (s.Attacks.Count == 0 || !AllBeaten(s)) throw new GameException("cannot end the bout now");
-                    EndBout(s, defenderTook: false);
+                case DurakMoveKind.Done:   // "I'm done adding to this bout" (pass / Бито / finish the take)
+                    if (!IsAttacker(s, seat)) throw new GameException("only an attacker can pass");
+                    if (s.Attacks.Count == 0) throw new GameException("nothing to pass on yet");
+                    if (s.Passed[seat]) throw new GameException("you already passed");
+                    s.Passed[seat] = true;
                     break;
                 default:
                     throw new GameException("unknown move");
             }
+
+            // Close the bout automatically once EVERY attacker is done adding and the table is resolved:
+            // all attacks beaten → Бито (successful defence), or the defender is taking → they pick everything up.
+            if (s.Result == null && AllAttackersDone(s))
+            {
+                if (s.Taking) EndBout(s, defenderTook: true);
+                else if (s.Attacks.Count > 0 && AllBeaten(s)) EndBout(s, defenderTook: false);
+            }
             return s;
         }
 
-        private void ApplyAttack(DurakState s, Card card)
+        private void ApplyAttack(DurakState s, int seat, Card card)
         {
-            if (!AllBeaten(s)) throw new GameException("beat the table before attacking again");
             if (s.Attacks.Count >= MaxTable) throw new GameException("table is full");
-            if (s.Attacks.Count > 0)
+            if (s.Attacks.Count == 0)
             {
-                if (s.Hands[s.Defender].Count == 0) throw new GameException("defender has no cards to beat a throw-in");
+                if (s.Taking) throw new GameException("cannot open an attack now");
+                // opening attack: any card
+            }
+            else
+            {
+                // throw-in (pile on while unbeaten / all-beaten / on take): must match a rank already on the table
+                if (!DefenderCanTakeAnotherAttack(s)) throw new GameException("cannot throw in more cards than the defender can beat");
                 if (!TableRanks(s).Contains(card.Rank)) throw new GameException("throw-in must match a rank on the table");
             }
-            if (!s.Hands[s.Attacker].Remove(card)) throw new GameException("attacker doesn't hold that card");
+            if (!s.Hands[seat].Remove(card)) throw new GameException("you don't hold that card");
             s.Attacks.Add(card);
             s.Defenses.Add(null);
         }
@@ -337,6 +448,7 @@ namespace SetNet.BoardGame
 
         private void EndBout(DurakState s, bool defenderTook)
         {
+            s.LastTaker = defenderTook ? s.Defender : -1; // capture the taker BEFORE roles rotate (for the client animation)
             if (defenderTook)
             {
                 // Defender picks up everything on the table.
@@ -346,6 +458,8 @@ namespace SetNet.BoardGame
             // else: beaten cards are discarded (leave the game).
             s.Attacks = new List<Card>();
             s.Defenses = new List<Card?>();
+            s.Taking = false;
+            ResetPasses(s);   // fresh bout: nobody has passed yet
 
             Refill(s);
 
@@ -423,6 +537,7 @@ namespace SetNet.BoardGame
                 Defenses = new List<Card?>(s.Defenses),
                 Attacker = s.Attacker,
                 Defender = s.Defender,
+                Taking = s.Taking,
                 ToMove = CurrentSeat(s),
                 Players = s.Players,
                 Result = s.Result,

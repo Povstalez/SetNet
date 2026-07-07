@@ -110,5 +110,8 @@ namespace SetNet.Protocol
 
         /// <summary>Turn-based board/card game hub — reserved for the future networked layer (SetNet.BoardGame).</summary>
         public const ushort BoardGame = 33;
+
+        /// <summary>Round-trip latency (ping) measurement (SetNet.Ping).</summary>
+        public const ushort Ping = 34;
     }
 }

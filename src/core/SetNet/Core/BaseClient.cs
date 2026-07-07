@@ -117,7 +117,7 @@ namespace SetNet.Core
 
             try
             {
-                Connection = await _connector.ConnectAsync(_config, ct).ConfigureAwait(false);
+                Connection = await _connector.ConnectAsync(_config, ct).ConfigureAwait(global::SetNet.SetNetSync.ContinueOnCapturedContext);
             }
             catch
             {
@@ -257,13 +257,13 @@ namespace SetNet.Core
             {
                 while (!ct.IsCancellationRequested)
                 {
-                    var message = await connection.ReceiveAsync(ct).ConfigureAwait(false);
+                    var message = await connection.ReceiveAsync(ct).ConfigureAwait(global::SetNet.SetNetSync.ContinueOnCapturedContext);
                     if (message == null) break; // graceful close / EOF
                     var m = message.Value;
 
                     _config.Metrics.IncrementMessagesReceived();
                     LogNewMessage(m.Type);
-                    await DispatchAsync(m.Type, m.Payload).ConfigureAwait(false);
+                    await DispatchAsync(m.Type, m.Payload).ConfigureAwait(global::SetNet.SetNetSync.ContinueOnCapturedContext);
                 }
             }
             catch (OperationCanceledException)
@@ -361,7 +361,7 @@ namespace SetNet.Core
                 if (_disposed || _isIntentionalDisconnect) { FireTerminalDisconnect(); return; }
 
                 SafeLifecycleHook(nameof(OnReconnecting), () => OnReconnecting(attempt, _config.MaxReconnectAttempts));
-                await Task.Delay(_config.ReconnectDelayMs).ConfigureAwait(false);
+                await Task.Delay(_config.ReconnectDelayMs).ConfigureAwait(global::SetNet.SetNetSync.ContinueOnCapturedContext);
 
                 if (_disposed || _isIntentionalDisconnect) { FireTerminalDisconnect(); return; }
 
@@ -392,7 +392,7 @@ namespace SetNet.Core
                     }
                     if (bail) { FireTerminalDisconnect(); return; }
 
-                    Connection = await _connector.ConnectAsync(_config, ct).ConfigureAwait(false);
+                    Connection = await _connector.ConnectAsync(_config, ct).ConfigureAwait(global::SetNet.SetNetSync.ContinueOnCapturedContext);
 
                     if (_config.HeartbeatEnabled)
                     {
@@ -505,7 +505,7 @@ namespace SetNet.Core
                 throw new InvalidOperationException($"Cannot send: state is '{State}'.");
 
             _config.Metrics.IncrementMessagesSent();
-            await conn.SendAsync(type, payload, delivery, channel).ConfigureAwait(false);
+            await conn.SendAsync(type, payload, delivery, channel).ConfigureAwait(global::SetNet.SetNetSync.ContinueOnCapturedContext);
         }
 
         /// <summary>

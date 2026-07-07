@@ -88,6 +88,10 @@
         <ProjectReference Include="..\..\src\realtime\SetNet.GameData\SetNet.GameData.csproj" />
         <ProjectReference Include="..\..\src\realtime\SetNet.LoginServer\SetNet.LoginServer.csproj" />
         <ProjectReference Include="..\..\src\realtime\SetNet.BoardGame\SetNet.BoardGame.csproj" />
+        <ProjectReference Include="..\..\src\realtime\SetNet.Hitscan\SetNet.Hitscan.csproj" />
+        <ProjectReference Include="..\..\src\realtime\SetNet.Projectiles\SetNet.Projectiles.csproj" />
+        <ProjectReference Include="..\..\src\realtime\SetNet.Inventory.Grid\SetNet.Inventory.Grid.csproj" />
+        <ProjectReference Include="..\..\src\net\SetNet.Ping\SetNet.Ping.csproj" />
         <ProjectReference Include="..\..\src\infra\SetNet.Docs\SetNet.Docs.csproj" />
         <ProjectReference Include="..\..\src\realtime\SetNet.Locomotion\SetNet.Locomotion.csproj" />
         <ProjectReference Include="..\..\src\realtime\SetNet.Ticks\SetNet.Ticks.csproj" />

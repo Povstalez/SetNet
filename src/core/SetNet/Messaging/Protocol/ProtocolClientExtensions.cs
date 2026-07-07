@@ -43,12 +43,12 @@ namespace SetNet.Protocol
             try
             {
                 var env = new ProtocolEnvelope(ProtocolKind.Request, channel, op, corr, body);
-                await client.SendAsync(ProtocolTypes.Envelope, env.Encode(), DeliveryMethod.Reliable).ConfigureAwait(false);
+                await client.SendAsync(ProtocolTypes.Envelope, env.Encode(), DeliveryMethod.Reliable).ConfigureAwait(global::SetNet.SetNetSync.ContinueOnCapturedContext);
 
                 ProtocolEnvelope reply;
                 if (timeoutMs <= 0 && !ct.CanBeCanceled)
                 {
-                    reply = await tcs.Task.ConfigureAwait(false);
+                    reply = await tcs.Task.ConfigureAwait(global::SetNet.SetNetSync.ContinueOnCapturedContext);
                 }
                 else
                 {
@@ -56,7 +56,7 @@ namespace SetNet.Protocol
                     if (timeoutMs > 0) linked.CancelAfter(timeoutMs);
                     using (linked.Token.Register(() => tcs.TrySetCanceled()))
                     {
-                        try { reply = await tcs.Task.ConfigureAwait(false); }
+                        try { reply = await tcs.Task.ConfigureAwait(global::SetNet.SetNetSync.ContinueOnCapturedContext); }
                         catch (OperationCanceledException) when (!ct.IsCancellationRequested)
                         {
                             throw new TimeoutException($"Protocol request (channel {channel}, op {op}) timed out after {timeoutMs} ms.");
@@ -79,7 +79,7 @@ namespace SetNet.Protocol
         public static async Task<TResp> RequestAsync<TReq, TResp>(this BaseClient client, ushort channel, ushort op,
             TReq request, int timeoutMs = DefaultTimeoutMs, CancellationToken ct = default)
         {
-            var replyBody = await client.RequestRawAsync(channel, op, SetNetSerializer.Serialize(request), timeoutMs, ct).ConfigureAwait(false);
+            var replyBody = await client.RequestRawAsync(channel, op, SetNetSerializer.Serialize(request), timeoutMs, ct).ConfigureAwait(global::SetNet.SetNetSync.ContinueOnCapturedContext);
             return SetNetSerializer.Deserialize<TResp>(replyBody);
         }
 

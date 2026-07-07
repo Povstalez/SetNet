@@ -97,7 +97,7 @@ namespace SetNet.Protocol
 
         private static async Task Await(Task task)
         {
-            try { await task.ConfigureAwait(false); } catch { /* isolate a faulty async event handler */ }
+            try { await task.ConfigureAwait(global::SetNet.SetNetSync.ContinueOnCapturedContext); } catch { /* isolate a faulty async event handler */ }
         }
     }
 }

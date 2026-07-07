@@ -52,6 +52,37 @@ namespace SetNet.UnitTests
         };
 
         [Fact]
+        public void Cannot_throw_more_cards_than_the_defender_holds()
+        {
+            var g = new DurakGame(2);
+            // Defender (seat 1) holds ONE card; attacker (seat 0) holds two 7s.
+            var s = Table(
+                a: new List<Card> { C(Rank.Seven, Suit.Hearts), C(Rank.Seven, Suit.Diamonds) },
+                b: new List<Card> { C(Rank.Nine, Suit.Clubs) });
+
+            s = g.Apply(s, 0, DurakMove.Attack(C(Rank.Seven, Suit.Hearts)));   // opening: 1 card is fine
+
+            // The lone-card defender must never face a SECOND unbeaten attack — no throw-in offered, and it's rejected.
+            Assert.DoesNotContain(g.LegalMoves(s, 0), m => m.Kind == DurakMoveKind.Attack);
+            Assert.Throws<GameException>(() => g.Apply(s, 0, DurakMove.Attack(C(Rank.Seven, Suit.Diamonds))));
+        }
+
+        [Fact]
+        public void Can_throw_up_to_the_defender_hand_size_but_no_more()
+        {
+            var g = new DurakGame(2);
+            // Defender holds TWO cards; attacker holds three 7s → at most two 7s may hit the table.
+            var s = Table(
+                a: new List<Card> { C(Rank.Seven, Suit.Hearts), C(Rank.Seven, Suit.Diamonds), C(Rank.Seven, Suit.Clubs) },
+                b: new List<Card> { C(Rank.Nine, Suit.Clubs), C(Rank.Ten, Suit.Clubs) });
+
+            s = g.Apply(s, 0, DurakMove.Attack(C(Rank.Seven, Suit.Hearts)));    // 1st
+            s = g.Apply(s, 0, DurakMove.Attack(C(Rank.Seven, Suit.Diamonds)));  // 2nd (== the defender's 2 cards)
+            Assert.DoesNotContain(g.LegalMoves(s, 0), m => m.Kind == DurakMoveKind.Attack); // no 3rd offered
+            Assert.Throws<GameException>(() => g.Apply(s, 0, DurakMove.Attack(C(Rank.Seven, Suit.Clubs))));
+        }
+
+        [Fact]
         public void Attack_defend_done_rotates_roles()
         {
             var g = new DurakGame(2);
@@ -63,8 +94,9 @@ namespace SetNet.UnitTests
             Assert.Equal(1, g.CurrentSeat(s));                                  // defender's turn
 
             s = g.Apply(s, 1, DurakMove.Defend(0, C(Rank.Eight, Suit.Hearts)));
-            Assert.Equal(0, g.CurrentSeat(s));                                  // all beaten → attacker
+            Assert.Equal(0, g.CurrentSeat(s));                                  // all beaten → the attacker must confirm
 
+            // The bout does NOT auto-close: the attacker explicitly finishes it (Skip/Бито) even with nothing to add.
             s = g.Apply(s, 0, DurakMove.Done());
             Assert.Null(g.Outcome(s));
             Assert.Equal(1, s.Attacker);                                        // defender became attacker
@@ -109,7 +141,7 @@ namespace SetNet.UnitTests
 
             s = g.Apply(s, 0, DurakMove.Attack(C(Rank.Seven, Suit.Clubs)));
             s = g.Apply(s, 1, DurakMove.Defend(1, C(Rank.Eight, Suit.Clubs)));
-            s = g.Apply(s, 0, DurakMove.Done());
+            s = g.Apply(s, 0, DurakMove.Done());  // both beaten; the attacker confirms Бито → the game ends
 
             Assert.NotNull(g.Outcome(s));
             Assert.Contains(1, g.Outcome(s)!.Winners);                          // player 1 emptied their hand

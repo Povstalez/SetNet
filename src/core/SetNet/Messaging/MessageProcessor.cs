@@ -116,7 +116,7 @@ namespace SetNet.Messaging
         /// <returns>A task that completes when <paramref name="task"/> finishes (faults are reported, not propagated).</returns>
         private async Task ObserveCompletionAsync(ushort type, Task task)
         {
-            try { await task.ConfigureAwait(false); }
+            try { await task.ConfigureAwait(global::SetNet.SetNetSync.ContinueOnCapturedContext); }
             catch (Exception ex) { ReportError(type, ex); }
         }
 
@@ -151,7 +151,7 @@ namespace SetNet.Messaging
         /// <param name="task">The handler task to observe to completion.</param>
         private async void ObserveAsync(ushort type, Task task)
         {
-            try { await task.ConfigureAwait(false); }
+            try { await task.ConfigureAwait(global::SetNet.SetNetSync.ContinueOnCapturedContext); }
             catch (Exception ex) { ReportError(type, ex); }
         }
     }

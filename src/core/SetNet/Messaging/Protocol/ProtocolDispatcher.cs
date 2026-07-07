@@ -23,19 +23,19 @@ namespace SetNet.Protocol
             if (service == null)
             {
                 if (ctx.ExpectsReply)
-                    await ctx.ReplyErrorAsync($"No protocol channel {env.Channel} is configured on this server.").ConfigureAwait(false);
+                    await ctx.ReplyErrorAsync($"No protocol channel {env.Channel} is configured on this server.").ConfigureAwait(global::SetNet.SetNetSync.ContinueOnCapturedContext);
                 return;
             }
 
             try
             {
-                await service.HandleAsync(ctx).ConfigureAwait(false);
+                await service.HandleAsync(ctx).ConfigureAwait(global::SetNet.SetNetSync.ContinueOnCapturedContext);
             }
             catch (Exception ex)
             {
                 // Relay the failure to a waiting caller instead of dropping the request.
                 if (ctx.ExpectsReply)
-                    await ctx.ReplyErrorAsync(ex.Message).ConfigureAwait(false);
+                    await ctx.ReplyErrorAsync(ex.Message).ConfigureAwait(global::SetNet.SetNetSync.ContinueOnCapturedContext);
             }
         }
 

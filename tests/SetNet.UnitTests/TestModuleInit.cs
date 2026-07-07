@@ -35,6 +35,7 @@ using SetNet.Vendor;
 using SetNet.Wallet;
 using SetNet.Zones;
 using SetNet.LoginServer;
+using SetNet.Ping;
 
 namespace SetNet.UnitTests;
 
@@ -83,5 +84,6 @@ internal static class TestModuleInit
         MarketplaceRuntime.Enable();
         StatusEffectRuntime.Enable();
         LoginRuntime.Enable();
+        PingRuntime.Enable();
     }
 }

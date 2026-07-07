@@ -1,0 +1,10 @@
+{
+  "name": "dev.lemeshev.setnet.websockets",
+  "version": "1.0.0",
+  "displayName": "SetNet WebSockets for Unity",
+  "description": "A WebSocket transport for SetNet that works on every Unity platform, including WebGL (browser) via a .jslib bridge. config.UseUnityWebSockets(); everything above the transport (handlers, RPC, rooms, auth) is unchanged. Client-only — host the server with the .NET SetNet.WebSockets package.",
+  "unity": "2021.3",
+  "keywords": [ "setnet", "networking", "websocket", "webgl", "transport" ],
+  "author": { "name": "Artem Lemeshev", "url": "https://setnet.lemeshev.dev" },
+  "license": "MIT"
+}

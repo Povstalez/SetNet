@@ -127,7 +127,7 @@ namespace SetNet.Protocol
             object? result = null;
             if (ret is Task task)
             {
-                await task.ConfigureAwait(false);
+                await task.ConfigureAwait(global::SetNet.SetNetSync.ContinueOnCapturedContext);
                 if (_replyKind != ReplyKind.None) result = task.GetType().GetProperty("Result")?.GetValue(task);
             }
             else if (!_isAsync)
@@ -138,10 +138,10 @@ namespace SetNet.Protocol
             switch (_replyKind)
             {
                 case ReplyKind.Raw:
-                    await request.ReplyRawAsync((byte[])(result ?? Array.Empty<byte>())).ConfigureAwait(false);
+                    await request.ReplyRawAsync((byte[])(result ?? Array.Empty<byte>())).ConfigureAwait(global::SetNet.SetNetSync.ContinueOnCapturedContext);
                     break;
                 case ReplyKind.Typed:
-                    await request.ReplyRawAsync(result == null ? Array.Empty<byte>() : _serialize!(result)).ConfigureAwait(false);
+                    await request.ReplyRawAsync(result == null ? Array.Empty<byte>() : _serialize!(result)).ConfigureAwait(global::SetNet.SetNetSync.ContinueOnCapturedContext);
                     break;
                 case ReplyKind.None:
                     break;

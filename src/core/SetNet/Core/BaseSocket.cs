@@ -119,7 +119,7 @@ namespace SetNet.Core
             if (_sequentialDispatch)
             {
                 // Await completion so the next frame is not read until this handler finishes — strict ordering.
-                await _messageProcessor.ProcessMessageAsync(type, data).ConfigureAwait(false);
+                await _messageProcessor.ProcessMessageAsync(type, data).ConfigureAwait(global::SetNet.SetNetSync.ContinueOnCapturedContext);
                 return;
             }
 
@@ -134,7 +134,7 @@ namespace SetNet.Core
             // receive loop forever — closing the socket cancels the wait and lets the loop exit. Capture the
             // current generation's source locally so a concurrent ResetDispatch swap can't be observed mid-call.
             var cts = _dispatchCts;
-            await gate.WaitAsync(cts!.Token).ConfigureAwait(false);
+            await gate.WaitAsync(cts!.Token).ConfigureAwait(global::SetNet.SetNetSync.ContinueOnCapturedContext);
 
             Task handlerTask;
             try { handlerTask = _messageProcessor.ProcessMessageAsync(type, data); }
@@ -147,7 +147,7 @@ namespace SetNet.Core
         /// <param name="gate">The gate semaphore to release on completion.</param>
         private static async Task ReleaseWhenDone(Task task, SemaphoreSlim gate)
         {
-            try { await task.ConfigureAwait(false); }
+            try { await task.ConfigureAwait(global::SetNet.SetNetSync.ContinueOnCapturedContext); }
             finally { gate.Release(); }
         }
 
