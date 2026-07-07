@@ -79,8 +79,8 @@ namespace SetNet.Protocol
         public static async Task<TResp> RequestAsync<TReq, TResp>(this BaseClient client, ushort channel, ushort op,
             TReq request, int timeoutMs = DefaultTimeoutMs, CancellationToken ct = default)
         {
-            var replyBody = await client.RequestRawAsync(channel, op, SetNetSerializer.Serialize(request), timeoutMs, ct).ConfigureAwait(global::SetNet.SetNetSync.ContinueOnCapturedContext);
-            return SetNetSerializer.Deserialize<TResp>(replyBody);
+            var replyBody = await client.RequestRawAsync(channel, op, client.Runtime.Serialize(request), timeoutMs, ct).ConfigureAwait(global::SetNet.SetNetSync.ContinueOnCapturedContext);
+            return client.Runtime.Deserialize<TResp>(replyBody);
         }
 
         /// <summary>Sends a fire-and-forget message with a raw body (no reply expected). Serializer-agnostic.</summary>
@@ -95,21 +95,21 @@ namespace SetNet.Protocol
         /// <summary>Typed fire-and-forget: serializes <typeparamref name="T"/> and sends it (no reply expected).</summary>
         public static Task PostAsync<T>(this BaseClient client, ushort channel, ushort op, T message,
             DeliveryMethod delivery = DeliveryMethod.Reliable)
-            => client.PostRawAsync(channel, op, SetNetSerializer.Serialize(message), delivery);
+            => client.PostRawAsync(channel, op, client.Runtime.Serialize(message), delivery);
 
         /// <summary>Subscribes to raw push events for (channel, op). Returns a handle that unsubscribes on dispose.</summary>
         public static IDisposable OnRaw(this BaseClient client, ushort channel, ushort op, Action<byte[]> handler)
         {
             if (client == null) throw new ArgumentNullException(nameof(client));
             if (handler == null) throw new ArgumentNullException(nameof(handler));
-            return ProtocolSubscriptions.Add(channel, op, handler);
+            return client.Runtime.ProtocolSubscriptions.Add(channel, op, handler);
         }
 
         /// <summary>Subscribes to typed push events for (channel, op): each event body is deserialized to <typeparamref name="T"/>.</summary>
         public static IDisposable On<T>(this BaseClient client, ushort channel, ushort op, Action<T> handler)
         {
             if (handler == null) throw new ArgumentNullException(nameof(handler));
-            return client.OnRaw(channel, op, body => handler(SetNetSerializer.Deserialize<T>(body)));
-        }
+            return client.OnRaw(channel, op, body => handler(client.Runtime.Deserialize<T>(body)));
     }
+}
 }

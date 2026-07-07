@@ -123,7 +123,7 @@ await client.MoveAsync(10, 20);
 
 ## 4. Messages and handlers
 
-Handlers are discovered via reflection at startup — a class with `[MessageHandler]` that implements `IServerMessageHandler<T>` or `IClientMessageHandler<T>`. Handlers are **strongly typed**: the library deserializes the payload and hands you the ready `T` — no manual deserialization.
+Handlers are discovered via reflection by default, or registered explicitly on `SetNetRuntime.Handlers`. A handler is a class with `[MessageHandler]` that implements `IServerMessageHandler<T>` or `IClientMessageHandler<T>`. Handlers are **strongly typed**: the library deserializes the payload and hands you the ready `T` — no manual deserialization.
 
 ### Server-side handler
 
@@ -157,9 +157,9 @@ public class ChatHandler : IClientMessageHandler<ChatMessage>
 }
 ```
 
-**If a handler isn't being called** — check: (1) it implements `IServerMessageHandler<T>`/`IClientMessageHandler<T>`; (2) it has `[MessageHandler]` with the correct `ushort`; (3) both `T` and the `ushort` match what is being sent; (4) the class is in a loaded assembly.
+**If a handler isn't being called** — check: (1) it implements `IServerMessageHandler<T>`/`IClientMessageHandler<T>`; (2) it has `[MessageHandler]` with the correct `ushort` or was registered explicitly on `SetNetRuntime.Handlers`; (3) both `T` and the `ushort` match what is being sent; (4) the handler's assembly is loaded or registered with the runtime.
 
-> ℹ️ Handlers are created via `Activator.CreateInstance` (a public parameterless constructor is required) and **reused as a singleton** for all messages of that type. **There is no constructor DI** — resolve services through a static service locator or your own mechanism.
+> ℹ️ By default, handlers are created via `Activator.CreateInstance` (a public parameterless constructor is required) and **reused as a singleton** for all messages of that type. Use `SetNet.DependencyInjection` when you want constructor injection.
 
 ### Serialization — choose the format yourself (MessagePack, JSON, …)
 
@@ -173,7 +173,7 @@ public interface ISerializer
 }
 ```
 
-Until a serializer is assigned, `SetNetSerializer.Serialize/Deserialize` throw an `InvalidOperationException` with a hint. Assign it **once at startup**, before connecting.
+Until a serializer is assigned, typed sends and typed handler dispatch throw an `InvalidOperationException` with a hint. Assign it before connecting or starting a server. `SetNetSerializer.Use(...)` configures the backward-compatible `SetNetRuntime.Default`; for isolated environments, put a custom `SetNetRuntime` on `Configuration.Runtime`.
 
 **Option 1 — MessagePack (recommended)** via the separate `SetNet.MessagePack` package. It provides `MessagePackNetSerializer`, hardened with the `UntrustedData` security profile (protection against DoS during deserialization):
 
@@ -183,6 +183,28 @@ using SetNet.MessagePack;
 
 SetNetSerializer.Use(new MessagePackNetSerializer());  // globally, at startup
 ```
+
+Scoped runtime:
+
+```csharp
+using SetNet;
+using SetNet.Config;
+using SetNet.MessagePack;
+
+var runtime = new SetNetRuntime()
+    .UseSerializer(new MessagePackNetSerializer());
+
+runtime.Handlers.AutoDiscoverLoadedAssemblies = false;
+runtime.Handlers.AddHandlersFromAssemblyOf<PlayerMoveHandler>();
+
+var serverConfig = ConfigurationPresets.Development("0.0.0.0", 5000);
+serverConfig.Runtime = runtime;
+
+var clientConfig = ConfigurationPresets.Development("127.0.0.1", 5000);
+clientConfig.Runtime = runtime;
+```
+
+Use a scoped runtime when integration tests run several SetNet stacks in one process, when a plugin host needs explicit handler catalogs, or when two listeners need different serializers/handler sets. In separate processes, create matching runtimes on both sides.
 
 **Option 2 — your own format** (e.g. System.Text.Json), with no dependencies:
 
@@ -200,8 +222,8 @@ SetNetSerializer.Use(new MyJsonSerializer());
 ```
 
 **Rules:**
-- The serializer is **one per application** — registered once via `SetNetSerializer.Use(...)`. **Everything** goes through it: both the send path and the deserialization of incoming messages before the handler is called. There is no per-connection setting — a single place.
-- Handlers are **strongly typed** — they receive the ready `T`; no manual deserialization (the library does it). `SetNetSerializer.Serialize/Deserialize` remain available for ad-hoc needs.
+- The serializer is **one per runtime**. If you do nothing special, the app uses `SetNetRuntime.Default` via `SetNetSerializer.Use(...)`. If you set `Configuration.Runtime`, that endpoint uses the runtime's serializer and handler registry.
+- Handlers are **strongly typed** — they receive the ready `T`; no manual deserialization (the library does it). `SetNetSerializer.Serialize/Deserialize` remain available for ad-hoc needs on the default runtime; scoped code can call `runtime.Serialize/Deserialize`.
 - **Both ends** of a connection must use the same format.
 - DTO requirements are dictated by the chosen serializer: for MessagePack — `[MessagePackObject]`/`[Key]` (see above); System.Text.Json works with ordinary public properties.
 
@@ -393,7 +415,11 @@ Nagle disabled = low latency for small frames. For a bulk stream of unbatched me
 ```csharp
 using System.Security.Cryptography.X509Certificates;
 
-var config = new Configuration
+var config = ConfigurationPresets.ProductionTcp("0.0.0.0", 5682);
+config.ServerCertificate = new X509Certificate2("server.pfx", "password");
+
+// Or build it manually:
+config = new Configuration
 {
     Host = "0.0.0.0", Port = 5682,
 
@@ -410,6 +436,11 @@ var config = new Configuration
     MaxInFlightMessages = 256,
     MaxInboundQueue = 16384,   // inbound-queue cap per connection (OOM protection)
 };
+
+foreach (var issue in config.AnalyzeProduction())
+    Console.WriteLine(issue);
+
+config.ValidateProduction(); // throws if production-blocking errors remain
 ```
 
 - **Authentication is on the application side**: validate credentials in your `OnNewClient`/handlers (the library only provides transport).
@@ -515,9 +546,9 @@ Detailed scaling limits are in [PERFORMANCE.md](PERFORMANCE.en.md).
 
 | Symptom | Cause / resolution |
 |---|---|
-| Handler not called | No `[MessageHandler]`, the wrong type, doesn't implement the interface, or the class is not in a loaded assembly. |
+| Handler not called | No `[MessageHandler]`, the wrong type, doesn't implement the interface, or the class/assembly is not loaded or registered on `SetNetRuntime.Handlers`. |
 | Messages get "corrupted" | Different serializers on the two ends; (MessagePack) a DTO without `[MessagePackObject]`/`[Key]`; or the type doesn't match. |
-| `InvalidOperationException: No serializer configured` | `SetNetSerializer.Use(...)` not called — do it at startup (see section 4). |
+| `InvalidOperationException: No serializer configured` | No serializer on the endpoint runtime — call `SetNetSerializer.Use(...)` for the default runtime or `runtime.UseSerializer(...)` before assigning `Configuration.Runtime` (see section 4). |
 | Won't connect | Host/Port differ on the client and server; firewall; (UDP) handshake is blocked. |
 | Out-of-order processing | This is the default behavior — enable `SequentialDispatch`. |
 | Reliable UDP throws on send | `DefaultDelivery=Reliable` + `UdpReliabilityEnabled=false` on plain UDP. Validate() catches this. |

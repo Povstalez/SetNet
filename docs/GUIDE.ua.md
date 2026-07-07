@@ -123,7 +123,7 @@ await client.MoveAsync(10, 20);
 
 ## 4. Повідомлення та хендлери
 
-Хендлери знаходяться рефлексією при старті — клас із `[MessageHandler]`, що реалізує `IServerMessageHandler<T>` чи `IClientMessageHandler<T>`. Хендлер **типізований**: бібліотека сама десеріалізує payload і віддає готовий `T` — вручну десеріалізувати не треба.
+Хендлери знаходяться рефлексією за замовчуванням або реєструються явно через `SetNetRuntime.Handlers`. Хендлер — це клас із `[MessageHandler]`, що реалізує `IServerMessageHandler<T>` чи `IClientMessageHandler<T>`. Хендлер **типізований**: бібліотека сама десеріалізує payload і віддає готовий `T` — вручну десеріалізувати не треба.
 
 ### Серверний хендлер
 
@@ -157,9 +157,9 @@ public class ChatHandler : IClientMessageHandler<ChatMessage>
 }
 ```
 
-**Якщо хендлер не викликається** — перевірте: (1) реалізує `IServerMessageHandler<T>`/`IClientMessageHandler<T>`; (2) має `[MessageHandler]` з правильним `ushort`; (3) тип `T` та `ushort` збігаються з тим, що надсилається; (4) клас у завантаженому assembly.
+**Якщо хендлер не викликається** — перевірте: (1) реалізує `IServerMessageHandler<T>`/`IClientMessageHandler<T>`; (2) має `[MessageHandler]` з правильним `ushort` або явно зареєстрований у `SetNetRuntime.Handlers`; (3) тип `T` та `ushort` збігаються з тим, що надсилається; (4) assembly хендлера завантажений або зареєстрований у runtime.
 
-> ℹ️ Хендлери створюються через `Activator.CreateInstance` (потрібен публічний конструктор без параметрів) і **переюзаються як singleton** для всіх повідомлень цього типу. **DI у конструктор немає** — резолвіть сервіси через статичний service-locator чи власний механізм.
+> ℹ️ За замовчуванням хендлери створюються через `Activator.CreateInstance` (потрібен публічний конструктор без параметрів) і **переюзаються як singleton** для всіх повідомлень цього типу. Для constructor injection використовуйте `SetNet.DependencyInjection`.
 
 ### Серіалізація — оберіть формат самі (MessagePack, JSON, …)
 
@@ -173,7 +173,7 @@ public interface ISerializer
 }
 ```
 
-Поки серіалізатор не призначено, `SetNetSerializer.Serialize/Deserialize` кидають `InvalidOperationException` із підказкою. Призначте його **один раз на старті**, до підключення.
+Поки серіалізатор не призначено, типізоване надсилання і типізований dispatch хендлерів кидають `InvalidOperationException` із підказкою. Призначте його до підключення або старту сервера. `SetNetSerializer.Use(...)` налаштовує backward-compatible `SetNetRuntime.Default`; для ізольованих середовищ передайте власний `SetNetRuntime` у `Configuration.Runtime`.
 
 **Варіант 1 — MessagePack (рекомендований)** через окремий пакет `SetNet.MessagePack`. Він дає `MessagePackNetSerializer`, загартований профілем безпеки `UntrustedData` (захист від DoS при десеріалізації):
 
@@ -183,6 +183,28 @@ using SetNet.MessagePack;
 
 SetNetSerializer.Use(new MessagePackNetSerializer());  // глобально, на старті
 ```
+
+Scoped runtime:
+
+```csharp
+using SetNet;
+using SetNet.Config;
+using SetNet.MessagePack;
+
+var runtime = new SetNetRuntime()
+    .UseSerializer(new MessagePackNetSerializer());
+
+runtime.Handlers.AutoDiscoverLoadedAssemblies = false;
+runtime.Handlers.AddHandlersFromAssemblyOf<PlayerMoveHandler>();
+
+var serverConfig = ConfigurationPresets.Development("0.0.0.0", 5000);
+serverConfig.Runtime = runtime;
+
+var clientConfig = ConfigurationPresets.Development("127.0.0.1", 5000);
+clientConfig.Runtime = runtime;
+```
+
+Scoped runtime корисний, коли integration tests запускають кілька SetNet-стеків в одному процесі, коли plugin host хоче повністю явний каталог хендлерів, або коли два listener-и мають різні serializer/handler набори. В окремих процесах створіть сумісні runtime-и на обох боках.
 
 **Варіант 2 — власний формат** (напр. System.Text.Json), без жодних залежностей:
 
@@ -200,8 +222,8 @@ SetNetSerializer.Use(new MyJsonSerializer());
 ```
 
 **Правила:**
-- Серіалізатор **один на застосунок** — реєструється раз через `SetNetSerializer.Use(...)`. Через нього проходить **усе**: і надсилання, і десеріалізація вхідних повідомлень перед викликом хендлера. Жодного per-connection налаштування немає — одне місце.
-- Хендлери **типізовані** — отримують готовий `T`, десеріалізувати вручну не треба (бібліотека робить це сама). Для ad-hoc випадків доступні `SetNetSerializer.Serialize/Deserialize`.
+- Серіалізатор **один на runtime**. Якщо нічого спеціального не налаштовувати, застосунок використовує `SetNetRuntime.Default` через `SetNetSerializer.Use(...)`. Якщо задано `Configuration.Runtime`, endpoint використовує serializer і handler registry саме цього runtime.
+- Хендлери **типізовані** — отримують готовий `T`, десеріалізувати вручну не треба (бібліотека робить це сама). Для ad-hoc випадків на default runtime доступні `SetNetSerializer.Serialize/Deserialize`; scoped-код може викликати `runtime.Serialize/Deserialize`.
 - **Обидва боки** з'єднання мають використовувати один формат.
 - Вимоги до DTO диктує обраний серіалізатор: для MessagePack — `[MessagePackObject]`/`[Key]` (див. вище); System.Text.Json працює зі звичайними публічними властивостями.
 
@@ -393,7 +415,11 @@ await FlushAsync();        // один запис у сокет (на BaseClient
 ```csharp
 using System.Security.Cryptography.X509Certificates;
 
-var config = new Configuration
+var config = ConfigurationPresets.ProductionTcp("0.0.0.0", 5682);
+config.ServerCertificate = new X509Certificate2("server.pfx", "password");
+
+// Або зберіть вручну:
+config = new Configuration
 {
     Host = "0.0.0.0", Port = 5682,
 
@@ -410,6 +436,11 @@ var config = new Configuration
     MaxInFlightMessages = 256,
     MaxInboundQueue = 16384,   // межа вхідної черги на з'єднання (захист від OOM)
 };
+
+foreach (var issue in config.AnalyzeProduction())
+    Console.WriteLine(issue);
+
+config.ValidateProduction(); // кидає, якщо лишились production-blocking помилки
 ```
 
 - **Автентифікація — на боці застосунку**: перевіряйте креденшіали у вашому `OnNewClient`/хендлерах (бібліотека дає лише транспорт).
@@ -515,9 +546,9 @@ ev.Trigger("PlayerJoined", "Alex");
 
 | Симптом | Причина / розв'язання |
 |---|---|
-| Хендлер не викликається | Немає `[MessageHandler]`, не той тип, не реалізує інтерфейс, або клас не в завантаженому assembly. |
+| Хендлер не викликається | Немає `[MessageHandler]`, не той тип, не реалізує інтерфейс, або клас/assembly не завантажений і не зареєстрований у `SetNetRuntime.Handlers`. |
 | Повідомлення «б'ються» | Різні серіалізатори на двох боках; (MessagePack) DTO без `[MessagePackObject]`/`[Key]`; або тип не збігається. |
-| `InvalidOperationException: No serializer configured` | Не викликано `SetNetSerializer.Use(...)` — зробіть це на старті (див. розділ 4). |
+| `InvalidOperationException: No serializer configured` | На endpoint runtime немає serializer-а — викличте `SetNetSerializer.Use(...)` для default runtime або `runtime.UseSerializer(...)` перед присвоєнням `Configuration.Runtime` (див. розділ 4). |
 | Не підключається | Host/Port різні на клієнті й сервері; брандмауер; (UDP) handshake блокується. |
 | Обробка не в порядку | Це дефолтна поведінка — увімкніть `SequentialDispatch`. |
 | Reliable-UDP кидає на надсиланні | `DefaultDelivery=Reliable` + `UdpReliabilityEnabled=false` на чистому UDP. Validate() це ловить. |

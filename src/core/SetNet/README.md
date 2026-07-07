@@ -14,9 +14,9 @@ SetNet gives you a persistent, message-oriented connection with automatic handle
 - 🛡️ **Reliable UDP (optional)** — sequence / ACK / retransmit / ordered delivery with a bounded receive window and back-pressure; multiple independent channels so a loss on one stream never head-of-line-blocks another.
 - 🤝 **Emulated UDP connections** — handshake + heartbeat give UDP the same `OnConnected`/`OnDisconnected`/peer lifecycle as TCP. **Both mode** binds a TCP lifeline and a UDP channel to one logical peer, with graceful TCP-only fallback.
 - 🔄 **Lifecycle done right** — intentional vs unexpected disconnects, auto-reconnect hooks, heartbeat liveness; `OnDisconnected` fires exactly once.
-- 🧩 **Strongly-typed handlers** — `IServerMessageHandler<T>` / `IClientMessageHandler<T>` receive the deserialized message; the library (de)serializes for you. Auto-discovered via `[MessageHandler(type)]`.
+- 🧩 **Strongly-typed handlers** — `IServerMessageHandler<T>` / `IClientMessageHandler<T>` receive the deserialized message; the library (de)serializes for you. Auto-discovered via `[MessageHandler(type)]` or registered explicitly on `SetNetRuntime.Handlers`.
 - 🔀 **Raw relay escape hatch** — override `OnRawFrame(type, data)` + `SendRawAsync` to forward bytes **without (de)serializing** (relay/proxy), while normal handlers stay typed.
-- 📦 **Pluggable serialization** — the core bundles **no** serializer. Add [**SetNet.MessagePack**](https://www.nuget.org/packages/SetNet.MessagePack) (hardened MessagePack) or supply your own `ISerializer` (JSON, Protobuf, …).
+- 📦 **Pluggable serialization** — the core bundles **no** serializer. Add [**SetNet.MessagePack**](https://www.nuget.org/packages/SetNet.MessagePack) (hardened MessagePack) or supply your own `ISerializer` (JSON, Protobuf, …), globally via `SetNetSerializer.Use(...)` or per endpoint via `SetNetRuntime`.
 - 🔒 **Production-hardened** — TLS over TCP, connection/UDP-peer caps, per-IP rate limiting, frame-size cap, back-pressure, bounded inbound queues (OOM protection), a resilient accept loop, and live `NetworkMetrics`.
 - ⚡ **Fast** — ~1.6M msgs/sec on one connection with send batching; allocation-light hot paths.
 
@@ -28,13 +28,29 @@ dotnet add package SetNet
 dotnet add package SetNet.MessagePack
 ```
 
-Register the serializer once at startup, before connecting:
+Register the serializer before connecting. For a simple app, configure the default runtime:
 
 ```csharp
 using SetNet.Messaging;
 using SetNet.MessagePack;
 
 SetNetSerializer.Use(new MessagePackNetSerializer());
+```
+
+For an isolated server/client environment in the same process, use an explicit runtime:
+
+```csharp
+using SetNet;
+using SetNet.Config;
+using SetNet.MessagePack;
+
+var runtime = new SetNetRuntime()
+    .UseSerializer(new MessagePackNetSerializer());
+
+runtime.Handlers.AutoDiscoverLoadedAssemblies = false;
+runtime.Handlers.AddHandlersFromAssemblyOf<ChatHandler>();
+
+var config = new Configuration { Host = "127.0.0.1", Port = 5000, Runtime = runtime };
 ```
 
 ## Quick start
@@ -87,7 +103,7 @@ await client.ConnectAsync();
 await client.SayAsync("hello");
 ```
 
-**4. Handle messages** (auto-discovered, strongly typed — the library deserializes for you):
+**4. Handle messages** (auto-discovered or explicitly registered, strongly typed — the library deserializes for you):
 
 ```csharp
 [MessageHandler((ushort)MsgType.Chat)]
@@ -122,7 +138,7 @@ Set `Configuration.TransportType` (default `Tcp`):
 
 - **Authentication is left to your application** — validate inside `OnNewClient`/handlers.
 - UDP datagrams have no per-packet encryption — route sensitive traffic over TLS-over-TCP (or Both with reliable delivery).
-- Not a general-purpose RPC/HTTP framework: no request/response correlation, no DI/hosting integration, no WebSocket/browser transport.
+- The core is not an HTTP framework, but it now includes the unified `SetNet.Protocol` envelope used by companion packages for request/reply and push events. RPC, DI, hosting, WebSocket, and browser/engine-specific transports live in optional packages.
 
 ## Documentation & source
 

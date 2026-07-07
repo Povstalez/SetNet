@@ -31,13 +31,18 @@ namespace SetNet.Core.Commands
     internal sealed class ServerHandlerInvoker<TMessage> : IServerHandlerInvoker
     {
         private readonly IServerMessageHandler<TMessage> _handler;
+        private readonly ISerializer _serializer;
 
         /// <summary>Wraps the given typed handler.</summary>
-        public ServerHandlerInvoker(IServerMessageHandler<TMessage> handler) => _handler = handler;
+        public ServerHandlerInvoker(IServerMessageHandler<TMessage> handler, ISerializer serializer)
+        {
+            _handler = handler;
+            _serializer = serializer;
+        }
 
         /// <inheritdoc/>
         public Task InvokeAsync(BasePeer peer, byte[] data)
-            => _handler.HandleAsync(peer, SetNetSerializer.Deserialize<TMessage>(data));
+            => _handler.HandleAsync(peer, _serializer.Deserialize<TMessage>(data));
     }
 
     /// <summary>
@@ -49,12 +54,17 @@ namespace SetNet.Core.Commands
     internal sealed class ClientHandlerInvoker<TMessage> : IClientHandlerInvoker
     {
         private readonly IClientMessageHandler<TMessage> _handler;
+        private readonly ISerializer _serializer;
 
         /// <summary>Wraps the given typed handler.</summary>
-        public ClientHandlerInvoker(IClientMessageHandler<TMessage> handler) => _handler = handler;
+        public ClientHandlerInvoker(IClientMessageHandler<TMessage> handler, ISerializer serializer)
+        {
+            _handler = handler;
+            _serializer = serializer;
+        }
 
         /// <inheritdoc/>
         public Task InvokeAsync(byte[] data)
-            => _handler.HandleAsync(SetNetSerializer.Deserialize<TMessage>(data));
+            => _handler.HandleAsync(_serializer.Deserialize<TMessage>(data));
     }
 }

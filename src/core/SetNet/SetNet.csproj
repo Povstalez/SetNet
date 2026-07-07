@@ -4,6 +4,7 @@
         <TargetFramework>netstandard2.1</TargetFramework>
         <ImplicitUsings>false</ImplicitUsings>
         <Nullable>enable</Nullable>
+        <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
         <!-- Emit the XML documentation file for IntelliSense; CS1591 then flags any undocumented public member. -->
         <GenerateDocumentationFile>true</GenerateDocumentationFile>
     </PropertyGroup>

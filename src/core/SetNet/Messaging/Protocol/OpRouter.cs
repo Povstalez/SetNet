@@ -63,16 +63,16 @@ namespace SetNet.Protocol
     /// </summary>
     internal sealed class OpInvoker
     {
-        private static readonly MethodInfo SerializeDef = typeof(SetNetSerializer).GetMethods()
-            .First(m => m.Name == nameof(SetNetSerializer.Serialize) && m.IsGenericMethodDefinition && m.GetParameters().Length == 1);
-        private static readonly MethodInfo DeserializeDef = typeof(SetNetSerializer).GetMethods()
-            .First(m => m.Name == nameof(SetNetSerializer.Deserialize) && m.IsGenericMethodDefinition && m.GetParameters().Length == 1);
+        private static readonly MethodInfo SerializeDef = typeof(ISerializer).GetMethods()
+            .First(m => m.Name == nameof(ISerializer.Serialize) && m.IsGenericMethodDefinition && m.GetParameters().Length == 1);
+        private static readonly MethodInfo DeserializeDef = typeof(ISerializer).GetMethods()
+            .First(m => m.Name == nameof(ISerializer.Deserialize) && m.IsGenericMethodDefinition && m.GetParameters().Length == 1);
 
         private readonly MethodInfo _method;
         private readonly Func<ChannelRequest, object?>[] _binders;
         private readonly bool _isAsync;
         private readonly ReplyKind _replyKind;
-        private readonly Func<object?, byte[]>? _serialize;
+        private readonly Func<ChannelRequest, object?, byte[]>? _serialize;
 
         public OpInvoker(MethodInfo method)
         {
@@ -97,7 +97,7 @@ namespace SetNet.Protocol
             {
                 _replyKind = ReplyKind.Typed;
                 var ser = SerializeDef.MakeGenericMethod(unwrapped);
-                _serialize = result => (byte[])ser.Invoke(null, new[] { result })!;
+                _serialize = (request, result) => (byte[])ser.Invoke(request.Peer.Runtime.Serializer, new[] { result })!;
             }
         }
 
@@ -108,7 +108,7 @@ namespace SetNet.Protocol
             if (parameterType == typeof(byte[])) return req => req.RawBody;
             // Anything else is the typed request body, deserialized via the app serializer.
             var des = DeserializeDef.MakeGenericMethod(parameterType);
-            return req => des.Invoke(null, new object[] { req.RawBody });
+            return req => des.Invoke(req.Peer.Runtime.Serializer, new object[] { req.RawBody });
         }
 
         public async Task InvokeAsync(object instance, ChannelRequest request)
@@ -141,7 +141,7 @@ namespace SetNet.Protocol
                     await request.ReplyRawAsync((byte[])(result ?? Array.Empty<byte>())).ConfigureAwait(global::SetNet.SetNetSync.ContinueOnCapturedContext);
                     break;
                 case ReplyKind.Typed:
-                    await request.ReplyRawAsync(result == null ? Array.Empty<byte>() : _serialize!(result)).ConfigureAwait(global::SetNet.SetNetSync.ContinueOnCapturedContext);
+                    await request.ReplyRawAsync(result == null ? Array.Empty<byte>() : _serialize!(request, result)).ConfigureAwait(global::SetNet.SetNetSync.ContinueOnCapturedContext);
                     break;
                 case ReplyKind.None:
                     break;

@@ -26,7 +26,7 @@ namespace SetNet.Utils
         private readonly CancellationTokenSource _cts = new CancellationTokenSource();
 
         /// <summary>Handle to the running loop, retained so <see cref="StopAsync"/> can await its completion.</summary>
-        private Task _loopTask;
+        private Task? _loopTask;
 
         /// <summary>
         /// An additional externally-supplied cancellation token that, together with the internal source, can stop
@@ -166,7 +166,7 @@ namespace SetNet.Utils
             public TimeSpan Interval;
 
             /// <summary>The asynchronous work invoked on each tick.</summary>
-            public Func<Task> Action;
+            public Func<Task> Action = null!;
 
             /// <summary>The UTC timestamp at or after which the task should next be dispatched.</summary>
             public DateTime NextExecution;

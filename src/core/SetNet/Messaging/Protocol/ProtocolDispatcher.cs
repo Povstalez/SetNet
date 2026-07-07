@@ -41,7 +41,12 @@ namespace SetNet.Protocol
 
         /// <summary>Handles an inbound envelope on the client: complete an awaiting request, or dispatch a push event.</summary>
         public static Task DispatchClientAsync(byte[] data)
+            => DispatchClientAsync(SetNetRuntime.Default, data);
+
+        /// <summary>Handles an inbound envelope on a scoped runtime.</summary>
+        public static Task DispatchClientAsync(SetNetRuntime runtime, byte[] data)
         {
+            if (runtime == null) throw new ArgumentNullException(nameof(runtime));
             var env = ProtocolEnvelope.Decode(data);
             switch (env.Kind)
             {
@@ -50,7 +55,7 @@ namespace SetNet.Protocol
                     ProtocolCorrelation.Complete(env.Corr, env);
                     break;
                 case ProtocolKind.Event:
-                    ProtocolSubscriptions.Dispatch(env.Channel, env.Op, env.Body);
+                    runtime.ProtocolSubscriptions.Dispatch(env.Channel, env.Op, env.Body);
                     break;
             }
             return Task.CompletedTask;

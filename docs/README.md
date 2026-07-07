@@ -19,8 +19,8 @@ Everything about SetNet in one place. Start here, then dive into a specific guid
 
 SetNet is a **small core** (`SetNet`) plus **optional companion packages** you pull in only when you need them. Every companion is added by **composition** — no base classes to inherit — following the same three-part pattern:
 
-1. `XxxRuntime.Enable()` once at startup (so the package's auto-discovered handlers are found), and register a serializer (`SetNetSerializer.Use(...)`).
-2. `server.UseXxx(...)` and/or `client.UseXxx(...)` to attach the feature.
+1. Configure serialization either on the default runtime (`SetNetSerializer.Use(...)`) or on an explicit `SetNetRuntime` assigned to `Configuration.Runtime`. Call `XxxRuntime.Enable()` when a companion package requires its assembly to be loaded for discovery.
+2. `server.UseXxx(...)` and/or `client.UseXxx(...)` to attach the feature. Endpoint-scoped modules are disposed with the server/client when they register through the core module lifecycle.
 3. Use the returned driver / events. Everything runs alongside your normal `[MessageHandler]` messages on the same connection — packages never conflict (the command/reply/event packages share the one **`SetNet.Protocol`** envelope, demultiplexed by a per-module `Channels` id; a few shape-different packages keep their own reserved ids — see [MODULES.md](MODULES.md)).
 
 ## Which package do I need?
@@ -88,7 +88,7 @@ A recurring question: *why do some APIs hand me `byte[]`?* There are two differe
 
 - **The inter-package envelope** (an RPC correlation id, a room code, a lockstep turn number, an opcode) is **hand-framed as `byte[]`** by each companion package — deliberately, so the package has **no dependency on any serializer**. That's what makes RPC / Rooms / Auth / Matchmaking / StateSync serializer-agnostic (MessagePack-free). You never see this layer.
 
-- **Your game payload** inside the envelope goes through **`SetNetSerializer`** wherever the type is known, so you work with **typed objects**, not bytes:
+- **Your game payload** inside the envelope goes through the endpoint's **`SetNetRuntime` serializer** wherever the type is known, so you work with **typed objects**, not bytes. `SetNetSerializer` is the compatibility façade over `SetNetRuntime.Default`:
   - `client.CallAsync<TReq, TResp>(...)` (Rpc) — typed both ways.
   - `rooms.BroadcastAsync<T>(msg)` — typed send.
   - `client.UseLockstep<TInput>()` — `SubmitInput(TInput)` + `TurnReady` delivers `IReadOnlyDictionary<string, TInput>`.
@@ -96,7 +96,7 @@ A recurring question: *why do some APIs hand me `byte[]`?* There are two differe
 
 - **On receive**, where one type is known you get it typed. Where a channel multiplexes **many types under an id** (e.g. StateSync.Rpc, whose `methodId` selects a different argument type each time), a single generic *event* is impossible — so those packages expose a **typed handler registration** instead:
   - `stateRpc.On<T>(methodId, (…, arg) => …)` and `rooms.On<T>(messageType, (from, msg) => …)` — register a typed handler per id; the payload is deserialized to `T` for you. This is the recommended path (pair with `rooms.BroadcastAsync<T>(messageType, msg)` / `stateRpc.SendAsync<T>(…)`).
-  - A raw **`Received`** / **`MessageReceived`** event remains as a catch-all for ids you didn't register (relays, logging, dynamic dispatch); there the `byte[]` **is** the `SetNetSerializer` output, so you decode it with `SetNetSerializer.Deserialize<T>(payload)`.
+  - A raw **`Received`** / **`MessageReceived`** event remains as a catch-all for ids you didn't register (relays, logging, dynamic dispatch); there the `byte[]` **is** serializer output, so decode it with `SetNetSerializer.Deserialize<T>(payload)` on the default runtime or `runtime.Deserialize<T>(payload)` in scoped code.
 
 Rule of thumb: **register a typed `On<T>` handler / use the typed `<T>` overload** when one exists; only drop to the raw `byte[]` event for advanced/relay scenarios.
 

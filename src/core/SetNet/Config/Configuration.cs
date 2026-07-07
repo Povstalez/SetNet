@@ -15,7 +15,7 @@ namespace SetNet.Config
     public class Configuration
     {
         /// <summary>Gets or sets the remote host name or IP address to connect to (client) or bind to (server).</summary>
-        public string Host { get; set; }
+        public string Host { get; set; } = string.Empty;
 
         /// <summary>Gets or sets the TCP port used for the primary connection.</summary>
         public int Port { get; set; }
@@ -81,6 +81,12 @@ namespace SetNet.Config
 
         /// <summary>Gets or sets the logging sink used throughout the library. Defaults to a <see cref="ConsoleLogger"/>; set to a custom <see cref="ILogger"/> to redirect diagnostics.</summary>
         public ILogger Logger { get; set; } = new ConsoleLogger();
+
+        /// <summary>
+        /// Runtime state used by this endpoint: serializer, handler registration, and runtime-scoped modules.
+        /// Defaults to <see cref="SetNetRuntime.Default"/> for backwards compatibility.
+        /// </summary>
+        public global::SetNet.SetNetRuntime Runtime { get; set; } = global::SetNet.SetNetRuntime.Default;
 
         /// <summary>
         /// A custom transport provider, used when <see cref="TransportType"/> is <see cref="Core.Transport.TransportType.Custom"/>
@@ -245,6 +251,8 @@ namespace SetNet.Config
         /// </exception>
         public void Validate()
         {
+            if (Runtime == null)
+                throw new InvalidOperationException("Configuration.Runtime must be set.");
             if (string.IsNullOrWhiteSpace(Host))
                 throw new InvalidOperationException("Configuration.Host must be set.");
             if (Port < 1 || Port > 65535)
@@ -282,6 +290,18 @@ namespace SetNet.Config
                     throw new InvalidOperationException(
                         $"Configuration.UdpSimulatedLossPercent ({UdpSimulatedLossPercent}) must be in 0..100.");
             }
+        }
+
+        /// <summary>Runs production-readiness checks and returns warnings/errors without throwing.</summary>
+        public ConfigurationIssue[] AnalyzeProduction() => ConfigurationAnalyzer.Analyze(this, production: true);
+
+        /// <summary>Throws if production-readiness checks find an error-level issue.</summary>
+        public void ValidateProduction()
+        {
+            var issues = AnalyzeProduction();
+            foreach (var issue in issues)
+                if (issue.Severity == ConfigurationIssueSeverity.Error)
+                    throw new InvalidOperationException(issue.Message);
         }
     }
 }

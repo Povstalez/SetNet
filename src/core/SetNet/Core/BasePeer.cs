@@ -22,6 +22,9 @@ namespace SetNet.Core
         /// <summary>The remote endpoint (IP + port) this peer connected from, or <c>null</c> if the transport doesn't expose it.</summary>
         public System.Net.IPEndPoint? RemoteEndPoint => CurrentPeerInfo.RemoteEndPoint;
 
+        /// <summary>The runtime state used by this peer.</summary>
+        public SetNetRuntime Runtime => CurrentPeerInfo.Config.Runtime;
+
         /// <summary>True while a server-initiated <see cref="Close"/> is in progress, so the receive loop treats the teardown as intentional and skips the unexpected-disconnect path.</summary>
         private volatile bool _isIntentionalClose;
 
@@ -268,7 +271,7 @@ namespace SetNet.Core
         /// <returns>A task that completes once the message has been handed to the transport.</returns>
         /// <exception cref="InvalidOperationException">Thrown if the peer is closing or its connection is no longer connected.</exception>
         public Task SendAsync<T>(ushort type, T message, DeliveryMethod delivery, byte channel)
-            => SendRawAsync(type, SetNetSerializer.Serialize(message), delivery, channel);
+            => SendRawAsync(type, Runtime.Serialize(message), delivery, channel);
 
         /// <summary>
         /// Sends an already-serialized payload to this client using the configured default delivery, <b>without

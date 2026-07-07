@@ -68,10 +68,16 @@ namespace SetNet.Core
         private UdpServerListener? _udpListener;
 
         /// <summary>Signals the accept loop and registered listeners to stop; also acts as the "already started" flag.</summary>
-        private CancellationTokenSource _cts;
+        private CancellationTokenSource? _cts;
 
         /// <summary>Guards against double-dispose.</summary>
         private bool _disposed;
+
+        /// <summary>Endpoint-scoped module resources disposed with this server.</summary>
+        private readonly List<IDisposable> _modules = new List<IDisposable>();
+
+        /// <summary>Guards <see cref="_modules"/>.</summary>
+        private readonly object _modulesLock = new object();
 
         /// <summary>Set once <see cref="StopAsync"/>/<see cref="Dispose(bool)"/> has cleared the pool, so a peer accepted concurrently is not registered (and leaked) after shutdown. Guarded by the <c>_clients</c> lock.</summary>
         private bool _stopped;
@@ -87,9 +93,12 @@ namespace SetNet.Core
         protected BaseServer(Configuration config)
         {
             _config = config;
-            _commandExecutor = new ServerCommandExecutor();
+            _commandExecutor = new ServerCommandExecutor(config.Runtime);
             _rateLimiter = new RateLimiter(config.MaxConnectionsPerIpPerSecond);
         }
+
+        /// <summary>The runtime state used by this server.</summary>
+        public SetNetRuntime Runtime => _config.Runtime;
 
         /// <summary>
         /// Starts the server and runs the accept loop, creating and registering a peer for every incoming
@@ -110,26 +119,28 @@ namespace SetNet.Core
                 throw new InvalidOperationException("Server is already started or starting.");
             _config.Validate();
 
-            _cts = new CancellationTokenSource();
+            var cts = new CancellationTokenSource();
+            _cts = cts;
+            _stopped = false;
 
             if (_config.TransportType == TransportType.Both)
             {
-                await StartBothAsync().ConfigureAwait(false);
+                await StartBothAsync(cts).ConfigureAwait(false);
                 return;
             }
 
             _listener = TransportFactory.CreateListener(_config);
             _listener.Start();
-            _cts.Token.Register(() => _listener.Stop());
+            cts.Token.Register(() => _listener.Stop());
 
             _config.Logger.Log($"Server started on {_config.Host}:{_config.Port}", global::SetNet.Logging.LogLevel.Info);
 
-            while (!_cts.IsCancellationRequested)
+            while (!cts.IsCancellationRequested)
             {
                 AcceptedConnection? accepted;
                 try
                 {
-                    accepted = await _listener.AcceptAsync(_cts.Token).ConfigureAwait(false);
+                    accepted = await _listener.AcceptAsync(cts.Token).ConfigureAwait(false);
                 }
                 catch (OperationCanceledException) { break; }
                 catch (Exception ex)
@@ -203,6 +214,18 @@ namespace SetNet.Core
             get { lock (_clients) return _clients.Count; }
         }
 
+        /// <summary>Registers a server-scoped module/resource to dispose with this server.</summary>
+        public T RegisterModule<T>(T module) where T : IDisposable
+        {
+            if (module == null) throw new ArgumentNullException(nameof(module));
+            lock (_modulesLock)
+            {
+                if (_disposed) throw new ObjectDisposedException(nameof(BaseServer));
+                _modules.Add(module);
+            }
+            return module;
+        }
+
         /// <summary>True when the peer pool has reached <see cref="Configuration.EffectiveMaxConnections"/>.</summary>
         private bool IsAtCapacity()
         {
@@ -223,7 +246,7 @@ namespace SetNet.Core
         /// </remarks>
         // Both mode: accept TCP peers, then hand each one a UDP bind token over TCP and bind
         // the subsequent UDP handshake (matched by token) to that same peer.
-        private async Task StartBothAsync()
+        private async Task StartBothAsync(CancellationTokenSource cts)
         {
             var tcp = new TcpListenerAdapter(_config);
             var udp = new UdpServerListener(_config, boundMode: true);
@@ -231,18 +254,18 @@ namespace SetNet.Core
             _udpListener = udp;
             tcp.Start();
             udp.Start();
-            _cts.Token.Register(() => { tcp.Stop(); udp.Stop(); });
+            cts.Token.Register(() => { tcp.Stop(); udp.Stop(); });
 
             _config.Logger.Log(
                 $"Server started (Both) on tcp {_config.Host}:{_config.Port} / udp {_config.EffectiveUdpPort}",
                 global::SetNet.Logging.LogLevel.Info);
 
-            while (!_cts.IsCancellationRequested)
+            while (!cts.IsCancellationRequested)
             {
                 AcceptedConnection? accepted;
                 try
                 {
-                    accepted = await tcp.AcceptAsync(_cts.Token).ConfigureAwait(false);
+                    accepted = await tcp.AcceptAsync(cts.Token).ConfigureAwait(false);
                 }
                 catch (OperationCanceledException) { break; }
                 catch (Exception ex)
@@ -441,6 +464,7 @@ namespace SetNet.Core
             }
             foreach (var client in snapshot)
                 client.Close();
+            DisposeModules();
 
             _config.Logger.Log("Server stopped", global::SetNet.Logging.LogLevel.Info);
             return Task.CompletedTask;
@@ -516,7 +540,23 @@ namespace SetNet.Core
             }
             foreach (var client in snapshot) // close outside the lock over a copy (see StopAsync)
                 client.Close();
+            DisposeModules();
             _cts?.Dispose();
+        }
+
+        private void DisposeModules()
+        {
+            IDisposable[] modules;
+            lock (_modulesLock)
+            {
+                modules = _modules.ToArray();
+                _modules.Clear();
+            }
+
+            for (var i = modules.Length - 1; i >= 0; i--)
+            {
+                try { modules[i].Dispose(); } catch { }
+            }
         }
     }
 }

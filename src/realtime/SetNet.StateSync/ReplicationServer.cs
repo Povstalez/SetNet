@@ -218,6 +218,7 @@ namespace SetNet.StateSync
             if (server == null) throw new ArgumentNullException(nameof(server));
             var world = new ServerReplication(server, options ?? new StateSyncOptions());
             Servers[server] = world;
+            server.RegisterModule(world);
             return world;
         }
 

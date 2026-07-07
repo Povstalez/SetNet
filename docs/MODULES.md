@@ -1,8 +1,13 @@
 # SetNet modules — implemented & planned
 
+> Maturity matters: the core and several companion packages are intended as stable library surface, while many
+> gameplay/domain packages are reference implementations that you should adapt to your product rules. See
+> [MODULE_STATUS.md](MODULE_STATUS.md) before choosing packages for production.
+
 SetNet is a small core plus optional **companion packages** added by composition. Each depends only on `SetNet`
 (unless noted) and is wired by an `xxxRuntime.Enable()` call + `server.UseXxx()` / `client.UseXxx()` extensions,
-so the core stays lean and users pull only what they need.
+so the core stays lean and users pull only what they need. Simple apps can keep using the default runtime;
+plugin hosts and multi-stack tests can use an explicit `SetNetRuntime` on `Configuration.Runtime`.
 
 **Unified messaging (`SetNet.Protocol`, in core).** Every command/reply/event companion module below speaks the
 same three verbs over one shared envelope wire id (`ProtocolTypes.Envelope`), demultiplexed by a per-module
@@ -167,13 +172,15 @@ Grouped by purpose (mirrors the `src/<category>/` layout). Each depends only on 
 | **SetNet.StateSync.Godot** | Godot 4 replication components: NetworkObject/Transform/AnimationPlayer/RigidBody/Behaviour + NetworkManager (deps `SetNet.StateSync` + `SetNet.Godot` + `GodotSharp`) |
 
 ### Core extension points already in place (for composition packages)
-- `SetNetSerializer.Use/Serialize/Deserialize` — pluggable serialization.
-- Auto-discovered typed **and** `byte[]` handlers (`IServer/ClientMessageHandler<T>`) via `[MessageHandler]`.
-- **Unified messaging protocol** (`SetNet.Protocol`, in core): `client.RequestAsync/PostAsync/On<T>` + server `[ProtocolChannel] IChannelService` + `peer.PublishRawAsync` — one envelope wire id, per-module `Channels`, shared correlation + subscription registries. The composition layer most game modules build on.
+- `SetNetRuntime` — scoped serializer, handler registry, protocol subscriptions, and long-lived module lifetime. `SetNetRuntime.Default` preserves the historical process-wide behavior.
+- `SetNetSerializer.Use/Serialize/Deserialize` — compatibility façade over `SetNetRuntime.Default`; scoped endpoints should prefer `Configuration.Runtime`.
+- Auto-discovered or explicit typed **and** `byte[]` handlers (`IServer/ClientMessageHandler<T>`) via `[MessageHandler]` and `SetNetRuntime.Handlers`.
+- **Unified messaging protocol** (`SetNet.Protocol`, in core): `client.RequestAsync/PostAsync/On<T>` + server `[ProtocolChannel] IChannelService` + `peer.PublishRawAsync` — one envelope wire id, per-module `Channels`, shared correlation + runtime-scoped subscription registries. The composition layer most game modules build on.
 - `BaseClient/BasePeer.SendAsync<T>` and `SendRawAsync` — **public**.
 - `BaseSocket.OnRawFrame` (intercept/consume) + `SendRawAsync` — relay/proxy primitive.
 - `BaseServer.InboundAuthorizer` + `BaseSocket.AllowInbound` — per-frame inbound gate.
 - `BaseClient.Connected` event (after connect+reconnect), `BaseServer.PeerDisconnected` + `BaseServer.PeerConnected` events (once per peer).
+- `BaseServer.RegisterModule` / `BaseClient.RegisterModule` — tie module cleanup to endpoint lifetime; `SetNetRuntime.RegisterModule` covers process/runtime-level resources.
 - Public `BasePeer.CurrentPeerInfo` + `PeerInfo.Server`; `PeerInfo.RemoteEndPoint` + `BasePeer.RemoteEndPoint` (used by BanList/DdosGuard/Inspector/Gateway).
 - `BaseSocket.InjectFrame(type, data)` — feed a reconstructed frame into normal dispatch (used by Fragmentation reassembly; also relays/testing).
 - `HandlerActivator.Factory` — route handler construction through a container (used by DependencyInjection; default falls back to the parameterless ctor).

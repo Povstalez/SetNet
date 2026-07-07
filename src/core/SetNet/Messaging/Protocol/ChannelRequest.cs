@@ -42,8 +42,8 @@ namespace SetNet.Protocol
             RawBody = rawBody ?? Array.Empty<byte>();
         }
 
-        /// <summary>Deserializes the body into <typeparamref name="T"/> via the app's <see cref="SetNetSerializer"/>.</summary>
-        public T Read<T>() => SetNetSerializer.Deserialize<T>(RawBody);
+        /// <summary>Deserializes the body into <typeparamref name="T"/> via the peer runtime serializer.</summary>
+        public T Read<T>() => Peer.Runtime.Deserialize<T>(RawBody);
 
         /// <summary>Sends a raw (already-framed) reply body back to the caller. Serializer-agnostic. Call at most once.</summary>
         public Task ReplyRawAsync(byte[] body)
@@ -54,7 +54,7 @@ namespace SetNet.Protocol
         }
 
         /// <summary>Serializes <paramref name="response"/> via the app's serializer and sends it as the reply. Call at most once.</summary>
-        public Task ReplyAsync<T>(T response) => ReplyRawAsync(SetNetSerializer.Serialize(response));
+        public Task ReplyAsync<T>(T response) => ReplyRawAsync(Peer.Runtime.Serialize(response));
 
         /// <summary>Sends an error reply the caller re-throws as a <see cref="ProtocolException"/>. Used by the dispatcher; also callable by a service.</summary>
         public Task ReplyErrorAsync(string message)

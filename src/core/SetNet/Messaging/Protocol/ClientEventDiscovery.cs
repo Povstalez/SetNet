@@ -18,25 +18,27 @@ namespace SetNet.Protocol
     /// </summary>
     internal static class ClientEventDiscovery
     {
-        private static int _done;   // 0 = not yet discovered
+        private static readonly HashSet<ProtocolSubscriptionRegistry> Done = new HashSet<ProtocolSubscriptionRegistry>();
         private static readonly object Gate = new object();
 
-        private static readonly MethodInfo DeserializeDef = typeof(SetNetSerializer).GetMethods()
-            .First(m => m.Name == nameof(SetNetSerializer.Deserialize) && m.IsGenericMethodDefinition && m.GetParameters().Length == 1);
+        private static readonly MethodInfo DeserializeDef = typeof(ISerializer).GetMethods()
+            .First(m => m.Name == nameof(ISerializer.Deserialize) && m.IsGenericMethodDefinition && m.GetParameters().Length == 1);
 
         /// <summary>Scans and auto-subscribes once; a no-op after the first call.</summary>
-        public static void EnsureDiscovered()
+        public static void EnsureDiscovered() => EnsureDiscovered(SetNetRuntime.Default.ProtocolSubscriptions);
+
+        /// <summary>Scans and auto-subscribes into a runtime-scoped subscription registry once.</summary>
+        public static void EnsureDiscovered(ProtocolSubscriptionRegistry registry)
         {
-            if (Volatile.Read(ref _done) != 0) return;
+            if (registry == null) throw new ArgumentNullException(nameof(registry));
             lock (Gate)
             {
-                if (_done != 0) return;
-                Scan();
-                Volatile.Write(ref _done, 1);
+                if (!Done.Add(registry)) return;
+                Scan(registry);
             }
         }
 
-        private static void Scan()
+        private static void Scan(ProtocolSubscriptionRegistry registry)
         {
             foreach (var assembly in AppDomain.CurrentDomain.GetAssemblies())
             {
@@ -61,13 +63,13 @@ namespace SetNet.Protocol
                     {
                         var ev = method.GetCustomAttribute<EventAttribute>()!;
                         // The returned IDisposable is intentionally not kept: attribute handlers live for the process.
-                        ProtocolSubscriptions.Add(channel.Channel, ev.Op, BuildCallback(instance, method));
+                        registry.Add(channel.Channel, ev.Op, BuildCallback(registry, instance, method));
                     }
                 }
             }
         }
 
-        private static Action<byte[]> BuildCallback(object instance, MethodInfo method)
+        private static Action<byte[]> BuildCallback(ProtocolSubscriptionRegistry registry, object instance, MethodInfo method)
         {
             var parameters = method.GetParameters();
             if (parameters.Length == 0)
@@ -80,7 +82,7 @@ namespace SetNet.Protocol
                     return body => Invoke(method, instance, new object?[] { body });
 
                 var des = DeserializeDef.MakeGenericMethod(pt);
-                return body => Invoke(method, instance, new object?[] { des.Invoke(null, new object[] { body }) });
+                return body => Invoke(method, instance, new object?[] { des.Invoke(registry.Runtime.Serializer, new object[] { body }) });
             }
 
             throw new InvalidOperationException(

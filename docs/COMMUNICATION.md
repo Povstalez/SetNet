@@ -44,13 +44,13 @@ items) + **StateSync** (positions, unreliable) + a **custom Protocol channel** (
 
 ## Layer 1 — Core: typed & raw one-way messages
 
-The lowest level. A global `ushort` message-type space, one handler per type, fire-and-forget in both directions.
+The lowest level. A `ushort` message-type space, one handler per type, fire-and-forget in both directions.
 Use it for your own top-level message types, relays, or **unreliable hot-path** traffic.
 
 ### Send (client and peer are symmetric)
 
 ```csharp
-// Typed — serialized with your SetNetSerializer
+// Typed — serialized with the endpoint's SetNetRuntime serializer
 await client.SendAsync<MyMsg>((ushort)MyType.Move, msg);                              // default delivery
 await client.SendAsync<MyMsg>((ushort)MyType.Move, msg, DeliveryMethod.Unreliable);   // pick reliability
 await client.SendAsync<MyMsg>((ushort)MyType.Move, msg, DeliveryMethod.Reliable, channel: 1); // reliable-UDP lane
@@ -61,7 +61,7 @@ await peer.SendAsync<MyMsg>((ushort)MyType.State, msg);   // server → this cli
 await client.SendRawAsync((ushort)MyType.Move, bytes, DeliveryMethod.Reliable);
 ```
 
-### Receive — auto-discovered handlers
+### Receive — auto-discovered or explicit handlers
 
 ```csharp
 [MessageHandler((ushort)MyType.Move)]
@@ -176,7 +176,7 @@ A class implementing `IChannelService` keeps manual control and its `[Op]` metho
 
 ### Rules of the road
 
-- **Raw vs typed.** Typed overloads serialize via `SetNetSerializer` — so `T` must be serializable by your
+- **Raw vs typed.** Typed overloads serialize via the endpoint's `SetNetRuntime` serializer — so `T` must be serializable by your
   serializer (with MessagePack `StandardResolver` that means `[MessagePackObject]`/`[Key]` on your DTOs; or use
   `SetNet.Json`). Raw (`*RawAsync`, `OnRaw`, `RawBody`) is serializer-agnostic.
 - **Reliability.** `Request*` and `Publish*` are always **Reliable**. Only `Post*` lets you pick `Unreliable`. For
@@ -185,9 +185,9 @@ A class implementing `IChannelService` keeps manual control and its `[Op]` metho
   `ProtocolException` (modules re-map it to their own type, e.g. `RoomException`).
 - **Channels.** Shipped modules use ids in `Channels` (1–24). For **your own** channel, pick a distinct `ushort`
   (e.g. `1000+`) — the channel space is independent of the core `ushort` message-type space.
-- **Discovery.** `[ProtocolChannel]` services and `[Event]` handlers are found by scanning loaded assemblies; make
-  sure your assembly is loaded before first use (your app assembly always is; module assemblies load via
-  `xxxRuntime.Enable()` / `UseXxx`).
+- **Discovery.** `[MessageHandler]`, `[ProtocolChannel]`, and `[Event]` types are found by scanning loaded assemblies
+  by default. For deterministic plugin hosts/tests, set `runtime.Handlers.AutoDiscoverLoadedAssemblies = false`,
+  register handler assemblies explicitly, and assign the runtime to `Configuration.Runtime`.
 
 ---
 
@@ -460,7 +460,7 @@ using SetNet.Inventory;
 using SetNet.Protocol;
 using SetNet.Rooms;
 
-// startup (once)
+// startup (once): configures SetNetRuntime.Default; scoped apps can use runtime.UseSerializer(...)
 SetNetSerializer.Use(new MessagePackNetSerializer());
 RoomsRuntime.Enable(); InventoryRuntime.Enable();   // load module assemblies for discovery
 

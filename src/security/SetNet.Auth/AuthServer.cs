@@ -67,10 +67,20 @@ namespace SetNet.Auth
             var previous = server.InboundAuthorizer;
             server.InboundAuthorizer = (peer, type) =>
                 (previous == null || previous(peer, type)) && (type == AuthTypes.Request || state.IsAuthenticated(peer));
+            server.RegisterModule(new AuthServerRegistration(server));
         }
 
         internal static AuthServerState? Get(BaseServer? server)
             => server != null && _servers.TryGetValue(server, out var state) ? state : null;
+
+        private sealed class AuthServerRegistration : IDisposable
+        {
+            private readonly BaseServer _server;
+
+            public AuthServerRegistration(BaseServer server) => _server = server;
+
+            public void Dispose() => _servers.TryRemove(_server, out _);
+        }
     }
 
     /// <summary>

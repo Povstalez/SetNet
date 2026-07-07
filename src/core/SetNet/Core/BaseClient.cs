@@ -49,6 +49,12 @@ namespace SetNet.Core
         /// <summary>Guards against use-after-dispose and double-dispose.</summary>
         private bool _disposed;
 
+        /// <summary>Endpoint-scoped module resources disposed with this client.</summary>
+        private readonly System.Collections.Generic.List<IDisposable> _modules = new System.Collections.Generic.List<IDisposable>();
+
+        /// <summary>Guards <see cref="_modules"/>.</summary>
+        private readonly object _modulesLock = new object();
+
         /// <summary>
         /// Serializes connection-lifecycle transitions: the cancellation-source swap (connect/reconnect) and the
         /// teardown classification, so <see cref="Disconnect"/>, the receive-loop finally, the heartbeat tick, and
@@ -68,6 +74,9 @@ namespace SetNet.Core
         /// </summary>
         public ConnectionState State => _state;
 
+        /// <summary>The runtime state used by this client.</summary>
+        public SetNetRuntime Runtime => _config.Runtime;
+
         /// <summary>
         /// Initializes the client with its configuration, builds the client-side handler registry via
         /// reflection, and creates the transport connector appropriate to the configured transport type.
@@ -77,7 +86,7 @@ namespace SetNet.Core
         protected BaseClient(Configuration config) : base()
         {
             _config = config;
-            _commandExecutor = new ClientCommandExecutor();
+            _commandExecutor = new ClientCommandExecutor(config.Runtime);
             _connector = TransportFactory.CreateConnector(config);
             InitDispatchGate(config.MaxInFlightMessages, config.SequentialDispatch);
         }
@@ -473,7 +482,7 @@ namespace SetNet.Core
         /// <exception cref="ObjectDisposedException">Thrown if the client has been disposed.</exception>
         /// <exception cref="InvalidOperationException">Thrown if the client is not currently in the Connected state.</exception>
         public Task SendAsync<T>(ushort type, T message, DeliveryMethod delivery, byte channel)
-            => SendRawAsync(type, SetNetSerializer.Serialize(message), delivery, channel);
+            => SendRawAsync(type, Runtime.Serialize(message), delivery, channel);
 
         /// <summary>
         /// Sends an already-serialized payload to the server using the configured default delivery, <b>without
@@ -514,6 +523,18 @@ namespace SetNet.Core
         /// </summary>
         /// <returns>A task that completes once buffered data has been written.</returns>
         protected Task FlushAsync() => Connection?.FlushAsync() ?? Task.CompletedTask;
+
+        /// <summary>Registers a client-scoped module/resource to dispose with this client.</summary>
+        public T RegisterModule<T>(T module) where T : IDisposable
+        {
+            if (module == null) throw new ArgumentNullException(nameof(module));
+            lock (_modulesLock)
+            {
+                if (_disposed) throw new ObjectDisposedException(nameof(BaseClient));
+                _modules.Add(module);
+            }
+            return module;
+        }
 
         /// <summary>
         /// Binds every reflection-discovered client handler to its wire type id on the message processor.
@@ -593,11 +614,27 @@ namespace SetNet.Core
             Disconnect();
             if (_heartbeatScheduled) TimerScheduler.Shared.Unschedule(_heartbeatTickId);
             Connection?.Dispose();
+            DisposeModules();
             DisposeDispatch();
             lock (_lifecycleLock)
             {
                 _cancellationTokenSource?.Dispose();
                 _cancellationTokenSource = null;
+            }
+        }
+
+        private void DisposeModules()
+        {
+            IDisposable[] modules;
+            lock (_modulesLock)
+            {
+                modules = _modules.ToArray();
+                _modules.Clear();
+            }
+
+            for (var i = modules.Length - 1; i >= 0; i--)
+            {
+                try { modules[i].Dispose(); } catch { }
             }
         }
 

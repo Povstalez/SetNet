@@ -29,7 +29,7 @@ namespace SetNet.Events
         /// The logger used to record handler exceptions. When <c>null</c>, a <see cref="NoOpLogger"/> is used so
         /// the rest of the class can log unconditionally without null checks.
         /// </param>
-        public EventManager(ILogger logger = null)
+        public EventManager(ILogger? logger = null)
         {
             _logger = logger ?? new NoOpLogger();
         }

@@ -98,6 +98,7 @@ namespace SetNet.Rooms
             var state = new RoomServerState { Store = store ?? new MemoryRoomStore(), Hooks = RoomHooks(server) };
             _servers[server] = state;
             server.PeerDisconnected += peer => _ = SafeLeave(state, peer);
+            server.RegisterModule(new RoomServerRegistration(server));
         }
 
         /// <summary>Gets the server-side room lifecycle events for this server (peer joined/left a room). Used by companion packages such as host migration.</summary>
@@ -114,6 +115,19 @@ namespace SetNet.Rooms
 
         internal static RoomServerState? Get(BaseServer? server)
             => server != null && _servers.TryGetValue(server, out var state) ? state : null;
+
+        private sealed class RoomServerRegistration : IDisposable
+        {
+            private readonly BaseServer _server;
+
+            public RoomServerRegistration(BaseServer server) => _server = server;
+
+            public void Dispose()
+            {
+                _servers.TryRemove(_server, out _);
+                _hooks.TryRemove(_server, out _);
+            }
+        }
     }
 
     /// <summary>

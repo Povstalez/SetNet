@@ -26,7 +26,7 @@ namespace SetNet.Core.Transport.Tcp
         /// Server settings providing the bind <see cref="Configuration.Host"/> (parsed as an IP address) and
         /// <see cref="Configuration.Port"/>, plus the <see cref="Configuration.BufferSize"/> passed to accepted connections.
         /// </param>
-        /// <exception cref="FormatException">Thrown by <see cref="IPAddress.Parse"/> if <see cref="Configuration.Host"/> is not a valid IP address.</exception>
+        /// <exception cref="FormatException">Thrown when <see cref="Configuration.Host"/> is not a valid IP address.</exception>
         public TcpListenerAdapter(Configuration config)
         {
             _config = config;

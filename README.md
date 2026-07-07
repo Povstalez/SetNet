@@ -44,9 +44,9 @@ await SendAsync(MsgType.Position, position, DeliveryMethod.Unreliable);
 - 🔄 **Lifecycle done right** — intentional vs unexpected disconnects, auto-reconnect hooks, heartbeat liveness; `OnDisconnected` fires exactly once.
 - ⚡ **Fast** — ~**1.6M msgs/sec** on one connection with send batching, ~10 KB per endpoint; allocation-light hot paths.
 - 🔒 **Production-hardened** — TLS over TCP, connection/UDP-peer caps, per-IP rate limiting, frame-size cap, back-pressure, bounded inbound queues (OOM protection), a resilient accept loop, and live `NetworkMetrics`.
-- 🧩 **Auto handler registration** — mark a class `[MessageHandler(type)]`; reflection wires it up. Handlers are **strongly typed** — `IServerMessageHandler<T>`/`IClientMessageHandler<T>` receive the deserialized message; the library (de)serializes for you.
+- 🧩 **Typed handlers** — mark a class `[MessageHandler(type)]` for discovery or register it explicitly on `SetNetRuntime.Handlers`. Handlers are **strongly typed** — `IServerMessageHandler<T>`/`IClientMessageHandler<T>` receive the deserialized message; the library (de)serializes for you.
 - 🔀 **Raw relay escape hatch** — override `OnRawFrame(type, data)` to intercept frames and `SendRawAsync` to forward bytes **without (de)serializing** — build an Among Us-style relay/proxy with zero overhead, while normal handlers stay typed.
-- 📦 **Pluggable serialization** — the core bundles no serializer. Pick a format via `ISerializer`: drop in the `SetNet.MessagePack` package (hardened MessagePack), or supply your own JSON/Protobuf/custom adapter, and register it once with `SetNetSerializer.Use(...)`.
+- 📦 **Pluggable serialization** — the core bundles no serializer. Pick a format via `ISerializer`: drop in the `SetNet.MessagePack` package (hardened MessagePack), or supply your own JSON/Protobuf/custom adapter. Use `SetNetSerializer.Use(...)` for the default runtime or `SetNetRuntime` for scoped endpoints.
 - 📞 **Optional RPC** — add the [`SetNet.Rpc`](https://www.nuget.org/packages/SetNet.Rpc) package for request/response: `await client.CallAsync<TReq, TResp>(...)` + `[RpcMethod]` handlers. Added by composition (no base class), coexists with one-way messages.
 - 🔐 **Optional Auth + sessions** — add [`SetNet.Auth`](https://www.nuget.org/packages/SetNet.Auth): an enforced gate drops a peer's traffic until it authenticates (you validate the token via `IAuthenticator`), plus session store, multi-session policy, and automatic reconnect-resume. Composition, over TLS.
 - 🏠 **Optional Rooms/Lobbies** — add [`SetNet.Rooms`](https://www.nuget.org/packages/SetNet.Rooms): create/join rooms by code, broadcast within a room, player-joined/left events, auto-leave on disconnect. Dedicated-server (no relay needed), pluggable room store.
@@ -60,7 +60,7 @@ await SendAsync(MsgType.Position, position, DeliveryMethod.Unreliable);
 
 ## Modules
 
-The core is one package (`SetNet`); everything else is an **optional companion** added by composition — pull in only what you need. Each package name links to its **README**; the 📦 links to **NuGet** (install with `dotnet add package <name>`). Full catalog + core extension points: **[docs/MODULES.md](docs/MODULES.md)**.
+The core is one package (`SetNet`); everything else is an **optional companion** added by composition — pull in only what you need. Each package name links to its **README**; the 📦 links to **NuGet** (install with `dotnet add package <name>`). Full catalog + core extension points: **[docs/MODULES.md](docs/MODULES.md)**. Package maturity is tracked in **[docs/MODULE_STATUS.md](docs/MODULE_STATUS.md)**.
 
 **Core & serializers**
 
@@ -175,11 +175,34 @@ dotnet add package SetNet
 dotnet add package SetNet.MessagePack
 ```
 
-Then register the serializer once at startup, before connecting:
+Then configure a serializer before connecting. The shortest path uses the default process-wide runtime:
 
 ```csharp
 SetNetSerializer.Use(new MessagePackNetSerializer());   // from SetNet.MessagePack
 ```
+
+For tests, plugin hosts, or apps that run several isolated SetNet environments in one process, create an explicit
+`SetNetRuntime` and put it on the `Configuration` instead of using global state:
+
+```csharp
+using SetNet;
+using SetNet.Config;
+using SetNet.MessagePack;
+
+var runtime = new SetNetRuntime()
+    .UseSerializer(new MessagePackNetSerializer());
+
+runtime.Handlers.AutoDiscoverLoadedAssemblies = false;
+runtime.Handlers.AddServerHandler<ChatMessage, ChatHandler>((ushort)MsgType.Chat);
+
+var serverConfig = ConfigurationPresets.Development("0.0.0.0", 5000);
+serverConfig.Runtime = runtime;
+
+var clientConfig = ConfigurationPresets.Development("127.0.0.1", 5000);
+clientConfig.Runtime = runtime;
+```
+
+`SetNetSerializer.Use(...)` is still supported; it configures `SetNetRuntime.Default`.
 
 Packages ship to **NuGet.org** (public, no auth) and to **GitHub Packages**. To use the GitHub Packages feed, copy [`docs/nuget.config.example`](docs/nuget.config.example) to your solution as `nuget.config` and set `GITHUB_PACKAGES_PAT` (a token with `read:packages`) — see [docs/README.md](docs/README.md#installing-from-github-packages).
 
@@ -235,7 +258,7 @@ await client.ConnectAsync();
 await client.SayAsync("hello");
 ```
 
-**4. Handle messages** (auto-discovered, strongly typed — the library deserializes for you):
+**4. Handle messages** (auto-discovered or explicitly registered, strongly typed — the library deserializes for you):
 
 ```csharp
 [MessageHandler((ushort)MsgType.Chat)]
@@ -253,13 +276,22 @@ A full runnable chat (separate server + client processes) is in [`examples/`](ex
 
 ## Serialization
 
-The core library **bundles no serializer** — you choose the format behind the `ISerializer` seam and register it once at startup.
+The core library **bundles no serializer** — you choose the format behind the `ISerializer` seam and register it before an endpoint starts. You can configure the backward-compatible default runtime with `SetNetSerializer.Use(...)`, or use a scoped `SetNetRuntime` per server/client configuration.
 
 **MessagePack** (recommended) via the `SetNet.MessagePack` package — `MessagePackNetSerializer` is hardened with the `UntrustedData` security profile (deserialization-DoS protection):
 
 ```csharp
 using SetNet.MessagePack;
 SetNetSerializer.Use(new MessagePackNetSerializer());   // once, at startup
+```
+
+Scoped runtime:
+
+```csharp
+var runtime = new SetNetRuntime()
+    .UseSerializer(new MessagePackNetSerializer());
+
+var config = new Configuration { Host = "127.0.0.1", Port = 5000, Runtime = runtime };
 ```
 
 **Or your own format** (JSON, Protobuf, MemoryPack, …) — implement `ISerializer`:
@@ -271,10 +303,10 @@ public sealed class JsonSerializer : ISerializer
     public T Deserialize<T>(byte[] data) => System.Text.Json.JsonSerializer.Deserialize<T>(data)!;
 }
 
-SetNetSerializer.Use(new JsonSerializer());             // once, at startup
+SetNetSerializer.Use(new JsonSerializer());             // default runtime, once at startup
 ```
 
-Handlers are **strongly typed** — they receive the deserialized message directly (`IServerMessageHandler<ChatMessage>` → `HandleAsync(peer, ChatMessage msg)`); the library serializes on send and deserializes on receive through this one registered serializer. Both ends of a connection must use the same serializer. (Until one is registered, send/receive throws a clear "configure a serializer" error.)
+Handlers are **strongly typed** — they receive the deserialized message directly (`IServerMessageHandler<ChatMessage>` → `HandleAsync(peer, ChatMessage msg)`); the library serializes on send and deserializes on receive through the endpoint's `Configuration.Runtime`. Both ends of one connection must use the same serializer. Different runtimes can use different serializers on different ports/tests. Until a serializer is registered, send/receive throws a clear "configure a serializer" error.
 
 ## Transport selection
 
@@ -314,7 +346,11 @@ Enable: `AutoReconnect = true`, `HeartbeatEnabled = true` (both off by default).
 ## Production hardening
 
 ```csharp
-var config = new Configuration
+var config = ConfigurationPresets.ProductionTcp("0.0.0.0", 5000);
+config.ServerCertificate = cert;
+
+// Or build it manually:
+config = new Configuration
 {
     Host = "0.0.0.0", Port = 5000,
     UseSsl = true, ServerCertificate = cert,        // TLS over TCP (UDP is not encrypted)
@@ -324,6 +360,11 @@ var config = new Configuration
     MaxInboundQueue = 16384,                        // per-connection inbound cap (OOM protection)
     HeartbeatEnabled = true,
 };
+
+foreach (var issue in config.AnalyzeProduction())
+    Console.WriteLine(issue);
+
+config.ValidateProduction(); // throws if production-blocking errors remain
 ```
 
 **Authentication is intentionally left to your application** — validate inside `OnNewClient`/handlers. UDP has no per-packet encryption; route sensitive data over TLS-over-TCP (or Both with reliable delivery).

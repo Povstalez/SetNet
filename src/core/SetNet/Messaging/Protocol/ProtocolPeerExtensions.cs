@@ -3,7 +3,6 @@ using System.Collections.Generic;
 using System.Threading.Tasks;
 using SetNet.Core;
 using SetNet.Core.Transport;
-using SetNet.Messaging;
 
 namespace SetNet.Protocol
 {
@@ -24,7 +23,7 @@ namespace SetNet.Protocol
 
         /// <summary>Pushes a typed event to one peer for (channel, op): serializes <typeparamref name="T"/> via the app serializer.</summary>
         public static Task PublishAsync<T>(this BasePeer peer, ushort channel, ushort op, T evt)
-            => peer.PublishRawAsync(channel, op, SetNetSerializer.Serialize(evt));
+            => peer.PublishRawAsync(channel, op, peer.Runtime.Serialize(evt));
 
         /// <summary>Pushes one raw event body to every peer in the sequence (best-effort; a dropping peer is skipped).</summary>
         public static async Task PublishRawAsync(this IEnumerable<BasePeer> peers, ushort channel, ushort op, byte[]? body = null)
@@ -41,6 +40,18 @@ namespace SetNet.Protocol
 
         /// <summary>Pushes one typed event to every peer in the sequence (best-effort).</summary>
         public static Task PublishAsync<T>(this IEnumerable<BasePeer> peers, ushort channel, ushort op, T evt)
-            => peers.PublishRawAsync(channel, op, SetNetSerializer.Serialize(evt));
+        {
+            if (peers == null) throw new ArgumentNullException(nameof(peers));
+            return PublishTypedAsync(peers, channel, op, evt);
+        }
+
+        private static async Task PublishTypedAsync<T>(IEnumerable<BasePeer> peers, ushort channel, ushort op, T evt)
+        {
+            foreach (var peer in peers)
+            {
+                try { await peer.PublishAsync(channel, op, evt).ConfigureAwait(global::SetNet.SetNetSync.ContinueOnCapturedContext); }
+                catch { }
+            }
+        }
     }
 }

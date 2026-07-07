@@ -110,7 +110,7 @@ namespace SetNet.Utils
             public TimeSpan Interval;
 
             /// <summary>The asynchronous work invoked each tick.</summary>
-            public Func<Task> Action;
+            public Func<Task> Action = null!;
 
             /// <summary>True while an invocation is running; used to skip a tick instead of overlapping executions.</summary>
             public bool Busy;
