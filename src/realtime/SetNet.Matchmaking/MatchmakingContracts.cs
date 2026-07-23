@@ -27,6 +27,16 @@ namespace SetNet.Matchmaking
 
         /// <summary>Capacity of the room created for a formed match. 0 (default) uses <see cref="MatchSize"/>.</summary>
         public int MatchedRoomMaxPlayers { get; set; } = 0;
+
+        /// <summary>
+        /// Maximum number of distinct queue names the server will hold at once. A client picks the queue name, so
+        /// without a cap a single peer could spam <c>FindMatch</c> with ever-changing names and grow server memory
+        /// without bound; once this many queues exist, an enqueue into a brand-new queue is rejected. Default 1024.
+        /// </summary>
+        public int MaxQueues { get; set; } = 1024;
+
+        /// <summary>Maximum length (in characters) of a client-supplied queue name; longer names are rejected. Default 64.</summary>
+        public int MaxQueueNameLength { get; set; } = 64;
     }
 
     /// <summary>A request to join the matchmaking queue.</summary>

@@ -77,10 +77,20 @@ namespace SetNet.Ping
                 var hub = new PingServer(options);
                 s.PeerConnected += peer => hub._stats.TryAdd(peer, new PingStat());
                 s.PeerDisconnected += peer => hub._stats.TryRemove(peer, out _);
+                s.RegisterModule(new Registration(s, hub));   // stop the timer + drop the static entry on server stop
                 return hub;
             });
 
         internal static PingServer? For(BaseServer? server) => server != null && Servers.TryGetValue(server, out var s) ? s : null;
+
+        /// <summary>Releases a server's ping tracker (stops the ping timer, drops the static registry entry) when the server is disposed/stopped.</summary>
+        private sealed class Registration : IDisposable
+        {
+            private readonly BaseServer _server;
+            private readonly PingServer _hub;
+            public Registration(BaseServer server, PingServer hub) { _server = server; _hub = hub; }
+            public void Dispose() { Servers.TryRemove(_server, out _); _hub.Dispose(); }
+        }
 
         private void PingAll()
         {

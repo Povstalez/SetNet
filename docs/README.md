@@ -10,7 +10,7 @@ Everything about SetNet in one place. Start here, then dive into a specific guid
 
 - **📖 [Full documentation site — setnet.lemeshev.dev](https://setnet.lemeshev.dev)** — the browsable docs site: the guides, every module's README, and a **complete generated API reference** (every public type, property, method and option, from the source XML docs). Built with DocFX. Build it locally with `bash docfx/gen.sh` (needs `dotnet tool install -g docfx`) → opens `_site/`.
 - **[Main README](../README.md)** — what SetNet is, quick start, transport selection, lifecycle, hardening.
-- **[User guide (GUIDE.en.md)](GUIDE.en.md)** — the full manual: handlers, transports, reliable channels, reconnect, batching, the complete `Configuration` reference, production checklist. *(Українською: [GUIDE.ua.md](GUIDE.ua.md))*
+- **[User guide (GUIDE.en.md)](GUIDE.en.md)** — the full manual: handlers, protocol channels (`[ProtocolChannel]`/`[Op]`/`[Event]`) and RPC, transports, reliable channels, reconnect, batching, the complete `Configuration` reference, production checklist. *(Українською: [GUIDE.ua.md](GUIDE.ua.md))*
 - **[Performance (PERFORMANCE.en.md)](PERFORMANCE.en.md)** — throughput model, scaling limits, roadmap. *(Українською: [PERFORMANCE.ua.md](PERFORMANCE.ua.md))*
 - **[Module catalog (MODULES.md)](MODULES.md)** — every companion package, grouped, with links + the core extension points.
 - **[Communication model (COMMUNICATION.md)](COMMUNICATION.md)** — all client/server send & receive methods: core `SendAsync`, the unified `SetNet.Protocol` (request/reply, fire-and-forget, push; `[Op]`/`[Event]`), and modules (RPC, StateSync, Streams, Voice, …), with a full worked example.

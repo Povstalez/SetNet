@@ -39,7 +39,15 @@ namespace SetNet.Config
                 SendTimeoutMs = 30000
             };
 
-        /// <summary>Realtime game profile using Both mode: reliable traffic on TCP, unreliable snapshots on UDP.</summary>
+        /// <summary>
+        /// Realtime game profile using Both mode: reliable traffic on TCP, unreliable snapshots on UDP.
+        /// <para>
+        /// <b>Not TLS-secured.</b> This preset leaves <see cref="Configuration.UseSsl"/> off, so the reliable channel
+        /// is plaintext TCP and UDP datagrams are unauthenticated. For a public deployment, terminate TLS at a reverse
+        /// proxy or set <c>UseSsl = true</c> with a <c>ServerCertificate</c> yourself, and never send auth/economy/
+        /// inventory or other state-changing commands over the unreliable UDP channel.
+        /// </para>
+        /// </summary>
         public static Configuration RealtimeGame(string host, int port, global::SetNet.SetNetRuntime? runtime = null)
             => new Configuration
             {
@@ -54,6 +62,8 @@ namespace SetNet.Config
                 MaxConnectionsPerIpPerSecond = 20,
                 MaxInFlightMessages = 512,
                 MaxInboundQueue = 8192,
+                MaxMessageSize = 1024 * 1024,
+                SendTimeoutMs = 30000,
                 UdpMaxDatagramPayload = 1200,
                 SendBatching = true,
                 SendBatchFlushMs = 15

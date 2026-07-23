@@ -52,9 +52,15 @@ namespace SetNet.Core
         /// </summary>
         public event Action<BasePeer>? PeerConnected;
 
-        /// <summary>Fires <see cref="PeerConnected"/> for a freshly started peer, isolating subscriber exceptions.</summary>
+        /// <summary>
+        /// Fires <see cref="PeerConnected"/> at most once for a peer (isolating subscriber exceptions), and only if
+        /// the peer hasn't already closed first — the connect/disconnect pair is coordinated through
+        /// <see cref="BasePeer.LifecycleEventState"/> so the two events never invert or orphan each other.
+        /// </summary>
         private void RaisePeerConnected(BasePeer peer)
         {
+            // 0 (fresh) → 1 (connected raised). If the peer already closed first it sits at 3 and we announce nothing.
+            if (Interlocked.CompareExchange(ref peer.LifecycleEventState, 1, 0) != 0) return;
             var handler = PeerConnected;
             if (handler == null) return;
             try { handler(peer); }
@@ -188,6 +194,14 @@ namespace SetNet.Core
                     continue;
                 }
 
+                _config.Metrics.IncrementConnectionsAccepted();
+                _config.Logger.Log($"Client connected: {peerInfo.Id}", global::SetNet.Logging.LogLevel.Info);
+                // Announce the peer BEFORE starting the receive loop so observers register it before any frame arrives.
+                // RaisePeerConnected/RaisePeerDisconnected coordinate via the peer's lifecycle state so a fast
+                // connect-then-close can't invert the two events or strand a dead peer in per-peer trackers (e.g.
+                // StateSync observers).
+                RaisePeerConnected(peer);
+
                 try
                 {
                     peer.StartReceive(); // idempotent: ensures the receive loop runs even if OnNewClient didn't start it
@@ -201,10 +215,6 @@ namespace SetNet.Core
                     RemoveClient(peerInfo);
                     continue;
                 }
-
-                _config.Metrics.IncrementConnectionsAccepted();
-                _config.Logger.Log($"Client connected: {peerInfo.Id}", global::SetNet.Logging.LogLevel.Info);
-                RaisePeerConnected(peer);
             }
         }
 
@@ -328,6 +338,12 @@ namespace SetNet.Core
 
                 binding.SetPeer(peer);
 
+                _config.Metrics.IncrementConnectionsAccepted();
+                _config.Logger.Log($"Client connected: {peerInfo.Id}", global::SetNet.Logging.LogLevel.Info);
+                // Announce the peer before StartReceive (see the Tcp path); event ordering and matched-pair semantics
+                // are guaranteed by the peer's lifecycle state machine regardless of a racing fast disconnect.
+                RaisePeerConnected(peer);
+
                 try
                 {
                     peer.StartReceive(); // idempotent: ensures the receive loop runs even if OnNewClient didn't start it
@@ -342,10 +358,6 @@ namespace SetNet.Core
                     RemoveClient(peerInfo);
                     continue;
                 }
-
-                _config.Metrics.IncrementConnectionsAccepted();
-                _config.Logger.Log($"Client connected: {peerInfo.Id}", global::SetNet.Logging.LogLevel.Info);
-                RaisePeerConnected(peer);
             }
         }
 
@@ -448,9 +460,8 @@ namespace SetNet.Core
         /// <remarks>Safe to call when not started; the null-conditional operators make it a no-op in that case.</remarks>
         public Task StopAsync()
         {
-            _cts?.Cancel();
-            _listener?.Stop();
-            _udpListener?.Stop();
+            try { _cts?.Cancel(); } catch (ObjectDisposedException) { /* already disposed */ }
+            SafeStopListeners();
             // Snapshot then clear under the lock, and Close() the peers OUTSIDE the lock: each Close() re-enters
             // RemoveClient (which locks _clients and removes the peer), so closing over a copy of an
             // already-cleared dictionary avoids mutating the collection while it is being enumerated.
@@ -462,12 +473,32 @@ namespace SetNet.Core
                 _clients.Values.CopyTo(snapshot, 0);
                 _clients.Clear();
             }
-            foreach (var client in snapshot)
-                client.Close();
+            ClosePeersAndNotify(snapshot);
             DisposeModules();
 
             _config.Logger.Log("Server stopped", global::SetNet.Logging.LogLevel.Info);
             return Task.CompletedTask;
+        }
+
+        // Stops both listeners, isolating a throwing (e.g. custom) listener so teardown always proceeds to closing
+        // peers and disposing modules rather than aborting half-done.
+        private void SafeStopListeners()
+        {
+            try { _listener?.Stop(); } catch (Exception ex) { _config.Logger.Log($"Listener stop threw: {ex.Message}", global::SetNet.Logging.LogLevel.Error); }
+            try { _udpListener?.Stop(); } catch (Exception ex) { _config.Logger.Log($"UDP listener stop threw: {ex.Message}", global::SetNet.Logging.LogLevel.Error); }
+        }
+
+        // Closes each peer (best-effort) and fires PeerDisconnected for it. The pool was already cleared, so each
+        // Close()'s RemoveClient finds nothing and won't fire the event — firing here is what lets PeerDisconnected
+        // subscribers (e.g. shared-store session/room cleanup) still run on a graceful shutdown. Exactly-once holds:
+        // a peer already removed before the snapshot isn't in it, and one removed after finds the cleared pool.
+        private void ClosePeersAndNotify(BasePeer[] peers)
+        {
+            foreach (var client in peers)
+            {
+                try { client.Close(); } catch { /* teardown is best-effort */ }
+                RaisePeerDisconnected(client);
+            }
         }
 
         /// <summary>
@@ -486,14 +517,36 @@ namespace SetNet.Core
             }
             // Fire outside the lock, and only if this call actually removed a live peer (idempotent — no double fire).
             if (removed != null)
+                RaisePeerDisconnected(removed);
+        }
+
+        /// <summary>
+        /// Fires <see cref="PeerDisconnected"/> at most once for a peer, and only if <see cref="PeerConnected"/> was
+        /// already raised for it — so a peer that closed before it was ever announced fires neither event (matched-pair
+        /// semantics via <see cref="BasePeer.LifecycleEventState"/>). Idempotent and safe from multiple teardown paths.
+        /// </summary>
+        private void RaisePeerDisconnected(BasePeer peer)
+        {
+            while (true)
             {
-                var handler = PeerDisconnected;
-                if (handler != null)
+                var s = Volatile.Read(ref peer.LifecycleEventState);
+                if (s == 1)   // connected was raised → transition to disconnected and fire
                 {
-                    try { handler(removed); }
-                    catch (Exception ex) { _config.Logger.Log($"PeerDisconnected handler threw: {ex.Message}", Logging.LogLevel.Error); }
+                    if (Interlocked.CompareExchange(ref peer.LifecycleEventState, 2, 1) == 1) break;
+                    continue; // lost the race; re-read
                 }
+                if (s == 0)   // closed before it was ever announced → block a later PeerConnected, fire nothing
+                {
+                    if (Interlocked.CompareExchange(ref peer.LifecycleEventState, 3, 0) == 0) return;
+                    continue; // a concurrent RaisePeerConnected won 0→1; re-read (will take the s==1 branch)
+                }
+                return;       // already 2 (fired) or 3 (never announced) — nothing to do
             }
+
+            var handler = PeerDisconnected;
+            if (handler == null) return;
+            try { handler(peer); }
+            catch (Exception ex) { _config.Logger.Log($"PeerDisconnected handler threw: {ex.Message}", Logging.LogLevel.Error); }
         }
 
         /// <summary>
@@ -527,9 +580,8 @@ namespace SetNet.Core
             _disposed = true;
             if (!disposing) return;
 
-            _cts?.Cancel();
-            _listener?.Stop();
-            _udpListener?.Stop();
+            try { _cts?.Cancel(); } catch (ObjectDisposedException) { /* already disposed */ }
+            SafeStopListeners();
             BasePeer[] snapshot;
             lock (_clients)
             {
@@ -538,8 +590,7 @@ namespace SetNet.Core
                 _clients.Values.CopyTo(snapshot, 0);
                 _clients.Clear();
             }
-            foreach (var client in snapshot) // close outside the lock over a copy (see StopAsync)
-                client.Close();
+            ClosePeersAndNotify(snapshot); // close outside the lock over a copy (see StopAsync), firing PeerDisconnected
             DisposeModules();
             _cts?.Dispose();
         }

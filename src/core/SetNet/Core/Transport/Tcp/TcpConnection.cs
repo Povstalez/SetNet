@@ -320,11 +320,14 @@ namespace SetNet.Core.Transport.Tcp
             {
                 if (_batchLength > 0)
                 {
+                    // Bound the synchronous write: on a zero-window (stopped-reading) peer a plain Write parks in the
+                    // kernel until the window reopens, hanging the thread that called Close(). WriteTimeout caps it.
+                    try { _stream.WriteTimeout = 100; } catch { /* stream may not support timeouts */ }
                     _stream.Write(_batchBuffer!, 0, _batchLength);
                     _batchLength = 0;
                 }
             }
-            catch { /* socket already broken; nothing more we can do */ }
+            catch { /* socket already broken or write timed out; nothing more we can do */ }
             finally
             {
                 _writeLock.Release();

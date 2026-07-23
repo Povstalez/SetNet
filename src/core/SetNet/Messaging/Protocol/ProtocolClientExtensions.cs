@@ -37,9 +37,8 @@ namespace SetNet.Protocol
         {
             if (client == null) throw new ArgumentNullException(nameof(client));
 
-            var corr = ProtocolCorrelation.NextId();
             var tcs = new TaskCompletionSource<ProtocolEnvelope>(TaskCreationOptions.RunContinuationsAsynchronously);
-            ProtocolCorrelation.Register(corr, tcs);
+            var corr = ProtocolCorrelation.Reserve(tcs);
             try
             {
                 var env = new ProtocolEnvelope(ProtocolKind.Request, channel, op, corr, body);

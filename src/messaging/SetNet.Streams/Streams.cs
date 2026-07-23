@@ -48,6 +48,20 @@ namespace SetNet.Streams
         /// <summary>Size cap for auto-accepted transfers (default 64 MB). Larger offers are rejected unless the app handles them.</summary>
         public long MaxAutoAcceptBytes { get; set; } = 64L * 1024 * 1024;
 
+        /// <summary>
+        /// Maximum number of simultaneous incoming transfers per endpoint (per peer). Further auto-accepted offers are
+        /// rejected until one finishes, bounding memory to roughly this × <see cref="MaxAutoAcceptBytes"/> per peer so a
+        /// flood of concurrent offers can't exhaust memory. Default 8. (Offers you handle yourself via <c>OfferReceived</c>
+        /// are your responsibility to limit.)
+        /// </summary>
+        public int MaxConcurrentIncoming { get; set; } = 8;
+
+        /// <summary>
+        /// An accepted transfer that receives no chunk for this long is treated as stalled and dropped (its sink is
+        /// released), so an attacker can't tie up transfer slots by going silent mid-upload. Default 60 s; 0 disables.
+        /// </summary>
+        public double StallTimeoutSeconds { get; set; } = 60;
+
         /// <summary>Chunk size for outgoing transfers (default 64 KB). Keep well under <c>Configuration.MaxMessageSize</c>; use ~1 KB over reliable UDP.</summary>
         public int ChunkSize { get; set; } = 64 * 1024;
 
@@ -331,7 +345,11 @@ namespace SetNet.Streams
                     }
                     else if (_options.AutoAccept && ctrl.TotalLength <= _options.MaxAutoAcceptBytes)
                     {
-                        await offer.AcceptAsync().ConfigureAwait(false);
+                        // Bound concurrent auto-accepted transfers so a peer can't open unbounded 64 MB sinks at once.
+                        if (!_incoming.ContainsKey(ctrl.StreamId) && _incoming.Count >= _options.MaxConcurrentIncoming)
+                            await offer.RejectAsync("Too many concurrent transfers.").ConfigureAwait(false);
+                        else
+                            await offer.AcceptAsync().ConfigureAwait(false);
                     }
                     else
                     {
@@ -414,14 +432,24 @@ namespace SetNet.Streams
         private Task Reply(Guid id, StreamOp op, long offset = 0, string error = "")
             => _send(StreamTypes.Control, new StreamControl { StreamId = id, Op = op, Offset = offset, Error = error }.Encode());
 
-        /// <summary>Drops interrupted partials that outlived the resume TTL so abandoned transfers can't leak sinks.</summary>
+        /// <summary>
+        /// Reclaims transfers that shouldn't be held any longer: interrupted partials past their resume TTL, and
+        /// <b>active</b> transfers that have gone silent past <see cref="StreamsOptions.StallTimeoutSeconds"/> (so a
+        /// peer can't pin a sink — and a transfer slot — by accepting and then never sending). Runs whenever a new
+        /// offer arrives.
+        /// </summary>
         private void Sweep()
         {
             var now = Stopwatch.GetTimestamp();
             List<Guid>? drop = null;
             foreach (var kv in _incoming)
-                if (!kv.Value.Active && (now - kv.Value.TouchedTicks) / (double)Stopwatch.Frequency > _options.PartialTtlSeconds)
-                    (drop ??= new List<Guid>()).Add(kv.Key);
+            {
+                var ageSeconds = (now - kv.Value.TouchedTicks) / (double)Stopwatch.Frequency;
+                var expired = kv.Value.Active
+                    ? _options.StallTimeoutSeconds > 0 && ageSeconds > _options.StallTimeoutSeconds   // stalled live transfer
+                    : ageSeconds > _options.PartialTtlSeconds;                                         // parked partial past its resume TTL
+                if (expired) (drop ??= new List<Guid>()).Add(kv.Key);
+            }
             if (drop != null) foreach (var k in drop) _incoming.TryRemove(k, out _);
         }
     }
@@ -574,7 +602,20 @@ namespace SetNet.Streams
         internal StreamsServer(StreamsOptions options) { _options = options; }
 
         internal static StreamsServer Enable(BaseServer server, StreamsOptions options)
-            => Servers.GetOrAdd(server, _ => new StreamsServer(options));
+            => Servers.GetOrAdd(server, s =>
+            {
+                var hub = new StreamsServer(options);
+                s.RegisterModule(new Registration(s));   // drop the static entry when the server stops
+                return hub;
+            });
+
+        /// <summary>Removes the per-server hub from the static registry when the owning server is disposed/stopped.</summary>
+        private sealed class Registration : IDisposable
+        {
+            private readonly BaseServer _server;
+            public Registration(BaseServer server) => _server = server;
+            public void Dispose() => Servers.TryRemove(_server, out _);
+        }
 
         /// <summary>
         /// Streams <paramref name="content"/> down to one peer. Completes when the peer confirmed the full payload;

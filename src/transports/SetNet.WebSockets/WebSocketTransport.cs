@@ -43,9 +43,11 @@ namespace SetNet.WebSockets
         public async Task<ITransportConnection> ConnectAsync(Configuration config, CancellationToken ct = default)
         {
             var socket = new ClientWebSocket();
-            var uri = new Uri($"ws://{config.Host}:{config.Port}/");
+            // Honor UseSsl so tokens/traffic aren't sent over plaintext ws:// when the caller asked for TLS.
+            var scheme = config.UseSsl ? "wss" : "ws";
+            var uri = new Uri($"{scheme}://{config.Host}:{config.Port}/");
             await socket.ConnectAsync(uri, ct).ConfigureAwait(false);
-            return new WebSocketConnection(socket);
+            return new WebSocketConnection(socket, config.MaxMessageSize);
         }
     }
 
@@ -53,13 +55,18 @@ namespace SetNet.WebSockets
     internal sealed class WebSocketListener : ITransportListener
     {
         private readonly HttpListener _http = new HttpListener();
+        private readonly Configuration _config;
 
         public WebSocketListener(Configuration config)
         {
+            _config = config;
             // "0.0.0.0"/empty binds all interfaces via "+", which needs a urlacl/admin on Windows; a specific
             // host (e.g. 127.0.0.1) binds without elevation.
             var host = string.IsNullOrEmpty(config.Host) || config.Host == "0.0.0.0" ? "+" : config.Host;
-            _http.Prefixes.Add($"http://{host}:{config.Port}/");
+            // Honor UseSsl. An https prefix needs a certificate bound to the port at the OS level
+            // (netsh http add sslcert / httpcfg); otherwise terminate TLS at a reverse proxy and leave UseSsl off.
+            var scheme = config.UseSsl ? "https" : "http";
+            _http.Prefixes.Add($"{scheme}://{host}:{config.Port}/");
         }
 
         /// <inheritdoc/>
@@ -88,7 +95,7 @@ namespace SetNet.WebSockets
                 try { wsContext = await context.AcceptWebSocketAsync(subProtocol: null).ConfigureAwait(false); }
                 catch { continue; }   // bad handshake — skip and keep listening (resilient accept)
 
-                return new AcceptedConnection(new WebSocketConnection(wsContext.WebSocket), Guid.Empty, context.Request.RemoteEndPoint);
+                return new AcceptedConnection(new WebSocketConnection(wsContext.WebSocket, _config.MaxMessageSize), Guid.Empty, context.Request.RemoteEndPoint);
             }
         }
 

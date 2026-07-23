@@ -8,16 +8,17 @@ A short overview is in the [README](../README.md); performance and scaling limit
 2. [Core concepts](#2-core-concepts)
 3. [Quick start](#3-quick-start)
 4. [Messages and handlers](#4-messages-and-handlers)
-5. [Transports: TCP / UDP / Both](#5-transports-tcp--udp--both)
-6. [Delivery and reliable channels](#6-delivery-and-reliable-channels)
-7. [Disconnects, reconnect, heartbeat](#7-disconnects-reconnect-heartbeat)
-8. [Performance and processing order](#8-performance-and-processing-order)
-9. [Production hardening](#9-production-hardening)
-10. [Metrics](#10-metrics)
-11. [Utilities: GameLoopScheduler, EventManager](#11-utilities)
-12. [Full Configuration reference](#12-full-configuration-reference)
-13. [Production checklist](#13-production-checklist)
-14. [Common mistakes](#14-common-mistakes)
+5. [Unified protocol: request/reply, push, RPC](#5-unified-protocol-requestreply-push-rpc)
+6. [Transports: TCP / UDP / Both](#6-transports-tcp--udp--both)
+7. [Delivery and reliable channels](#7-delivery-and-reliable-channels)
+8. [Disconnects, reconnect, heartbeat](#8-disconnects-reconnect-heartbeat)
+9. [Performance and processing order](#9-performance-and-processing-order)
+10. [Production hardening](#10-production-hardening)
+11. [Metrics](#11-metrics)
+12. [Utilities: GameLoopScheduler, EventManager](#12-utilities)
+13. [Full Configuration reference](#13-full-configuration-reference)
+14. [Production checklist](#14-production-checklist)
+15. [Common mistakes](#15-common-mistakes)
 
 ---
 
@@ -44,11 +45,15 @@ dotnet add package SetNet.MessagePack
 | `BasePeer` | The server-side representation of a single client: receives its messages and replies. |
 | `BaseClient` | The client: connects, manages the lifecycle (connect/heartbeat/reconnect), receives messages. |
 | `Configuration` | All settings (host, port, transport, limits, TLS…). |
-| `[MessageHandler(type)]` | An attribute on a handler class; registered via reflection. |
+| `[MessageHandler(type)]` | An attribute on a handler class for **one-way** messages; registered via reflection ([section 4](#4-messages-and-handlers)). |
+| `[ProtocolChannel(channel)]` | An attribute on a class that serves one **channel** of the unified protocol (server ops, or client push handlers) — [section 5](#5-unified-protocol-requestreply-push-rpc). |
+| `[Op(op)]` | An attribute on a method that handles one channel operation (**request/reply** or fire-and-forget). |
+| `[Event(op)]` | An attribute on a client-side method that handles one **server push** event. |
+| `[RpcMethod(id)]` | An attribute on an `IRpcHandler<TReq,TResp>` — the method-style front end (`SetNet.Rpc`). |
 
 **Message flow:** `SendAsync<T>` → serialization ([your `ISerializer`](#4-messages-and-handlers); e.g. MessagePack) → framing → transport → reassembly → deserialization → handler.
 
-> ⚠️ **Processing order is not guaranteed by default**, even over TCP (handlers are fire-and-forget). See [section 8](#8-performance-and-processing-order).
+> ⚠️ **Processing order is not guaranteed by default**, even over TCP (handlers are fire-and-forget). See [section 9](#9-performance-and-processing-order).
 
 ---
 
@@ -124,6 +129,8 @@ await client.MoveAsync(10, 20);
 ## 4. Messages and handlers
 
 Handlers are discovered via reflection by default, or registered explicitly on `SetNetRuntime.Handlers`. A handler is a class with `[MessageHandler]` that implements `IServerMessageHandler<T>` or `IClientMessageHandler<T>`. Handlers are **strongly typed**: the library deserializes the payload and hands you the ready `T` — no manual deserialization.
+
+> `[MessageHandler]` is the **one-way** message kind (fire it, handle it, nothing comes back). For request/reply, channel ops, server-push events and RPC, see [section 5](#5-unified-protocol-requestreply-push-rpc).
 
 ### Server-side handler
 
@@ -268,7 +275,256 @@ public class RelayPeer : BasePeer
 
 ---
 
-## 5. Transports: TCP / UDP / Both
+## 5. Unified protocol: request/reply, push, RPC
+
+Section 4 covers **one-way** messages: you send, the other side handles them, nothing comes back. Everything else —
+"ask the server and await the answer", "tell the server, no answer needed", "the server pushes an event to clients" —
+goes through the **unified protocol** (namespace `SetNet.Protocol`, part of the core — nothing to install).
+
+It occupies a **single** reserved wire type (`65447`) and demultiplexes inside it by a **channel** (`ushort`, e.g. your
+own `World = 1000`) plus an **op** (`ushort`) within that channel. Every shipped module (Rooms, Inventory, Chat, …)
+speaks exactly this, so your own channels look and behave like theirs.
+
+### 5.1 Which kind of message do I need?
+
+| I want to… | Client side | Server side |
+|---|---|---|
+| Send a one-way message | `SendAsync<T>(type, msg)` | `[MessageHandler]` + `IServerMessageHandler<T>` (section 4) |
+| Receive a one-way message | `[MessageHandler]` + `IClientMessageHandler<T>` | `peer.SendAsync<T>(type, msg)` |
+| **Ask and await an answer** | `RequestAsync<TReq,TResp>(channel, op, req)` | `[ProtocolChannel]` + `[Op]` method that **returns** the reply |
+| **Tell the server, no answer** | `PostAsync<T>(channel, op, msg)` | `[Op]` method returning `void`/`Task` |
+| **Receive a server push** | `On<T>(channel, op, …)` or an `[Event]` method | `peer.PublishAsync(channel, op, evt)` |
+| **Method-style call** | `CallAsync<TReq,TResp>(methodId, req)` (`SetNet.Rpc`) | `[RpcMethod]` + `IRpcHandler<TReq,TResp>` |
+
+All of these run **together on one connection**; the complete map of layers and modules is in
+[COMMUNICATION.md](COMMUNICATION.md).
+
+### 5.2 Step 1 — shared contracts
+
+Ids and DTOs must match on both ends, so declare them once in a shared assembly:
+
+```csharp
+using MessagePack;
+
+public static class GameChannels
+{
+    public const ushort World = 1000;                    // your own channel id — see 5.9
+}
+
+public enum WorldOp  : ushort { Drop = 1, Ready = 2 }    // client → server
+public enum WorldEvt : ushort { ItemDropped = 10 }       // server → client
+
+[MessagePackObject]
+public class DropReq  { [Key(0)] public string ItemId { get; set; } = ""; [Key(1)] public int Count { get; set; } }
+
+[MessagePackObject]
+public class DropResp { [Key(0)] public bool Ok { get; set; } [Key(1)] public int Left { get; set; } }
+
+[MessagePackObject]
+public class ItemDropped { [Key(0)] public int PlayerId { get; set; } [Key(1)] public string ItemId { get; set; } = ""; }
+```
+
+### 5.3 Server — one method per op (`[ProtocolChannel]` + `[Op]`)
+
+The everyday style: a plain class marked with the channel id and one method per operation — no `switch`, no base
+class, no manual registration (discovered by reflection, like `[MessageHandler]`).
+
+```csharp
+using SetNet.Core;
+using SetNet.Protocol;
+
+[ProtocolChannel(GameChannels.World)]
+public sealed class WorldChannel
+{
+    // request → reply: the RETURN VALUE is the reply
+    [Op((ushort)WorldOp.Drop)]
+    public async Task<DropResp> Drop(BasePeer peer, DropReq req)
+    {
+        if (req.Count <= 0) throw new ProtocolException("Count must be positive.");   // → error on the caller
+
+        var left = await Game.TryTakeAsync(peer, req.ItemId, req.Count);              // your authoritative logic
+        if (left < 0) throw new ProtocolException("Not enough items.");
+
+        return new DropResp { Ok = true, Left = left };   // (to also notify other players — see 5.6)
+    }
+
+    // fire-and-forget: void/Task sends nothing back (this is what PostAsync targets)
+    [Op((ushort)WorldOp.Ready)]
+    public void Ready(BasePeer peer) => Game.MarkReady(peer);
+
+    // raw in, raw out — the serializer is not involved at all
+    [Op(99)]
+    public byte[] Echo(byte[] body) => body;
+}
+```
+
+**Parameters** are bound **by type**, in any order, all of them optional:
+
+| Parameter type | Bound to |
+|---|---|
+| `BasePeer` | the peer that sent the message |
+| `ChannelRequest` | the full request context (see 5.4) |
+| `byte[]` | the raw, undeserialized body |
+| anything else | the body, deserialized via your serializer (at most one such parameter) |
+
+**Return value → reply:**
+
+| Return | Effect |
+|---|---|
+| `T` / `Task<T>` | serialized and sent as the reply |
+| `byte[]` / `Task<byte[]>` | sent as the reply verbatim (no serialization) |
+| `void` / `Task` | no reply at all — for fire-and-forget ops (or reply yourself via a `ChannelRequest` parameter) |
+| throws | the caller's `RequestAsync` throws `ProtocolException` carrying your message |
+
+### 5.4 Server — full control (`IChannelService`)
+
+When you want a single entry point for the whole channel (shared setup, custom routing, ops decided at runtime),
+implement `IChannelService` instead. A class that implements it keeps manual control, and its `[Op]` methods — if any —
+are **ignored**.
+
+```csharp
+[ProtocolChannel(GameChannels.World)]
+public sealed class WorldService : IChannelService
+{
+    public async Task HandleAsync(ChannelRequest r)
+    {
+        switch ((WorldOp)r.Op)
+        {
+            case WorldOp.Drop:
+                var req = r.Read<DropReq>();                        // typed body … or r.RawBody for bytes
+                await r.ReplyAsync(new DropResp { Ok = true });     // typed reply … or r.ReplyRawAsync(bytes)
+                break;
+
+            case WorldOp.Ready:
+                Game.MarkReady(r.Peer);                             // fire-and-forget: no reply
+                break;
+
+            default:
+                if (r.ExpectsReply) await r.ReplyErrorAsync($"Unknown op {r.Op}");
+                break;
+        }
+    }
+}
+```
+
+`ChannelRequest`: `Peer`, `Channel`, `Op`, `RawBody`, `ExpectsReply`, `Read<T>()`, `ReplyAsync<T>(T)`,
+`ReplyRawAsync(byte[])`, `ReplyErrorAsync(string)`. Reply **at most once** — later reply calls are ignored.
+
+### 5.5 Client — request and post
+
+```csharp
+using SetNet.Protocol;
+
+// request → reply (correlated, always Reliable, with a timeout)
+DropResp resp = await client.RequestAsync<DropReq, DropResp>(
+    GameChannels.World, (ushort)WorldOp.Drop,
+    new DropReq { ItemId = "sword", Count = 1 },
+    timeoutMs: 10000);                       // default 10 s; ≤ 0 = wait indefinitely; also takes a CancellationToken
+
+byte[] raw = await client.RequestRawAsync(GameChannels.World, 99, new byte[] { 1, 2, 3 });   // serializer-agnostic
+
+// fire-and-forget — the only form where you choose reliability
+await client.PostAsync(GameChannels.World, (ushort)WorldOp.Ready, new ReadyDto());
+await client.PostRawAsync(GameChannels.World, (ushort)WorldOp.Ready, bytes, DeliveryMethod.Unreliable);
+```
+
+### 5.6 Server push and client subscription
+
+Server side — push to one peer or to many:
+
+```csharp
+await peer.PublishAsync(GameChannels.World, (ushort)WorldEvt.ItemDropped, evt);       // one client, typed
+await peer.PublishRawAsync(GameChannels.World, (ushort)WorldEvt.ItemDropped, bytes);  // one client, raw
+
+IEnumerable<BasePeer> others = server.OthersInRoomOf(peer);   // SetNet.Rooms helper — or your own peer list
+await others.PublishAsync(GameChannels.World, (ushort)WorldEvt.ItemDropped, evt);     // fan-out, best-effort
+```
+
+Client side — two styles, and **both** fire for the same `(channel, op)`:
+
+```csharp
+// (a) imperative — can close over state, returns an IDisposable to unsubscribe
+IDisposable sub = client.On<ItemDropped>(GameChannels.World, (ushort)WorldEvt.ItemDropped, e => Render(e));
+client.OnRaw(GameChannels.World, 99, bytes => { /* decode it yourself */ });
+// sub.Dispose();   // unsubscribe
+
+// (b) declarative — a [ProtocolChannel] class with [Event] methods, auto-subscribed on the first event
+[ProtocolChannel(GameChannels.World)]
+public sealed class WorldEvents
+{
+    [Event((ushort)WorldEvt.ItemDropped)] public void OnDropped(ItemDropped e) => Render(e);
+    [Event(99)]                           public void OnBlob(byte[] body)      { /* raw body */ }
+}
+```
+
+An `[Event]` method takes the typed body, a `byte[]`, or no parameter at all, and returns `void` or `Task` (async
+handlers run fire-and-forget; an exception in one is isolated). Its instances are **process-wide singletons** — use
+style (a) when the handler must close over per-instance state (a driver holding room state, say).
+
+### 5.7 Errors and timeouts
+
+| On the server | On the caller (`RequestAsync`) |
+|---|---|
+| the handler throws (any exception) | `ProtocolException` carrying the exception message |
+| `throw new ProtocolException("…")` | the same — the deliberate way to fail a request |
+| no `[Op]` matches the op | `ProtocolException("No [Op(N)] handler on channel C.")` |
+| no channel service for that channel | `ProtocolException("No protocol channel C is configured on this server.")` |
+| the op never replies (returns `void`/`Task`) | `TimeoutException` after `timeoutMs` |
+
+A fire-and-forget `PostAsync` to an unknown op is silently ignored — nobody is waiting for it. Shipped modules re-map
+`ProtocolException` to their own type (`RoomException`, `RpcException`, …); do the same in your own client driver if
+you want a domain-specific error.
+
+### 5.8 RPC — a typed alias of `RequestAsync` (`SetNet.Rpc`)
+
+If a method-id front end reads better than channel + op: `client.CallAsync<TReq,TResp>(id, req)` **is**
+`client.RequestAsync<TReq,TResp>(Channels.Rpc, id, req)` — the same envelope and correlation, with `RpcException`
+instead of `ProtocolException` and a default timeout of 5 s.
+
+```bash
+dotnet add package SetNet.Rpc
+```
+
+```csharp
+using SetNet.Rpc;
+
+RpcRuntime.Enable();      // once at startup, on both ends
+
+// client
+var resp = await client.CallAsync<LoginReq, LoginResp>(1, new LoginReq { Name = "alice" });
+
+// server
+[RpcMethod(1)]
+public class LoginHandler : IRpcHandler<LoginReq, LoginResp>
+{
+    public Task<LoginResp> HandleAsync(BasePeer peer, LoginReq req)
+        => Task.FromResult(new LoginResp { Ok = true });
+}
+```
+
+### 5.9 Rules and gotchas
+
+- **Channel ids from ~1000 up are yours.** 1–34 belong to the shipped modules (`SetNet.Protocol.Channels`). The channel
+  space is independent of the core `ushort` message-type space, so `GameChannels.World = 1000` and
+  `MessageTypes.PlayerMove = 1` never collide.
+- **One service per channel id.** Server `[ProtocolChannel]` classes are found by scanning loaded assemblies (last one
+  discovered wins for a channel) — not through `runtime.Handlers`. A class counts as a *server* channel only if it
+  implements `IChannelService` or has at least one `[Op]` method; a class with only `[Event]` methods is client-side.
+- **Ops are scoped to their channel.** `[Op(1)]` on two different channels are unrelated; duplicates *within* one class
+  throw at discovery.
+- **Reliability.** `Request*` and `Publish*` are always `Reliable`; only `Post*` lets you pick `Unreliable`.
+  High-frequency state (positions, health) belongs in `SetNet.StateSync` or the core layer, not here.
+- **Typed vs raw.** Typed overloads use the endpoint's serializer, so `T` must satisfy its rules (MessagePack:
+  `[MessagePackObject]`/`[Key]`). The `*Raw*` family (`RequestRawAsync`, `PostRawAsync`, `OnRaw`, `RawBody`,
+  `ReplyRawAsync`) is serializer-agnostic — handy for hand-framed control messages.
+- **Shipped modules need their `Enable()`.** Call `XxxRuntime.Enable()` once at startup so the module assembly is
+  loaded and discoverable. Your own channels, living in your own app assembly, need nothing.
+- **Handler instances are singletons**, created through the same activator as `[MessageHandler]` — use
+  `SetNet.DependencyInjection` for constructor injection.
+
+---
+
+## 6. Transports: TCP / UDP / Both
 
 Selected via `Configuration.TransportType` (default `Tcp` — existing TCP code works unchanged).
 
@@ -304,7 +560,7 @@ dotnet run --project tests/SetNet.Tests -- <frag|tcp|udp|loss|both|idle|deadlock
 
 ---
 
-## 6. Delivery and reliable channels
+## 7. Delivery and reliable channels
 
 `SendAsync` has overloads:
 
@@ -332,7 +588,7 @@ await SendAsync(type, chat,     DeliveryMethod.Reliable, channel: 1);
 
 ---
 
-## 7. Disconnects, reconnect, heartbeat
+## 8. Disconnects, reconnect, heartbeat
 
 `BaseClient` distinguishes an intentional `Disconnect()` from an unexpected loss. **`OnDisconnected` fires exactly once** per connection.
 
@@ -374,7 +630,7 @@ On the server, `BasePeer` is symmetric: `Close()` (kick) → only `OnDisconnecte
 
 ---
 
-## 8. Performance and processing order
+## 9. Performance and processing order
 
 All flags below are opt-in (the default preserves the original behavior).
 
@@ -410,7 +666,7 @@ Nagle disabled = low latency for small frames. For a bulk stream of unbatched me
 
 ---
 
-## 9. Production hardening
+## 10. Production hardening
 
 ```csharp
 using System.Security.Cryptography.X509Certificates;
@@ -449,7 +705,7 @@ config.ValidateProduction(); // throws if production-blocking errors remain
 
 ---
 
-## 10. Metrics
+## 11. Metrics
 
 ```csharp
 var m = config.Metrics; // NetworkMetrics, thread-safe counters
@@ -461,7 +717,7 @@ Most useful for production: `InboundDropped` (overload), `ConnectionsRejected` (
 
 ---
 
-## 11. Utilities
+## 12. Utilities
 
 ### GameLoopScheduler — periodic tasks
 ```csharp
@@ -483,7 +739,7 @@ ev.Trigger("PlayerJoined", "Alex");
 
 ---
 
-## 12. Full Configuration reference
+## 13. Full Configuration reference
 
 | Option | Default | Purpose |
 |---|---|---|
@@ -526,7 +782,7 @@ ev.Trigger("PlayerJoined", "Alex");
 
 ---
 
-## 13. Production checklist
+## 14. Production checklist
 
 The defaults are optimized for compatibility, not for production. Before launch:
 
@@ -542,11 +798,15 @@ Detailed scaling limits are in [PERFORMANCE.md](PERFORMANCE.en.md).
 
 ---
 
-## 14. Common mistakes
+## 15. Common mistakes
 
 | Symptom | Cause / resolution |
 |---|---|
 | Handler not called | No `[MessageHandler]`, the wrong type, doesn't implement the interface, or the class/assembly is not loaded or registered on `SetNetRuntime.Handlers`. |
+| `ProtocolException: No protocol channel N is configured on this server` | The `[ProtocolChannel(N)]` class is missing on the server, its assembly isn't loaded (for a shipped module call its `XxxRuntime.Enable()`), or the class neither implements `IChannelService` nor has any `[Op]` method. |
+| `RequestAsync` throws `TimeoutException` | The `[Op]` method returns `void`/`Task`, so it never replies (send those with `PostAsync`), the op id doesn't match, or the handler is slower than `timeoutMs`. |
+| `On<T>` / `[Event]` handler never fires | The class is missing `[ProtocolChannel]`, the `(channel, op)` doesn't match the server's `PublishAsync`, or the subscription's `IDisposable` was disposed. |
+| An `[Event]` handler sees the wrong instance state | `[Event]` handler instances are process-wide singletons — use `client.On<T>(...)` when the handler must close over per-instance state (section 5.6). |
 | Messages get "corrupted" | Different serializers on the two ends; (MessagePack) a DTO without `[MessagePackObject]`/`[Key]`; or the type doesn't match. |
 | `InvalidOperationException: No serializer configured` | No serializer on the endpoint runtime — call `SetNetSerializer.Use(...)` for the default runtime or `runtime.UseSerializer(...)` before assigning `Configuration.Runtime` (see section 4). |
 | Won't connect | Host/Port differ on the client and server; firewall; (UDP) handshake is blocked. |

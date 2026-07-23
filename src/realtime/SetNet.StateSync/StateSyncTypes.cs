@@ -1,3 +1,6 @@
+using System;
+using SetNet.Core;
+
 namespace SetNet.StateSync
 {
     /// <summary>
@@ -68,7 +71,21 @@ namespace SetNet.StateSync
         /// (Server) When true, every peer that connects automatically becomes an observer (starts receiving the world).
         /// Set false to control this yourself — call <c>world.AddObserver(peer)</c> once a player is actually ready
         /// (e.g. after auth or after joining a room), so you don't replicate the game to peers still in the lobby. Default true.
+        /// <para>
+        /// <b>Security note:</b> the inbound auth gate (<c>UseAuth</c>) filters <i>incoming</i> frames only — it does not
+        /// stop the tick from pushing world state <i>out</i> to a connected-but-unauthenticated peer. So with auth you
+        /// should either set this false and <c>AddObserver</c> after authentication, or set <see cref="CanReceive"/>.
+        /// </para>
         /// </summary>
         public bool AutoObserve { get; set; } = true;
+
+        /// <summary>
+        /// (Server) Outbound authorization gate. When set, the tick only replicates spawns/snapshots to a peer while
+        /// this returns true — so a peer can be an observer yet receive nothing until it's ready. Wire it to your auth
+        /// check (e.g. <c>peer =&gt; auth.IsAuthenticated(peer)</c>) to guarantee unauthenticated peers never receive world
+        /// state, even with <see cref="AutoObserve"/> on. Re-evaluated every tick, so replication begins the moment the
+        /// peer becomes authorized (and stops if it later fails). Default null = replicate to every observer.
+        /// </summary>
+        public Func<BasePeer, bool>? CanReceive { get; set; }
     }
 }

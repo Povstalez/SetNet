@@ -190,7 +190,10 @@ namespace SetNet.Core.Transport.Udp
                     _reliability.OnAck(dg);
                     break;
                 case PacketKind.Disconnect:
-                    Close();
+                    // Require the server's token (the disconnect datagram carries it) so a spoofed-source 1-byte 0x40
+                    // can't tear down this client — mirror of the hardened server-side check.
+                    if (UdpDatagram.TryParseToken(dg, out var byeToken) && byeToken == _token)
+                        Close();
                     break;
             }
         }

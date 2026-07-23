@@ -33,6 +33,10 @@ namespace SetNet.Gateway
     /// <summary>The server-side half of one relayed client: owns a backend client and forwards the client's frames to it.</summary>
     internal sealed class GatewayPeer : BasePeer
     {
+        // Cap on frames buffered before the backend connection is ready, so a client flooding a gateway whose backend
+        // is slow/hung to connect can't grow memory without bound; over the cap we drop the client instead.
+        private const int MaxPreConnectBuffer = 1024;
+
         private readonly GatewayBackendClient _backend;
         private readonly ConcurrentQueue<(ushort type, byte[] data)> _buffer = new ConcurrentQueue<(ushort, byte[])>();
         private volatile bool _ready;
@@ -61,8 +65,13 @@ namespace SetNet.Gateway
         // Every application frame from the client is forwarded raw to the backend (buffered until the backend connects).
         protected override bool OnRawFrame(ushort type, byte[] data)
         {
-            if (_ready) _ = _backend.SendRawAsync(type, data);
-            else _buffer.Enqueue((type, data));
+            if (_ready) { _ = _backend.SendRawAsync(type, data); return true; }
+            if (_buffer.Count >= MaxPreConnectBuffer)
+            {
+                CurrentPeerInfo.Disconnect();   // backend not ready and the client is flooding — drop it
+                return true;
+            }
+            _buffer.Enqueue((type, data));
             return true;   // consumed — no typed dispatch on the gateway
         }
 

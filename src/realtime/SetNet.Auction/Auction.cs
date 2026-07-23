@@ -300,9 +300,23 @@ namespace SetNet.Auction
         }
 
         internal static AuctionServer Enable(BaseServer server, InventoryServer inventory, WalletServer wallet)
-            => Servers.GetOrAdd(server, _ => new AuctionServer(inventory, wallet));
+            => Servers.GetOrAdd(server, s =>
+            {
+                var hub = new AuctionServer(inventory, wallet);
+                s.RegisterModule(new Registration(s, hub));   // stop the settlement timer + drop the static entry on server stop
+                return hub;
+            });
 
         internal static AuctionServer? For(BaseServer? server) => server != null && Servers.TryGetValue(server, out var s) ? s : null;
+
+        /// <summary>Releases a server's auction house (stops the settlement timer, drops the static registry entry) when the server is disposed/stopped.</summary>
+        private sealed class Registration : IDisposable
+        {
+            private readonly BaseServer _server;
+            private readonly AuctionServer _hub;
+            public Registration(BaseServer server, AuctionServer hub) { _server = server; _hub = hub; }
+            public void Dispose() { Servers.TryRemove(_server, out _); _hub.Dispose(); }
+        }
 
         internal Task HandleAsync(ChannelRequest request)
         {

@@ -8,16 +8,17 @@
 2. [Базові концепти](#2-базові-концепти)
 3. [Швидкий старт](#3-швидкий-старт)
 4. [Повідомлення та хендлери](#4-повідомлення-та-хендлери)
-5. [Транспорти: TCP / UDP / Both](#5-транспорти-tcp--udp--both)
-6. [Доставка та надійні канали](#6-доставка-та-надійні-канали)
-7. [Розриви, reconnect, heartbeat](#7-розриви-reconnect-heartbeat)
-8. [Продуктивність і порядок обробки](#8-продуктивність-і-порядок-обробки)
-9. [Production-загартування](#9-production-загартування)
-10. [Метрики](#10-метрики)
-11. [Утиліти: GameLoopScheduler, EventManager](#11-утиліти)
-12. [Повний довідник Configuration](#12-повний-довідник-configuration)
-13. [Прод-чекліст](#13-прод-чекліст)
-14. [Поширені помилки](#14-поширені-помилки)
+5. [Уніфікований протокол: запит/відповідь, push, RPC](#5-уніфікований-протокол-запитвідповідь-push-rpc)
+6. [Транспорти: TCP / UDP / Both](#6-транспорти-tcp--udp--both)
+7. [Доставка та надійні канали](#7-доставка-та-надійні-канали)
+8. [Розриви, reconnect, heartbeat](#8-розриви-reconnect-heartbeat)
+9. [Продуктивність і порядок обробки](#9-продуктивність-і-порядок-обробки)
+10. [Production-загартування](#10-production-загартування)
+11. [Метрики](#11-метрики)
+12. [Утиліти: GameLoopScheduler, EventManager](#12-утиліти)
+13. [Повний довідник Configuration](#13-повний-довідник-configuration)
+14. [Прод-чекліст](#14-прод-чекліст)
+15. [Поширені помилки](#15-поширені-помилки)
 
 ---
 
@@ -44,11 +45,15 @@ dotnet add package SetNet.MessagePack
 | `BasePeer` | Серверне представлення одного клієнта: приймає його повідомлення, відповідає. |
 | `BaseClient` | Клієнт: підключається, тримає lifecycle (connect/heartbeat/reconnect), приймає повідомлення. |
 | `Configuration` | Усі налаштування (хост, порт, транспорт, ліміти, TLS…). |
-| `[MessageHandler(type)]` | Атрибут на класі-хендлері; реєстрація через рефлексію. |
+| `[MessageHandler(type)]` | Атрибут на класі-хендлері для **односторонніх** повідомлень; реєстрація через рефлексію ([розділ 4](#4-повідомлення-та-хендлери)). |
+| `[ProtocolChannel(channel)]` | Атрибут на класі, що обслуговує один **канал** уніфікованого протоколу (серверні op-и або клієнтські push-хендлери) — [розділ 5](#5-уніфікований-протокол-запитвідповідь-push-rpc). |
+| `[Op(op)]` | Атрибут на методі, що обробляє одну операцію каналу (**запит/відповідь** або fire-and-forget). |
+| `[Event(op)]` | Атрибут на клієнтському методі, що обробляє одну **push-подію** від сервера. |
+| `[RpcMethod(id)]` | Атрибут на `IRpcHandler<TReq,TResp>` — фронтенд у стилі методу (`SetNet.Rpc`). |
 
 **Потік повідомлення:** `SendAsync<T>` → серіалізація ([ваш `ISerializer`](#4-повідомлення-та-хендлери); напр. MessagePack) → фреймінг → транспорт → реасемблінг → десеріалізація → хендлер.
 
-> ⚠️ **Порядок обробки за замовчуванням не гарантований** навіть на TCP (хендлери — fire-and-forget). Див. [розділ 8](#8-продуктивність-і-порядок-обробки).
+> ⚠️ **Порядок обробки за замовчуванням не гарантований** навіть на TCP (хендлери — fire-and-forget). Див. [розділ 9](#9-продуктивність-і-порядок-обробки).
 
 ---
 
@@ -124,6 +129,8 @@ await client.MoveAsync(10, 20);
 ## 4. Повідомлення та хендлери
 
 Хендлери знаходяться рефлексією за замовчуванням або реєструються явно через `SetNetRuntime.Handlers`. Хендлер — це клас із `[MessageHandler]`, що реалізує `IServerMessageHandler<T>` чи `IClientMessageHandler<T>`. Хендлер **типізований**: бібліотека сама десеріалізує payload і віддає готовий `T` — вручну десеріалізувати не треба.
+
+> `[MessageHandler]` — це **односторонній** тип повідомлення (надіслали, обробили, назад нічого). Для запит/відповідь, оп каналів, push-подій із сервера та RPC — див. [розділ 5](#5-уніфікований-протокол-запитвідповідь-push-rpc).
 
 ### Серверний хендлер
 
@@ -268,7 +275,259 @@ public class RelayPeer : BasePeer
 
 ---
 
-## 5. Транспорти: TCP / UDP / Both
+## 5. Уніфікований протокол: запит/відповідь, push, RPC
+
+Розділ 4 описує **односторонні** повідомлення: ви надіслали, інший бік обробив, назад нічого не приходить. Усе інше —
+«спитати сервер і дочекатися відповіді», «повідомити сервер, відповідь не потрібна», «сервер сам штовхає подію
+клієнтам» — іде через **уніфікований протокол** (простір імен `SetNet.Protocol`, частина ядра — встановлювати нічого
+не треба).
+
+Він займає **один** зарезервований wire-тип (`65447`) і всередині нього демультиплексується за **каналом** (`ushort`,
+напр. ваш власний `World = 1000`) та **op** (`ushort`) у межах цього каналу. Усі готові модулі (Rooms, Inventory,
+Chat, …) розмовляють саме так, тож ваші власні канали виглядають і поводяться так само.
+
+### 5.1 Який тип повідомлення мені потрібен?
+
+| Я хочу… | Клієнт | Сервер |
+|---|---|---|
+| Надіслати одностороннє повідомлення | `SendAsync<T>(type, msg)` | `[MessageHandler]` + `IServerMessageHandler<T>` (розділ 4) |
+| Прийняти одностороннє повідомлення | `[MessageHandler]` + `IClientMessageHandler<T>` | `peer.SendAsync<T>(type, msg)` |
+| **Спитати й дочекатися відповіді** | `RequestAsync<TReq,TResp>(channel, op, req)` | `[ProtocolChannel]` + метод `[Op]`, що **повертає** відповідь |
+| **Повідомити сервер без відповіді** | `PostAsync<T>(channel, op, msg)` | метод `[Op]`, що повертає `void`/`Task` |
+| **Приймати push від сервера** | `On<T>(channel, op, …)` або метод `[Event]` | `peer.PublishAsync(channel, op, evt)` |
+| **Виклик у стилі методу** | `CallAsync<TReq,TResp>(methodId, req)` (`SetNet.Rpc`) | `[RpcMethod]` + `IRpcHandler<TReq,TResp>` |
+
+Усе це працює **разом на одному з'єднанні**; повна мапа шарів і модулів — у [COMMUNICATION.md](COMMUNICATION.md).
+
+### 5.2 Крок 1 — спільні контракти
+
+Id та DTO мають збігатися на обох боках, тож оголосіть їх один раз у спільній збірці:
+
+```csharp
+using MessagePack;
+
+public static class GameChannels
+{
+    public const ushort World = 1000;                    // ваш власний id каналу — див. 5.9
+}
+
+public enum WorldOp  : ushort { Drop = 1, Ready = 2 }    // клієнт → сервер
+public enum WorldEvt : ushort { ItemDropped = 10 }       // сервер → клієнт
+
+[MessagePackObject]
+public class DropReq  { [Key(0)] public string ItemId { get; set; } = ""; [Key(1)] public int Count { get; set; } }
+
+[MessagePackObject]
+public class DropResp { [Key(0)] public bool Ok { get; set; } [Key(1)] public int Left { get; set; } }
+
+[MessagePackObject]
+public class ItemDropped { [Key(0)] public int PlayerId { get; set; } [Key(1)] public string ItemId { get; set; } = ""; }
+```
+
+### 5.3 Сервер — один метод на op (`[ProtocolChannel]` + `[Op]`)
+
+Щоденний стиль: звичайний клас, позначений id каналу, і один метод на операцію — без `switch`, без базового класу,
+без ручної реєстрації (знаходиться рефлексією, як `[MessageHandler]`).
+
+```csharp
+using SetNet.Core;
+using SetNet.Protocol;
+
+[ProtocolChannel(GameChannels.World)]
+public sealed class WorldChannel
+{
+    // запит → відповідь: ЗНАЧЕННЯ, ЩО ПОВЕРТАЄТЬСЯ, і є відповіддю
+    [Op((ushort)WorldOp.Drop)]
+    public async Task<DropResp> Drop(BasePeer peer, DropReq req)
+    {
+        if (req.Count <= 0) throw new ProtocolException("Count must be positive.");   // → помилка у викликача
+
+        var left = await Game.TryTakeAsync(peer, req.ItemId, req.Count);              // ваша авторитетна логіка
+        if (left < 0) throw new ProtocolException("Not enough items.");
+
+        return new DropResp { Ok = true, Left = left };   // (щоб ще й сповістити інших гравців — див. 5.6)
+    }
+
+    // fire-and-forget: void/Task не надсилає нічого назад (саме сюди б'є PostAsync)
+    [Op((ushort)WorldOp.Ready)]
+    public void Ready(BasePeer peer) => Game.MarkReady(peer);
+
+    // сире всередину, сире назовні — серіалізатор взагалі не задіяний
+    [Op(99)]
+    public byte[] Echo(byte[] body) => body;
+}
+```
+
+**Параметри** зв'язуються **за типом**, у будь-якому порядку, усі необов'язкові:
+
+| Тип параметра | Що підставляється |
+|---|---|
+| `BasePeer` | peer, який надіслав повідомлення |
+| `ChannelRequest` | повний контекст запиту (див. 5.4) |
+| `byte[]` | сире, недесеріалізоване тіло |
+| будь-що інше | тіло, десеріалізоване вашим серіалізатором (не більше одного такого параметра) |
+
+**Тип повернення → відповідь:**
+
+| Повертає | Ефект |
+|---|---|
+| `T` / `Task<T>` | серіалізується й надсилається як відповідь |
+| `byte[]` / `Task<byte[]>` | надсилається як відповідь без змін (без серіалізації) |
+| `void` / `Task` | відповіді немає — для fire-and-forget оп (або відповідайте самі через параметр `ChannelRequest`) |
+| кидає виняток | `RequestAsync` у викликача кидає `ProtocolException` із вашим повідомленням |
+
+### 5.4 Сервер — повний контроль (`IChannelService`)
+
+Коли потрібна одна точка входу на весь канал (спільна підготовка, власна маршрутизація, op-и, що визначаються під час
+виконання), реалізуйте `IChannelService`. Клас, який його реалізує, лишає керування за собою, а його методи `[Op]`
+(якщо вони є) **ігноруються**.
+
+```csharp
+[ProtocolChannel(GameChannels.World)]
+public sealed class WorldService : IChannelService
+{
+    public async Task HandleAsync(ChannelRequest r)
+    {
+        switch ((WorldOp)r.Op)
+        {
+            case WorldOp.Drop:
+                var req = r.Read<DropReq>();                        // типізоване тіло … або r.RawBody для байтів
+                await r.ReplyAsync(new DropResp { Ok = true });     // типізована відповідь … або r.ReplyRawAsync(bytes)
+                break;
+
+            case WorldOp.Ready:
+                Game.MarkReady(r.Peer);                             // fire-and-forget: без відповіді
+                break;
+
+            default:
+                if (r.ExpectsReply) await r.ReplyErrorAsync($"Unknown op {r.Op}");
+                break;
+        }
+    }
+}
+```
+
+`ChannelRequest`: `Peer`, `Channel`, `Op`, `RawBody`, `ExpectsReply`, `Read<T>()`, `ReplyAsync<T>(T)`,
+`ReplyRawAsync(byte[])`, `ReplyErrorAsync(string)`. Відповідайте **щонайбільше один раз** — наступні виклики
+ігноруються.
+
+### 5.5 Клієнт — запит і post
+
+```csharp
+using SetNet.Protocol;
+
+// запит → відповідь (корельовано, завжди Reliable, з тайм-аутом)
+DropResp resp = await client.RequestAsync<DropReq, DropResp>(
+    GameChannels.World, (ushort)WorldOp.Drop,
+    new DropReq { ItemId = "sword", Count = 1 },
+    timeoutMs: 10000);                       // дефолт 10 с; ≤ 0 = чекати нескінченно; є ще CancellationToken
+
+byte[] raw = await client.RequestRawAsync(GameChannels.World, 99, new byte[] { 1, 2, 3 });   // без серіалізатора
+
+// fire-and-forget — єдина форма, де ви обираєте надійність
+await client.PostAsync(GameChannels.World, (ushort)WorldOp.Ready, new ReadyDto());
+await client.PostRawAsync(GameChannels.World, (ushort)WorldOp.Ready, bytes, DeliveryMethod.Unreliable);
+```
+
+### 5.6 Push із сервера та підписка на клієнті
+
+Сервер — штовхнути одному peer'у або багатьом:
+
+```csharp
+await peer.PublishAsync(GameChannels.World, (ushort)WorldEvt.ItemDropped, evt);       // один клієнт, типізовано
+await peer.PublishRawAsync(GameChannels.World, (ushort)WorldEvt.ItemDropped, bytes);  // один клієнт, сиро
+
+IEnumerable<BasePeer> others = server.OthersInRoomOf(peer);   // хелпер SetNet.Rooms — або ваш власний список peer'ів
+await others.PublishAsync(GameChannels.World, (ushort)WorldEvt.ItemDropped, evt);     // фан-аут, best-effort
+```
+
+Клієнт — два стилі, і **обидва** спрацьовують на один і той самий `(channel, op)`:
+
+```csharp
+// (а) імперативний — може замикатися на стані, повертає IDisposable для відписки
+IDisposable sub = client.On<ItemDropped>(GameChannels.World, (ushort)WorldEvt.ItemDropped, e => Render(e));
+client.OnRaw(GameChannels.World, 99, bytes => { /* декодуєте самі */ });
+// sub.Dispose();   // відписка
+
+// (б) декларативний — клас [ProtocolChannel] із методами [Event], підписується сам на першій події
+[ProtocolChannel(GameChannels.World)]
+public sealed class WorldEvents
+{
+    [Event((ushort)WorldEvt.ItemDropped)] public void OnDropped(ItemDropped e) => Render(e);
+    [Event(99)]                           public void OnBlob(byte[] body)      { /* сире тіло */ }
+}
+```
+
+Метод `[Event]` приймає типізоване тіло, `byte[]` або взагалі не має параметрів і повертає `void` чи `Task` (асинхронні
+хендлери йдуть fire-and-forget; виняток в одному з них ізольований). Його екземпляри — **singleton на весь процес**,
+тож коли хендлер має замикатися на стані конкретного екземпляра (напр. драйвер, що тримає стан кімнати), беріть
+стиль (а).
+
+### 5.7 Помилки й тайм-аути
+
+| На сервері | У викликача (`RequestAsync`) |
+|---|---|
+| хендлер кидає (будь-який виняток) | `ProtocolException` із текстом винятку |
+| `throw new ProtocolException("…")` | те саме — це і є навмисний спосіб завалити запит |
+| жоден `[Op]` не збігся з op | `ProtocolException("No [Op(N)] handler on channel C.")` |
+| для каналу немає сервісу | `ProtocolException("No protocol channel C is configured on this server.")` |
+| op ніколи не відповідає (повертає `void`/`Task`) | `TimeoutException` після `timeoutMs` |
+
+Fire-and-forget `PostAsync` на невідомий op тихо ігнорується — на нього ніхто не чекає. Готові модулі перемапують
+`ProtocolException` у власний тип (`RoomException`, `RpcException`, …); робіть так само у власному клієнтському
+драйвері, якщо хочете доменний тип помилки.
+
+### 5.8 RPC — типізований аліас `RequestAsync` (`SetNet.Rpc`)
+
+Якщо фронтенд із id методу читається краще, ніж канал + op: `client.CallAsync<TReq,TResp>(id, req)` **це і є**
+`client.RequestAsync<TReq,TResp>(Channels.Rpc, id, req)` — той самий конверт і та сама кореляція, лише `RpcException`
+замість `ProtocolException` і дефолтний тайм-аут 5 с.
+
+```bash
+dotnet add package SetNet.Rpc
+```
+
+```csharp
+using SetNet.Rpc;
+
+RpcRuntime.Enable();      // один раз на старті, на обох боках
+
+// клієнт
+var resp = await client.CallAsync<LoginReq, LoginResp>(1, new LoginReq { Name = "alice" });
+
+// сервер
+[RpcMethod(1)]
+public class LoginHandler : IRpcHandler<LoginReq, LoginResp>
+{
+    public Task<LoginResp> HandleAsync(BasePeer peer, LoginReq req)
+        => Task.FromResult(new LoginResp { Ok = true });
+}
+```
+
+### 5.9 Правила й підводні камені
+
+- **Id каналів приблизно від 1000 — ваші.** 1–34 зайняті готовими модулями (`SetNet.Protocol.Channels`). Простір
+  каналів незалежний від простору `ushort`-типів повідомлень ядра, тож `GameChannels.World = 1000` і
+  `MessageTypes.PlayerMove = 1` ніколи не конфліктують.
+- **Один сервіс на id каналу.** Серверні класи `[ProtocolChannel]` знаходяться скануванням завантажених збірок
+  (для каналу перемагає знайдений останнім) — не через `runtime.Handlers`. Клас вважається *серверним* каналом лише
+  якщо реалізує `IChannelService` або має принаймні один метод `[Op]`; клас лише з методами `[Event]` — клієнтський.
+- **Op-и живуть у межах свого каналу.** `[Op(1)]` у двох різних каналах ніяк не пов'язані; дублікати *в одному* класі
+  кидають виняток на етапі знаходження.
+- **Надійність.** `Request*` і `Publish*` — завжди `Reliable`; лише `Post*` дозволяє обрати `Unreliable`.
+  Високочастотний стан (позиції, здоров'я) — це `SetNet.StateSync` або шар ядра, а не сюди.
+- **Типізовано vs сиро.** Типізовані перевантаження використовують серіалізатор endpoint'а, тож `T` має відповідати
+  його вимогам (MessagePack: `[MessagePackObject]`/`[Key]`). Родина `*Raw*` (`RequestRawAsync`, `PostRawAsync`,
+  `OnRaw`, `RawBody`, `ReplyRawAsync`) від серіалізатора не залежить — зручно для контрольних повідомлень із ручним
+  фреймінгом.
+- **Готовим модулям потрібен їхній `Enable()`.** Викличте `XxxRuntime.Enable()` один раз на старті, щоб збірка модуля
+  була завантажена й доступна для знаходження. Вашим власним каналам у вашій же збірці не потрібно нічого.
+- **Екземпляри хендлерів — singleton**, створюються тим самим активатором, що й `[MessageHandler]` — для constructor
+  injection беріть `SetNet.DependencyInjection`.
+
+---
+
+## 6. Транспорти: TCP / UDP / Both
 
 Обирається через `Configuration.TransportType` (дефолт `Tcp` — наявний TCP-код працює без змін).
 
@@ -304,7 +563,7 @@ dotnet run --project tests/SetNet.Tests -- <frag|tcp|udp|loss|both|idle|deadlock
 
 ---
 
-## 6. Доставка та надійні канали
+## 7. Доставка та надійні канали
 
 `SendAsync` має перевантаження:
 
@@ -332,7 +591,7 @@ await SendAsync(type, chat,     DeliveryMethod.Reliable, channel: 1);
 
 ---
 
-## 7. Розриви, reconnect, heartbeat
+## 8. Розриви, reconnect, heartbeat
 
 `BaseClient` розрізняє навмисний `Disconnect()` від неочікуваної втрати. **`OnDisconnected` спрацьовує рівно один раз** на з'єднання.
 
@@ -374,7 +633,7 @@ var config = new Configuration { HeartbeatEnabled = true, HeartbeatIntervalMs = 
 
 ---
 
-## 8. Продуктивність і порядок обробки
+## 9. Продуктивність і порядок обробки
 
 Усі прапорці нижче — opt-in (дефолт зберігає початкову поведінку).
 
@@ -410,7 +669,7 @@ await FlushAsync();        // один запис у сокет (на BaseClient
 
 ---
 
-## 9. Production-загартування
+## 10. Production-загартування
 
 ```csharp
 using System.Security.Cryptography.X509Certificates;
@@ -449,7 +708,7 @@ config.ValidateProduction(); // кидає, якщо лишились production
 
 ---
 
-## 10. Метрики
+## 11. Метрики
 
 ```csharp
 var m = config.Metrics; // NetworkMetrics, потокобезпечні лічильники
@@ -461,7 +720,7 @@ int live = server.ActiveConnections;
 
 ---
 
-## 11. Утиліти
+## 12. Утиліти
 
 ### GameLoopScheduler — періодичні задачі
 ```csharp
@@ -483,7 +742,7 @@ ev.Trigger("PlayerJoined", "Alex");
 
 ---
 
-## 12. Повний довідник Configuration
+## 13. Повний довідник Configuration
 
 | Опція | Дефолт | Призначення |
 |---|---|---|
@@ -526,7 +785,7 @@ ev.Trigger("PlayerJoined", "Alex");
 
 ---
 
-## 13. Прод-чекліст
+## 14. Прод-чекліст
 
 Дефолти оптимізовані під сумісність, не під прод. Перед запуском:
 
@@ -542,11 +801,15 @@ ev.Trigger("PlayerJoined", "Alex");
 
 ---
 
-## 14. Поширені помилки
+## 15. Поширені помилки
 
 | Симптом | Причина / розв'язання |
 |---|---|
 | Хендлер не викликається | Немає `[MessageHandler]`, не той тип, не реалізує інтерфейс, або клас/assembly не завантажений і не зареєстрований у `SetNetRuntime.Handlers`. |
+| `ProtocolException: No protocol channel N is configured on this server` | На сервері немає класу `[ProtocolChannel(N)]`, його збірка не завантажена (для готового модуля викличте `XxxRuntime.Enable()`), або клас не реалізує `IChannelService` і не має жодного методу `[Op]`. |
+| `RequestAsync` кидає `TimeoutException` | Метод `[Op]` повертає `void`/`Task`, тож ніколи не відповідає (такі повідомлення шліть через `PostAsync`), не збігається id оп, або хендлер повільніший за `timeoutMs`. |
+| `On<T>` / `[Event]` не спрацьовує | На класі немає `[ProtocolChannel]`, `(channel, op)` не збігається з серверним `PublishAsync`, або `IDisposable` підписки вже звільнено. |
+| `[Event]`-хендлер бачить не той стан | Екземпляри `[Event]`-хендлерів — singleton на весь процес; якщо хендлер має замикатися на стані екземпляра, беріть `client.On<T>(...)` (розділ 5.6). |
 | Повідомлення «б'ються» | Різні серіалізатори на двох боках; (MessagePack) DTO без `[MessagePackObject]`/`[Key]`; або тип не збігається. |
 | `InvalidOperationException: No serializer configured` | На endpoint runtime немає serializer-а — викличте `SetNetSerializer.Use(...)` для default runtime або `runtime.UseSerializer(...)` перед присвоєнням `Configuration.Runtime` (див. розділ 4). |
 | Не підключається | Host/Port різні на клієнті й сервері; брандмауер; (UDP) handshake блокується. |

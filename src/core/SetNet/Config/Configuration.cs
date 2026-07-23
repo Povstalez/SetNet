@@ -296,12 +296,25 @@ namespace SetNet.Config
         public ConfigurationIssue[] AnalyzeProduction() => ConfigurationAnalyzer.Analyze(this, production: true);
 
         /// <summary>Throws if production-readiness checks find an error-level issue.</summary>
-        public void ValidateProduction()
+        public void ValidateProduction() => ValidateProduction(strict: false);
+
+        /// <summary>
+        /// Throws if production-readiness checks find an error-level issue. When <paramref name="strict"/> is true the
+        /// check is <b>fail-closed</b>: warning-level findings too — a disabled TLS channel, no per-IP rate limiting,
+        /// no send timeout, and the rest of <see cref="AnalyzeProduction"/> — are treated as fatal, so an insecure
+        /// (but structurally valid) configuration refuses to start instead of only logging an advisory.
+        /// </summary>
+        /// <param name="strict">When true, promote every warning to a hard failure.</param>
+        public void ValidateProduction(bool strict)
         {
             var issues = AnalyzeProduction();
             foreach (var issue in issues)
                 if (issue.Severity == ConfigurationIssueSeverity.Error)
                     throw new InvalidOperationException(issue.Message);
+            if (!strict) return;
+            foreach (var issue in issues)
+                if (issue.Severity == ConfigurationIssueSeverity.Warning)
+                    throw new InvalidOperationException("Strict production validation failed: " + issue.Message);
         }
     }
 }

@@ -137,6 +137,16 @@ namespace SetNet.Core.Transport.Udp
             byte[] datagram;
             lock (_lock)
             {
+                // A concurrent Dispose may have released the window permits and cleared _unacked between our WaitAsync
+                // above and here. If so, release the permit we hold (Dispose's release count didn't include it) and
+                // fail the send — otherwise this permit is retained on a dead channel and any other blocked sender
+                // waits on it forever.
+                if (_disposed)
+                {
+                    _windowSlots.Release();
+                    throw new InvalidOperationException("Reliable UDP channel is closed.");
+                }
+
                 // PEEK the next sequence — do NOT consume it yet. An oversized datagram is rejected below; if we
                 // had already incremented _nextSeq it would leave a permanent hole in the sequence space that the
                 // receiver's ordered cursor blocks on forever (the seq is never sent, so never retransmitted).

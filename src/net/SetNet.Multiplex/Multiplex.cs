@@ -52,10 +52,16 @@ namespace SetNet.Multiplex
     /// </summary>
     internal sealed class MuxDemux
     {
+        // Per-lane backlog cap. Injected frames bypass the core inbound-queue back-pressure (they're already
+        // "handled" from the socket's view), so an unbounded lane would let a flooder grow memory freely; past this
+        // depth Enqueue refuses the frame and the caller drops the peer.
+        private const int MaxLaneQueueDepth = 4096;
+
         private sealed class Lane
         {
             public readonly ConcurrentQueue<(ushort Type, byte[] Payload)> Queue = new ConcurrentQueue<(ushort, byte[])>();
             public int Draining;   // 0 = idle, 1 = a drain task owns the queue
+            public int Depth;      // queued items not yet drained (tracked so the cap check is O(1))
         }
 
         private readonly ConcurrentDictionary<byte, Lane> _lanes = new ConcurrentDictionary<byte, Lane>();
@@ -63,12 +69,15 @@ namespace SetNet.Multiplex
 
         public MuxDemux(Action<ushort, byte[]> inject) => _inject = inject;
 
-        /// <summary>Queues a decoded frame on its channel's lane and ensures a drain task is running for it.</summary>
-        public void Enqueue(byte channel, ushort origType, byte[] payload)
+        /// <summary>Queues a decoded frame on its channel's lane and ensures a drain task is running for it. Returns false when the lane is over its backlog cap (the frame is dropped).</summary>
+        public bool Enqueue(byte channel, ushort origType, byte[] payload)
         {
             var lane = _lanes.GetOrAdd(channel, _ => new Lane());
+            if (Volatile.Read(ref lane.Depth) >= MaxLaneQueueDepth) return false;   // lane flooded faster than it drains
+            Interlocked.Increment(ref lane.Depth);
             lane.Queue.Enqueue((origType, payload));
             ScheduleDrain(lane);
+            return true;
         }
 
         private void ScheduleDrain(Lane lane)
@@ -82,6 +91,7 @@ namespace SetNet.Multiplex
                 {
                     while (lane.Queue.TryDequeue(out var item))
                     {
+                        Interlocked.Decrement(ref lane.Depth);
                         try { _inject(item.Type, item.Payload); } catch { /* handler faults are the socket's concern */ }
                     }
                     Interlocked.Exchange(ref lane.Draining, 0);
@@ -134,7 +144,7 @@ namespace SetNet.Multiplex
             foreach (var client in Clients.Keys)
             {
                 var demux = ClientDemux.GetValue(client, c => new MuxDemux(c.InjectFrame));
-                demux.Enqueue(decoded.Value.Channel, decoded.Value.OrigType, decoded.Value.Payload);
+                demux.Enqueue(decoded.Value.Channel, decoded.Value.OrigType, decoded.Value.Payload);   // over-cap frames are dropped
             }
         }
     }
@@ -152,7 +162,9 @@ namespace SetNet.Multiplex
             if (decoded != null)
             {
                 var demux = PeerDemux.GetValue(peer, p => new MuxDemux(p.InjectFrame));
-                demux.Enqueue(decoded.Value.Channel, decoded.Value.OrigType, decoded.Value.Payload);
+                // A peer that outruns its own lane drain is flooding — drop it rather than buffer unboundedly.
+                if (!demux.Enqueue(decoded.Value.Channel, decoded.Value.OrigType, decoded.Value.Payload))
+                    peer.CurrentPeerInfo.Disconnect();
             }
             return Task.CompletedTask;
         }

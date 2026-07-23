@@ -153,6 +153,36 @@ public class StateSyncTests
         await server.StopAsync();
     }
 
+    [Fact]
+    public async Task CanReceive_Withholds_World_From_Unauthorized_Peers()
+    {
+        var allow = new bool[1];   // gate closed until we "authorize" (boxed so the tick thread sees the flip)
+        var server = new TestServer(Config("ss-gate"));
+        var world = server.UseStateSync(new StateSyncOptions { TickRate = 60, CanReceive = _ => allow[0] });
+        _ = server.StartAsync();
+        await Task.Delay(100);
+
+        var client = new TestClient(Config("ss-gate"));
+        var repl = client.UseStateSync(new StateSyncOptions { InterpolationDelayMs = 0 });
+        await client.ConnectAsync();
+        await Task.Delay(100);   // observer registers (auto-observe), but CanReceive is still false
+
+        var e = world.Spawn(PlayerArch);
+        e.SetVec3(0, new Vec3(1, 2, 3));
+
+        // Gate closed: the peer is an observer, yet must receive nothing (the inbound auth gate can't stop this — CanReceive does).
+        await Task.Delay(300);
+        repl.Update();
+        Assert.Empty(repl.Entities);
+
+        // Authorize → replication begins on the next ticks.
+        allow[0] = true;
+        Assert.True(await WaitUntil(() => { repl.Update(); return repl.Entities.Any(); }));
+
+        client.Disconnect();
+        await server.StopAsync();
+    }
+
     private static bool Approx(Vec3 a, Vec3 b, float eps = 0.01f)
         => Math.Abs(a.X - b.X) < eps && Math.Abs(a.Y - b.Y) < eps && Math.Abs(a.Z - b.Z) < eps;
 

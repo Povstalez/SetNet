@@ -84,4 +84,26 @@ public class MatchmakingTests
         b.Disconnect();
         await server.StopAsync();
     }
+
+    [Fact]
+    public async Task Rejects_Overlong_Queue_Name()
+    {
+        var store = new MemoryRoomStore();
+        var server = new TestServer(Config("mm-badname"));
+        server.UseRooms(store);
+        server.UseMatchmaking(store, new MatchmakingOptions { MatchSize = 2, TickIntervalMs = 100, MaxQueueNameLength = 32 });
+        _ = server.StartAsync();
+        await Task.Delay(100);
+
+        var a = new TestClient(Config("mm-badname"));
+        a.UseRooms(); var mmA = a.UseMatchmaking();
+        await a.ConnectAsync();
+
+        // A client picks the queue name; an absurdly long one must be rejected, not stored, to bound server memory.
+        var longName = new string('q', 5000);
+        await Assert.ThrowsAsync<MatchmakingException>(() => mmA.FindMatchAsync(new MatchRequest { Queue = longName }));
+
+        a.Disconnect();
+        await server.StopAsync();
+    }
 }

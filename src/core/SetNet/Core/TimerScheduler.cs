@@ -82,7 +82,10 @@ namespace SetNet.Core
             {
                 while (!_cts.IsCancellationRequested)
                 {
-                    await Task.Delay(BaseTickMs, _cts.Token).ConfigureAwait(false);
+                    // Honor the single-threaded-host flag like the rest of the core: on Unity WebGL (no thread pool)
+                    // the continuation must resume on the pumped main thread, else this loop — which drives the client
+                    // heartbeat — stalls and the server times the client out.
+                    await Task.Delay(BaseTickMs, _cts.Token).ConfigureAwait(global::SetNet.SetNetSync.ContinueOnCapturedContext);
                     // Read the clock ONCE per tick and compare every entry against the local, instead of a
                     // Stopwatch.GetTimestamp() syscall per entry — so the scan cost scales as cheap integer
                     // comparisons (O(entries)) rather than O(entries) syscalls at 200 Hz.

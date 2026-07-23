@@ -78,7 +78,8 @@ namespace SetNet.Utils
         public async Task StartAsync()
         {
             _loopTask = RunLoopAsync();
-            await _loopTask;
+            try { await _loopTask; }
+            catch (OperationCanceledException) { /* a normal StopAsync/ExternalToken cancellation — exit cleanly */ }
         }
 
         /// <summary>

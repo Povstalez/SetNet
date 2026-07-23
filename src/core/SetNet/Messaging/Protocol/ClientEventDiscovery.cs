@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
+using System.Runtime.CompilerServices;
 using System.Threading;
 using System.Threading.Tasks;
 using SetNet.Core.Commands;
@@ -18,53 +19,68 @@ namespace SetNet.Protocol
     /// </summary>
     internal static class ClientEventDiscovery
     {
-        private static readonly HashSet<ProtocolSubscriptionRegistry> Done = new HashSet<ProtocolSubscriptionRegistry>();
-        private static readonly object Gate = new object();
+        // Per-registry scan state, weakly referenced so a disposed scoped runtime's registry can be collected
+        // (a strong static set would pin every runtime that ever received an event for the process lifetime).
+        private static readonly ConditionalWeakTable<ProtocolSubscriptionRegistry, ScanState> States
+            = new ConditionalWeakTable<ProtocolSubscriptionRegistry, ScanState>();
+
+        private sealed class ScanState
+        {
+            public readonly HashSet<Assembly> Scanned = new HashSet<Assembly>();
+            public int LastAssemblyCount = -1;
+        }
 
         private static readonly MethodInfo DeserializeDef = typeof(ISerializer).GetMethods()
             .First(m => m.Name == nameof(ISerializer.Deserialize) && m.IsGenericMethodDefinition && m.GetParameters().Length == 1);
 
-        /// <summary>Scans and auto-subscribes once; a no-op after the first call.</summary>
+        /// <summary>Scans and auto-subscribes into the default runtime's registry.</summary>
         public static void EnsureDiscovered() => EnsureDiscovered(SetNetRuntime.Default.ProtocolSubscriptions);
 
-        /// <summary>Scans and auto-subscribes into a runtime-scoped subscription registry once.</summary>
+        /// <summary>
+        /// Subscribes declarative <c>[Event]</c> handlers into <paramref name="registry"/>, scanning any assemblies
+        /// that have loaded since the last call — so a module enabled after the first event still gets its client
+        /// event handlers wired (mirrors <see cref="ChannelServiceRegistry"/>'s rescan-on-miss instead of scanning
+        /// exactly once, ever). Cheap on the steady state: with no newly-loaded assemblies it early-outs on a count check.
+        /// </summary>
         public static void EnsureDiscovered(ProtocolSubscriptionRegistry registry)
         {
             if (registry == null) throw new ArgumentNullException(nameof(registry));
-            lock (Gate)
+            var state = States.GetValue(registry, _ => new ScanState());
+            lock (state)
             {
-                if (!Done.Add(registry)) return;
-                Scan(registry);
+                var assemblies = AppDomain.CurrentDomain.GetAssemblies();
+                if (assemblies.Length == state.LastAssemblyCount) return;   // nothing new loaded since the last scan
+                state.LastAssemblyCount = assemblies.Length;
+                foreach (var assembly in assemblies)
+                    if (state.Scanned.Add(assembly))                        // scan each assembly's [Event] handlers exactly once
+                        ScanAssembly(registry, assembly);
             }
         }
 
-        private static void Scan(ProtocolSubscriptionRegistry registry)
+        private static void ScanAssembly(ProtocolSubscriptionRegistry registry, Assembly assembly)
         {
-            foreach (var assembly in AppDomain.CurrentDomain.GetAssemblies())
+            Type[] types;
+            try { types = assembly.GetTypes(); }
+            catch (ReflectionTypeLoadException ex) { types = ex.Types.Where(t => t != null).ToArray()!; }
+
+            foreach (var type in types)
             {
-                Type[] types;
-                try { types = assembly.GetTypes(); }
-                catch (ReflectionTypeLoadException ex) { types = ex.Types.Where(t => t != null).ToArray()!; }
+                if (type == null || type.IsAbstract || type.IsInterface) continue;
 
-                foreach (var type in types)
+                var channel = type.GetCustomAttribute<ProtocolChannelAttribute>();
+                if (channel == null) continue;
+
+                var eventMethods = type.GetMethods(BindingFlags.Public | BindingFlags.Instance)
+                    .Where(m => m.GetCustomAttribute<EventAttribute>() != null)
+                    .ToArray();
+                if (eventMethods.Length == 0) continue;
+
+                var instance = HandlerActivator.Create(type);
+                foreach (var method in eventMethods)
                 {
-                    if (type == null || type.IsAbstract || type.IsInterface) continue;
-
-                    var channel = type.GetCustomAttribute<ProtocolChannelAttribute>();
-                    if (channel == null) continue;
-
-                    var eventMethods = type.GetMethods(BindingFlags.Public | BindingFlags.Instance)
-                        .Where(m => m.GetCustomAttribute<EventAttribute>() != null)
-                        .ToArray();
-                    if (eventMethods.Length == 0) continue;
-
-                    var instance = HandlerActivator.Create(type);
-                    foreach (var method in eventMethods)
-                    {
-                        var ev = method.GetCustomAttribute<EventAttribute>()!;
-                        // The returned IDisposable is intentionally not kept: attribute handlers live for the process.
-                        registry.Add(channel.Channel, ev.Op, BuildCallback(registry, instance, method));
-                    }
+                    var ev = method.GetCustomAttribute<EventAttribute>()!;
+                    // The returned IDisposable is intentionally not kept: attribute handlers live for the process.
+                    registry.Add(channel.Channel, ev.Op, BuildCallback(registry, instance, method));
                 }
             }
         }

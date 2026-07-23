@@ -20,13 +20,23 @@ namespace SetNet.Compression
         private readonly ISerializer _inner;
         private readonly int _minBytes;
         private readonly CompressionLevel _level;
+        private readonly long _maxDecompressedBytes;
 
         /// <summary>Wraps <paramref name="inner"/>. Payloads smaller than <paramref name="minBytes"/> skip compression.</summary>
-        public CompressingSerializer(ISerializer inner, int minBytes = 256, CompressionLevel level = CompressionLevel.Fastest)
+        /// <param name="inner">The serializer whose output is compressed.</param>
+        /// <param name="minBytes">Payloads below this size are sent uncompressed.</param>
+        /// <param name="level">Brotli compression level.</param>
+        /// <param name="maxDecompressedBytes">
+        /// Hard ceiling on the size a single message may decompress to (default 64 MB; 0 = unbounded). A small crafted
+        /// payload can expand enormously (a "decompression bomb"); decompression past this limit throws instead of
+        /// allocating without bound. Keep it at or below your peers' expected largest message.
+        /// </param>
+        public CompressingSerializer(ISerializer inner, int minBytes = 256, CompressionLevel level = CompressionLevel.Fastest, long maxDecompressedBytes = 64L * 1024 * 1024)
         {
             _inner = inner ?? throw new ArgumentNullException(nameof(inner));
             _minBytes = minBytes;
             _level = level;
+            _maxDecompressedBytes = maxDecompressedBytes;
         }
 
         /// <inheritdoc/>
@@ -60,8 +70,23 @@ namespace SetNet.Compression
             using var input = new MemoryStream(data, 1, data.Length - 1);
             using var brotli = new BrotliStream(input, CompressionMode.Decompress);
             using var output = new MemoryStream();
-            brotli.CopyTo(output);
+            CopyBounded(brotli, output, _maxDecompressedBytes);
             return _inner.Deserialize<T>(output.ToArray());
+        }
+
+        /// <summary>Copies <paramref name="source"/> into <paramref name="destination"/>, throwing once more than <paramref name="maxBytes"/> bytes have been read (0 = unbounded), so a decompression bomb can't exhaust memory.</summary>
+        private static void CopyBounded(Stream source, Stream destination, long maxBytes)
+        {
+            var buffer = new byte[81920];
+            long total = 0;
+            int read;
+            while ((read = source.Read(buffer, 0, buffer.Length)) > 0)
+            {
+                total += read;
+                if (maxBytes > 0 && total > maxBytes)
+                    throw new InvalidOperationException($"Decompressed payload exceeds the {maxBytes}-byte limit (possible decompression bomb).");
+                destination.Write(buffer, 0, read);
+            }
         }
 
         private static byte[] Framed(byte flag, byte[] payload)

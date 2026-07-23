@@ -1,4 +1,5 @@
 using System;
+using System.Buffers.Binary;
 
 namespace SetNet.Core
 {
@@ -173,7 +174,7 @@ namespace SetNet.Core
             if (available < 4)
                 return false;
 
-            var length = BitConverter.ToInt32(_buffer, _start);
+            var length = BinaryPrimitives.ReadInt32LittleEndian(_buffer.AsSpan(_start, 4));   // framing is little-endian (matches WriteFrame)
 
             // Guard against a corrupt/malicious length prefix. A valid frame's length counts the
             // 2-byte type plus payload, so it must be >= 2; anything smaller (negative, 0, 1) is
@@ -189,7 +190,7 @@ namespace SetNet.Core
                 throw new System.IO.InvalidDataException(
                     $"Incoming frame length {length} exceeds the configured maximum of {_maxFrameSize} bytes.");
 
-            if (available < length + 4)
+            if (length > available - 4)   // overflow-safe (available >= 4 here) — avoids length+4 wrapping negative when the frame cap is off
                 return false;
 
             packet = new byte[length];
@@ -224,7 +225,7 @@ namespace SetNet.Core
             if (available < 4)
                 return false;
 
-            var length = BitConverter.ToInt32(_buffer, _start);
+            var length = BinaryPrimitives.ReadInt32LittleEndian(_buffer.AsSpan(_start, 4));   // framing is little-endian (matches WriteFrame)
             // length counts the 2-byte type + payload, so a valid frame is always >= 2.
             // Negative/0/1 is a corrupt or malicious prefix: reset and resync rather than
             // computing a negative payload length (which would throw on allocation).
@@ -236,7 +237,7 @@ namespace SetNet.Core
             if (_maxFrameSize > 0 && length > _maxFrameSize)
                 throw new System.IO.InvalidDataException(
                     $"Incoming frame length {length} exceeds the configured maximum of {_maxFrameSize} bytes.");
-            if (available < length + 4)
+            if (length > available - 4)   // overflow-safe (available >= 4 here) — avoids length+4 wrapping negative when the frame cap is off
                 return false;
 
             // Frame layout: [4-byte length][2-byte type][payload]; length counts type + payload.

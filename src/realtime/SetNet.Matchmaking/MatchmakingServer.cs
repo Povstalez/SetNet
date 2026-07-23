@@ -61,8 +61,16 @@ namespace SetNet.Matchmaking
 
         public string Enqueue(BasePeer peer, string queue, int skill)
         {
-            var ticket = new Ticket(peer, skill, Stopwatch.GetTimestamp());
+            queue ??= "";
+            // The queue name is client-supplied: bound its length, and cap the number of distinct queues, so a single
+            // peer can't grow server memory without limit by spamming ever-changing names.
+            if (queue.Length == 0 || queue.Length > Options.MaxQueueNameLength)
+                throw new ProtocolException("Invalid queue name.");
             RemovePeer(peer.CurrentPeerInfo.Id);   // a peer waits in at most one queue
+            if (!_queues.ContainsKey(queue) && _queues.Count >= Options.MaxQueues)
+                throw new ProtocolException("Too many active queues.");
+
+            var ticket = new Ticket(peer, skill, Stopwatch.GetTimestamp());
             var bucket = _queues.GetOrAdd(queue, _ => new ConcurrentDictionary<Guid, Ticket>());
             bucket[ticket.PeerId] = ticket;
             _peerQueue[ticket.PeerId] = queue;
@@ -72,7 +80,18 @@ namespace SetNet.Matchmaking
         public void RemovePeer(Guid peerId)
         {
             if (_peerQueue.TryRemove(peerId, out var queue) && _queues.TryGetValue(queue, out var bucket))
+            {
                 bucket.TryRemove(peerId, out _);
+                // Reclaim an emptied bucket so a churn of distinct queue names doesn't leave dead entries behind.
+                // The key/value Remove only drops it if it's still this exact (now-empty) bucket; if a concurrent
+                // Enqueue slipped a ticket back in, reinstate it so that player stays reachable.
+                if (bucket.IsEmpty)
+                {
+                    ((ICollection<KeyValuePair<string, ConcurrentDictionary<Guid, Ticket>>>)_queues)
+                        .Remove(new KeyValuePair<string, ConcurrentDictionary<Guid, Ticket>>(queue, bucket));
+                    if (!bucket.IsEmpty) _queues.TryAdd(queue, bucket);
+                }
+            }
         }
 
         /// <summary>One matchmaking pass over every queue. Reentrancy-guarded so ticks never overlap.</summary>
@@ -172,11 +191,21 @@ namespace SetNet.Matchmaking
             var state = new MatchmakingServerState { Store = store, Options = options ?? new MatchmakingOptions() };
             Servers[server] = state;
             server.PeerDisconnected += peer => state.RemovePeer(peer.CurrentPeerInfo.Id);   // drop a leaver from its queue
+            server.RegisterModule(new Registration(server, state));   // stop the ticker + drop the static entry on server stop
             state.Start();
         }
 
         internal static MatchmakingServerState? Get(BaseServer? server)
             => server != null && Servers.TryGetValue(server, out var state) ? state : null;
+
+        /// <summary>Releases a server's matchmaking state (stops the match ticker, drops the static registry entry) when the server is disposed/stopped.</summary>
+        private sealed class Registration : IDisposable
+        {
+            private readonly BaseServer _server;
+            private readonly MatchmakingServerState _state;
+            public Registration(BaseServer server, MatchmakingServerState state) { _server = server; _state = state; }
+            public void Dispose() { Servers.TryRemove(_server, out _); _state.Dispose(); }
+        }
     }
 
     /// <summary>

@@ -17,9 +17,15 @@ namespace SetNet.WebSockets
     {
         private readonly WebSocket _socket;
         private readonly SemaphoreSlim _sendLock = new SemaphoreSlim(1, 1);
+        private readonly long _maxMessageSize;
         private int _closed;
 
-        public WebSocketConnection(WebSocket socket) => _socket = socket;
+        /// <summary>Wraps a WebSocket. <paramref name="maxMessageSize"/> caps a single inbound message (0 = unbounded); an oversized message closes the connection instead of buffering unboundedly.</summary>
+        public WebSocketConnection(WebSocket socket, long maxMessageSize = 0)
+        {
+            _socket = socket;
+            _maxMessageSize = maxMessageSize;
+        }
 
         /// <inheritdoc/>
         public bool IsConnected => _socket.State == WebSocketState.Open;
@@ -57,6 +63,9 @@ namespace SetNet.WebSockets
 
                 if (result.MessageType == WebSocketMessageType.Close) return null;   // graceful close → EOF
                 assembled.Write(chunk, 0, result.Count);
+                // Cap a single inbound message so a peer can't pin memory with one giant (or never-ending) frame
+                // before it ever reaches the auth/rate-limit gates, which only see fully-assembled frames.
+                if (_maxMessageSize > 0 && assembled.Length > _maxMessageSize) return null;
                 if (result.EndOfMessage) break;
             }
 

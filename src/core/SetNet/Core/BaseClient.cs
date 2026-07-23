@@ -225,6 +225,15 @@ namespace SetNet.Core
             Connection?.Close();
             ShutdownDispatch();
             FireTerminalDisconnect();
+
+            // Release the shared-scheduler heartbeat registration so a client that is Disconnect()'d but not
+            // Dispose()'d (a common "I'm done" pattern, and per-attempt connect loops) isn't pinned forever by
+            // TimerScheduler.Shared. A later ConnectAsync re-arms it via the `!_heartbeatScheduled` guard.
+            if (_heartbeatScheduled)
+            {
+                _heartbeatScheduled = false;
+                TimerScheduler.Shared.Unschedule(_heartbeatTickId);
+            }
         }
 
         /// <summary>

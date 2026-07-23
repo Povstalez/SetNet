@@ -100,21 +100,29 @@ namespace SetNet.Core
         /// <returns>A task that completes once the message has been admitted for handling (or, in sequential mode, once the handler finishes).</returns>
         protected async Task DispatchAsync(ushort type, byte[] data)
         {
+            if (SystemMessageTypes.IsSystem(type))
+            {
+                await _messageProcessor.ProcessMessageAsync(type, data).ConfigureAwait(global::SetNet.SetNetSync.ContinueOnCapturedContext);
+                return;
+            }
+
             // Give the raw-frame interceptor first refusal on application frames (system frames are excluded).
             // If it consumes the frame (e.g. a relay forwards the raw bytes), skip typed dispatch entirely —
             // no deserialization happens. Defaults to a no-op pass-through. A throwing hook is isolated exactly
             // like a faulty handler (reported, frame dropped) so it cannot tear down the receive loop.
-            if (!SystemMessageTypes.IsSystem(type))
-            {
-                bool consumed;
-                try { consumed = OnRawFrame(type, data); }
-                catch (Exception ex) { HandleProcessingError(type, ex); return; }
-                if (consumed) return;
+            bool consumed;
+            try { consumed = OnRawFrame(type, data); }
+            catch (Exception ex) { HandleProcessingError(type, ex); return; }
+            if (consumed) return;
 
-                // Inbound gate (e.g. auth enforcement): silently drop application frames the gate rejects,
-                // before any typed dispatch. System frames (heartbeat/bind-token) always pass, above.
-                if (!AllowInbound(type)) return;
-            }
+            // Inbound gate (e.g. auth enforcement): silently drop application frames the gate rejects,
+            // before any typed dispatch. System frames (heartbeat/bind-token) always pass, above. A throwing
+            // authorizer is isolated exactly like OnRawFrame (reported, frame dropped) so a buggy custom gate
+            // drops the one frame instead of tearing the whole connection down.
+            bool allowed;
+            try { allowed = AllowInbound(type); }
+            catch (Exception ex) { HandleProcessingError(type, ex); return; }
+            if (!allowed) return;
 
             if (_sequentialDispatch)
             {
@@ -148,7 +156,9 @@ namespace SetNet.Core
         private static async Task ReleaseWhenDone(Task task, SemaphoreSlim gate)
         {
             try { await task.ConfigureAwait(global::SetNet.SetNetSync.ContinueOnCapturedContext); }
-            finally { gate.Release(); }
+            // The gate can be disposed by teardown while a handler is still in flight; releasing a disposed
+            // semaphore would fault this discarded task with an unobserved exception. Swallow that one case.
+            finally { try { gate.Release(); } catch (ObjectDisposedException) { } }
         }
 
         /// <summary>

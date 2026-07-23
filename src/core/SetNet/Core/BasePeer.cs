@@ -50,6 +50,14 @@ namespace SetNet.Core
         internal bool IsClosed => Volatile.Read(ref _closed) != 0;
 
         /// <summary>
+        /// Server-side connect/disconnect event state, transitioned only via <see cref="Interlocked"/> CAS in
+        /// <see cref="BaseServer"/> so <c>PeerConnected</c>/<c>PeerDisconnected</c> fire as a matched pair (or neither)
+        /// — never inverted or orphaned — even when the peer closes during accept setup.
+        /// 0 = fresh, 1 = connected raised, 2 = disconnected raised, 3 = closed before ever being announced.
+        /// </summary>
+        internal int LifecycleEventState;
+
+        /// <summary>
         /// Initializes the peer from the accepted connection's <see cref="PeerInfo"/> and adopts its
         /// connection as the primary transport. The receive loop is not started until
         /// <see cref="StartReceive"/> is called.

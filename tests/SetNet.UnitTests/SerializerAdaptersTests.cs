@@ -50,4 +50,23 @@ public class SerializerAdaptersTests
         var back = compressed.Deserialize<Dto>(compressed.Serialize(small));   // below threshold → raw path
         Assert.Equal("x", back.Name);
     }
+
+    [Fact]
+    public void Compression_Rejects_Decompression_Bomb()
+    {
+        ISerializer inner = new JsonNetSerializer();
+
+        // A big, highly compressible payload: it packs into a tiny frame that would expand far past a tight limit.
+        var bomb = new Dto { Id = 1, Name = "x", Values = Enumerable.Repeat(7, 200_000).ToArray() };
+        var packed = new CompressingSerializer(inner, minBytes: 64).Serialize(bomb);
+
+        // A serializer with a small decompressed-size ceiling must refuse to expand it (rather than OOM).
+        var guarded = new CompressingSerializer(inner, minBytes: 64, maxDecompressedBytes: 4096);
+        Assert.Throws<System.InvalidOperationException>(() => guarded.Deserialize<Dto>(packed));
+
+        // A payload within the ceiling still round-trips normally.
+        var ok = new CompressingSerializer(inner, minBytes: 64, maxDecompressedBytes: 1024 * 1024);
+        var small = new Dto { Id = 2, Name = "ok", Values = Enumerable.Range(0, 100).ToArray() };
+        Assert.Equal("ok", ok.Deserialize<Dto>(ok.Serialize(small)).Name);
+    }
 }

@@ -42,6 +42,34 @@ public class PacketBuilderTests
     }
 
     [Fact]
+    public void TryGetCompleteMessage_RoundTrips()
+    {
+        var wire = new PacketBuilder().BuildPacket(42, new byte[] { 1, 2, 3 });
+        var rx = new PacketBuilder();
+        rx.AppendData(wire);
+        Assert.True(rx.TryGetCompleteMessage(out var type, out var payload));
+        Assert.Equal((ushort)42, type);
+        Assert.Equal(new byte[] { 1, 2, 3 }, payload);
+    }
+
+    [Fact]
+    public void Overflowing_LengthPrefix_With_CapDisabled_Waits_Instead_Of_Overflowing()
+    {
+        // maxFrameSize = 0 (the default) disables the frame cap — the config where an attacker-controlled length
+        // prefix near int.MaxValue could overflow the "need more bytes" guard (length + 4 wraps negative) and fall
+        // through to a giant allocation. Only the 4 header bytes are present, so both parse paths must return false.
+        var header = new byte[] { 0xFF, 0xFF, 0xFF, 0x7F }; // length prefix = int.MaxValue, little-endian
+
+        var a = new PacketBuilder();
+        a.AppendData(header);
+        Assert.False(a.TryGetCompleteMessage(out _, out _));
+
+        var b = new PacketBuilder();
+        b.AppendData(header);
+        Assert.False(b.TryGetCompletePacket(out _));
+    }
+
+    [Fact]
     public void Drains_MultiplePacketsFromOneAppend()
     {
         var pb = new PacketBuilder();

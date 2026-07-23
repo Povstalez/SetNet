@@ -383,7 +383,7 @@ In-process benchmark (`dotnet run -c Release --project tests/SetNet.Tests -- ben
 ## Documentation
 
 - 📚 **[Documentation home (docs/README.md)](docs/README.md)** — the docs hub: a "which package do I need?" guide, the serialization/payloads explainer, links to every module's README, and everything below.
-- 📖 **[User guide (docs/GUIDE.en.md)](docs/GUIDE.en.md)** — full usage manual: handlers, transports, reliable channels, reconnect, batching, hardening, the complete `Configuration` reference, and a production checklist. *(Українською: [docs/GUIDE.ua.md](docs/GUIDE.ua.md))*
+- 📖 **[User guide (docs/GUIDE.en.md)](docs/GUIDE.en.md)** — full usage manual: handlers, protocol channels (`[ProtocolChannel]`/`[Op]`/`[Event]`) and RPC, transports, reliable channels, reconnect, batching, hardening, the complete `Configuration` reference, and a production checklist. *(Українською: [docs/GUIDE.ua.md](docs/GUIDE.ua.md))*
 - ⚙️ **[Performance (docs/PERFORMANCE.en.md)](docs/PERFORMANCE.en.md)** — performance model, scaling limits, structural roadmap. *(Українською: [docs/PERFORMANCE.ua.md](docs/PERFORMANCE.ua.md))*
 - 🧩 **[docs/MODULES.md](docs/MODULES.md)** — the full companion-package catalog (grouped) + the core extension points.
 - 📡 **[Communication model (docs/COMMUNICATION.md)](docs/COMMUNICATION.md)** — every send/receive method for client and server: core `SendAsync`, the unified `SetNet.Protocol` (request/reply, fire-and-forget, push; `[Op]`/`[Event]`), and the modules (RPC, StateSync, Streams, Voice, …) — with a full worked example (authoritative item drop broadcast to a room).

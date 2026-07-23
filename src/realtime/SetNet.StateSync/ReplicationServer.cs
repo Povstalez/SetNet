@@ -119,6 +119,11 @@ namespace SetNet.StateSync
 
         private async Task SendToObserverAsync(BasePeer peer, ObserverState state, int tick, List<NetworkEntity> all)
         {
+            // Outbound authorization: withhold all world state from a peer that isn't cleared to receive it yet
+            // (e.g. connected but not authenticated). The inbound auth gate can't do this — it only filters incoming
+            // frames — so this is the symmetric outbound check. Re-checked every tick, so it self-heals once cleared.
+            if (_options.CanReceive != null && !_options.CanReceive(peer)) return;
+
             var ownerId = peer.CurrentPeerInfo.Id;
 
             // Resolve the visible set for this observer.
@@ -203,7 +208,11 @@ namespace SetNet.StateSync
         }
 
         /// <inheritdoc/>
-        public void Dispose() => _timer?.Dispose();
+        public void Dispose()
+        {
+            _timer?.Dispose();
+            ReplicationServerExtensions.Remove(_server);   // also drop the static registry entry so the server can be GC'd
+        }
     }
 
     /// <summary>Enables state replication on a server. Register your archetypes (<see cref="ReplicaRegistry"/>) and call <see cref="StateSyncRuntime.Enable"/> at startup.</summary>
@@ -224,6 +233,9 @@ namespace SetNet.StateSync
 
         internal static ServerReplication? Get(BaseServer? server)
             => server != null && Servers.TryGetValue(server, out var w) ? w : null;
+
+        /// <summary>Drops a server's world from the static registry (called when the world is disposed on server stop).</summary>
+        internal static void Remove(BaseServer server) => Servers.TryRemove(server, out _);
     }
 
     /// <summary>Auto-discovered server handler for snapshot acknowledgements.</summary>
