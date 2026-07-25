@@ -82,6 +82,29 @@ namespace SetNet.Core
                 _dispatchCts = new CancellationTokenSource();
         }
 
+        /// <summary>
+        /// Closes a connection without blocking the caller. Intended for the heartbeat detectors, which run on the
+        /// process-wide <see cref="TimerScheduler"/>: <see cref="ITransportConnection.Close"/> can block briefly (a
+        /// batched TCP connection makes a bounded best-effort final write, and a stuck peer costs the whole bound),
+        /// and stalling that loop delays every other connection's liveness check and the UDP retransmit ticks.
+        /// </summary>
+        /// <param name="connection">The connection to close; <c>null</c> is a no-op.</param>
+        /// <remarks>
+        /// On a single-threaded host (Unity WebGL, signalled by <see cref="SetNetSync.ContinueOnCapturedContext"/>)
+        /// there is no thread pool to offload to, so the close runs inline — where there is also only one connection
+        /// and therefore nothing to starve.
+        /// </remarks>
+        protected static void CloseDetached(ITransportConnection? connection)
+        {
+            if (connection == null) return;
+            if (global::SetNet.SetNetSync.ContinueOnCapturedContext)
+            {
+                try { connection.Close(); } catch { /* teardown is best-effort */ }
+                return;
+            }
+            _ = Task.Run(() => { try { connection.Close(); } catch { /* teardown is best-effort */ } });
+        }
+
         /// <summary>Disposes the dispatch gate and its cancellation source. Called from the owner's dispose path.</summary>
         protected void DisposeDispatch()
         {

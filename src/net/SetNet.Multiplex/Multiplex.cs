@@ -164,7 +164,7 @@ namespace SetNet.Multiplex
                 var demux = PeerDemux.GetValue(peer, p => new MuxDemux(p.InjectFrame));
                 // A peer that outruns its own lane drain is flooding — drop it rather than buffer unboundedly.
                 if (!demux.Enqueue(decoded.Value.Channel, decoded.Value.OrigType, decoded.Value.Payload))
-                    peer.CurrentPeerInfo.Disconnect();
+                    peer.CurrentPeerInfo.Kick("multiplex lane overflow"); // deliberate drop: don't invite a reconnect
             }
             return Task.CompletedTask;
         }

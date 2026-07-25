@@ -61,6 +61,21 @@ namespace SetNet.Config
         /// <summary>Gets or sets a value indicating whether the client automatically attempts to reconnect after an unexpected disconnect. Defaults to <c>false</c>.</summary>
         public bool AutoReconnect { get; set; } = false;
 
+        /// <summary>
+        /// Gets or sets whether a connection closed by the <b>remote</b> end counts as an unexpected loss — firing
+        /// <c>OnUnexpectedDisconnect</c> and, with <see cref="AutoReconnect"/>, triggering reconnection. Defaults to
+        /// <c>true</c>.
+        /// </summary>
+        /// <remarks>
+        /// A server restart, a kill, a UDP idle-expiry, or an exhausted reliable-UDP retransmit budget all surface to
+        /// the client as an orderly end-of-stream rather than as an I/O error — on UDP/Both/WebSocket transports that
+        /// is the <em>only</em> way a drop can surface, because their receive path never throws. Treating that as a
+        /// clean shutdown (the pre-1.x behaviour) meant auto-reconnect effectively never ran. Set to <c>false</c> to
+        /// restore it, i.e. only a transport error or a heartbeat timeout reconnects, and a server-side close is
+        /// terminal.
+        /// </remarks>
+        public bool ReconnectOnRemoteClose { get; set; } = true;
+
         /// <summary>Gets or sets the number of reconnection attempts made before giving up when <see cref="AutoReconnect"/> is enabled. Defaults to 3.</summary>
         public int MaxReconnectAttempts { get; set; } = 3;
 
@@ -70,14 +85,34 @@ namespace SetNet.Config
         /// <summary>Gets or sets the maximum time, in milliseconds, to wait for a connection (and the initial handshake) to complete before failing. Defaults to 10000.</summary>
         public int ConnectTimeoutMs { get; set; } = 10000;
 
-        /// <summary>Gets or sets a value indicating whether periodic Ping/Pong heartbeats are sent to detect dead connections. Defaults to <c>false</c>.</summary>
-        public bool HeartbeatEnabled { get; set; } = false;
+
+        /// <summary>
+        /// Gets or sets a value indicating whether periodic Ping/Pong heartbeats are sent to detect dead connections.
+        /// Defaults to <c>true</c>.
+        /// </summary>
+        /// <remarks>
+        /// The heartbeat is the only detector of a <em>silent</em> loss — a half-open TCP connection (NAT timeout,
+        /// power loss, network partition) delivers no FIN and no error, so without it a client waits in receive
+        /// forever while the server keeps a zombie peer. Both ends should agree on this setting: liveness is refreshed
+        /// by <b>any</b> inbound traffic, so an enabled server never kicks a client that is actually sending, but a
+        /// genuinely idle client that sends no pings is reaped after <see cref="HeartbeatTimeoutMs"/>.
+        /// </remarks>
+        public bool HeartbeatEnabled { get; set; } = true;
 
         /// <summary>Gets or sets the interval, in milliseconds, between outgoing heartbeat pings. Defaults to 5000.</summary>
         public int HeartbeatIntervalMs { get; set; } = 5000;
 
-        /// <summary>Gets or sets the time, in milliseconds, without a heartbeat response after which the connection is considered dead. Defaults to 15000.</summary>
-        public int HeartbeatTimeoutMs { get; set; } = 15000;
+        /// <summary>
+        /// Gets or sets the time, in milliseconds, without any inbound traffic after which the connection is
+        /// considered dead. Defaults to 30000 — six missed pings at the default interval.
+        /// </summary>
+        /// <remarks>
+        /// Generous on purpose: the window has to survive a GC pause, a stalled game loop, and a browser throttling
+        /// a backgrounded tab's timers, none of which mean the peer is gone. Tighten it for latency-critical
+        /// deployments; widen it further (60s+) for Unity WebGL/Telegram clients, whose ping loop stops entirely
+        /// while the tab is in the background.
+        /// </remarks>
+        public int HeartbeatTimeoutMs { get; set; } = 30000;
 
         /// <summary>Gets or sets the logging sink used throughout the library. Defaults to a <see cref="ConsoleLogger"/>; set to a custom <see cref="ILogger"/> to redirect diagnostics.</summary>
         public ILogger Logger { get; set; } = new ConsoleLogger();
@@ -265,6 +300,19 @@ namespace SetNet.Config
                 throw new InvalidOperationException($"Configuration.MaxUdpPeers ({MaxUdpPeers}) cannot be negative.");
             if (MaxConnectionsPerIpPerSecond < 0)
                 throw new InvalidOperationException($"Configuration.MaxConnectionsPerIpPerSecond ({MaxConnectionsPerIpPerSecond}) cannot be negative.");
+
+            if (HeartbeatEnabled)
+            {
+                // A timeout at or below the ping interval declares the peer dead before its next ping can even be
+                // due, so every connection would be torn down on the first tick. Require room for at least two
+                // missed pings, which is also what tolerates ordinary jitter and unreliable-UDP ping loss.
+                if (HeartbeatIntervalMs < 1)
+                    throw new InvalidOperationException($"Configuration.HeartbeatIntervalMs ({HeartbeatIntervalMs}) must be positive.");
+                if (HeartbeatTimeoutMs <= HeartbeatIntervalMs)
+                    throw new InvalidOperationException(
+                        $"Configuration.HeartbeatTimeoutMs ({HeartbeatTimeoutMs}) must be greater than " +
+                        $"HeartbeatIntervalMs ({HeartbeatIntervalMs}); allow at least two missed pings.");
+            }
 
             if (TransportType != TransportType.Tcp)
             {

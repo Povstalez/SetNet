@@ -1,9 +1,9 @@
 namespace SetNet.Auth
 {
     /// <summary>
-    /// Reserved wire message-type ids for the auth handshake. They sit below SetNet's system range (65533–65535)
-    /// and the RPC range (65531/65532). Don't use these ids for your own messages. The <b>request</b> type is the
-    /// one frame the enforced gate lets through before a peer authenticates.
+    /// Reserved wire message-type ids for the auth handshake. They sit just below SetNet's core system range
+    /// (65532–65535: Kick, UdpBindToken, Ping, Pong). Don't use these ids for your own messages. The <b>request</b>
+    /// type is the one frame the enforced gate lets through before a peer authenticates.
     /// </summary>
     public static class AuthTypes
     {

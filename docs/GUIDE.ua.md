@@ -614,7 +614,13 @@ public class GameClient : BaseClient
 |---|---|---|---|---|
 | `Disconnect()` (навмисно) | ❌ | ❌ | ✅ | ❌ |
 | Помилка мережі / краш сервера | ✅ | ✅ | ✅ (якщо reconnect провалився) | ✅ (якщо увімкнено) |
-| Graceful close сервером | ❌ | ❌ | ✅ | ❌ |
+| Heartbeat timeout (тихий обрив) | ✅ | ✅ | ✅ (якщо reconnect провалився) | ✅ (якщо увімкнено) |
+| Закриття віддаленою стороною (рестарт/kick) | ❌ | ✅ | ✅ (якщо reconnect провалився) | ✅ (якщо увімкнено) |
+
+Навмисним вважається лише локальний `Disconnect()`/`Dispose()`. Усе інше — включно з «чемним» кінцем потоку від
+рестарту сервера, kick'а чи UDP idle-expiry (а на UDP/Both/WebSocket це єдина форма, якої взагалі набуває обрив,
+бо їхній шлях прийому не кидає винятків) — це втрата, і вона перепідключається. Вимкнути:
+`ReconnectOnRemoteClose = false`.
 
 Авто-reconnect:
 ```csharp
@@ -761,11 +767,12 @@ ev.Trigger("PlayerJoined", "Alex");
 | `UdpOrderedReliable` | `true` | Впорядкована надійна доставка. |
 | `UdpHandshakeTimeoutMs` | 5000 | Таймаут UDP-handshake. |
 | `UdpPeerExpiryMs` | 15000 | Простій до видалення UDP-peer. |
-| `HeartbeatEnabled` | `false` | Ping/Pong для виявлення мертвих з'єднань. |
-| `HeartbeatIntervalMs` / `HeartbeatTimeoutMs` | 5000 / 15000 | Інтервал / таймаут heartbeat. |
+| `HeartbeatEnabled` | `true` | Ping/Pong для виявлення мертвих з'єднань; єдиний детектор тихого напіввідкритого обриву. Ліквідність оновлює будь-який вхідний кадр, не лише Ping. |
+| `HeartbeatIntervalMs` / `HeartbeatTimeoutMs` | 5000 / 30000 | Інтервал / таймаут heartbeat (таймаут має бути більший за інтервал; для WebGL ставте 60с+, бо фонова вкладка перестає пінгувати). |
 | `AutoReconnect` | `false` | Авто-reconnect клієнта. |
 | `MaxReconnectAttempts` / `ReconnectDelayMs` | 3 / 1000 | Політика reconnect. |
-| `ConnectTimeoutMs` | 10000 | Таймаут connect/handshake. |
+| `ReconnectOnRemoteClose` | `true` | Закриття віддаленою стороною (рестарт/kick сервера, UDP expiry) вважається втратою, а не чистим завершенням. |
+| `ConnectTimeoutMs` | 10000 | Дедлайн connect; також обмежує TLS-handshake і очікування bind-токена в Both. |
 | `MaxInFlightMessages` | 0 | Back-pressure (0 = необмежено). |
 | `SequentialDispatch` | `false` | Строгий порядок обробки. |
 | `SendBatching` / `SendBatchFlushMs` | `false` / 15 | Коалесований TCP-запис. |
@@ -790,7 +797,7 @@ ev.Trigger("PlayerJoined", "Alex");
 Дефолти оптимізовані під сумісність, не під прод. Перед запуском:
 
 - [ ] Реалізувати **авторизацію** в `OnNewClient`/хендлерах.
-- [ ] `HeartbeatEnabled = true` (інакше мертві з'єднання не виявляються).
+- [ ] `HeartbeatEnabled = true` (дефолт; інакше тихий напіввідкритий обрив не виявляється ніколи), `HeartbeatTimeoutMs` — від 3x `HeartbeatIntervalMs`.
 - [ ] `MaxInFlightMessages > 0` (інакше необмежені fire-and-forget Task'и під навантаженням).
 - [ ] `MaxConnectionsLimit`, `MaxConnectionsPerIpPerSecond` під вашу ємність.
 - [ ] `UseSsl = true` + сертифікат, якщо поза довіреною мережею (і **не** слати чутливе по UDP).

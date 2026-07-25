@@ -141,7 +141,9 @@ namespace SetNet.Auth
                     // KickExisting: close the previous connection(s) and drop their sessions.
                     foreach (var s in existing)
                     {
-                        try { s.LivePeer?.Disconnect(); } catch { /* already gone */ }
+                        // Kick rather than disconnect: a displaced session that auto-reconnects would
+                        // re-authenticate and kick the new one straight back, flapping the account forever.
+                        try { s.LivePeer?.Kick("session replaced by a newer login"); } catch { /* already gone */ }
                         await state.Store.RemoveAsync(s).ConfigureAwait(false);
                     }
                 }

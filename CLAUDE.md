@@ -200,7 +200,7 @@ Message handlers are **strongly typed** (no manual deserialization) and are disc
 
 ### 4. **Configuration** (`SetNet/Config/`)
 
-- **Configuration**: Holds connection settings (Host, Port, BufferSize, MaxConnections), reconnection options (AutoReconnect, MaxReconnectAttempts, ReconnectDelayMs), heartbeat options, **transport options** (`TransportType` Tcp/Udp/Both, `DefaultDelivery`, `UdpPort`, UDP handshake/expiry timeouts, the UDP reliability layer settings incl. `UdpReliableChannels`), **TLS** (`UseSsl`, `ServerCertificate`, `SslTargetHost`, `ServerCertificateValidationCallback`), **dispatch/send tuning** (`TcpNoDelay` Nagle toggle default-on, `MaxInFlightMessages` back-pressure, `SequentialDispatch` ordered dispatch, `SendBatching`/`SendBatchFlushMs` coalesced writes, `SendTimeoutMs` per-write deadline), and **production-hardening limits**: `MaxConnectionsLimit`, `MaxUdpPeers`, `MaxMessageSize` (TCP frame cap), `MaxConnectionsPerIpPerSecond` (per-IP rate limit), `MaxInboundQueue` (per-connection inbound-queue cap / OOM protection). `Validate()` is called on connect/start (and cross-checks e.g. reliable-default vs disabled UDP reliability). A `NetworkMetrics` instance (`Metrics`) exposes live counters.
+- **Configuration**: Holds connection settings (Host, Port, BufferSize, MaxConnections), reconnection options (AutoReconnect, MaxReconnectAttempts, ReconnectDelayMs, `ReconnectOnRemoteClose` — a close initiated by the remote end counts as a loss, default on), heartbeat options (`HeartbeatEnabled` **defaults to true**: it is the only detector of a silent half-open link; `Validate()` rejects `HeartbeatTimeoutMs <= HeartbeatIntervalMs`), **transport options** (`TransportType` Tcp/Udp/Both, `DefaultDelivery`, `UdpPort`, UDP handshake/expiry timeouts, the UDP reliability layer settings incl. `UdpReliableChannels`), **TLS** (`UseSsl`, `ServerCertificate`, `SslTargetHost`, `ServerCertificateValidationCallback`), **dispatch/send tuning** (`TcpNoDelay` Nagle toggle default-on, `MaxInFlightMessages` back-pressure, `SequentialDispatch` ordered dispatch, `SendBatching`/`SendBatchFlushMs` coalesced writes, `SendTimeoutMs` per-write deadline), and **production-hardening limits**: `MaxConnectionsLimit`, `MaxUdpPeers`, `MaxMessageSize` (TCP frame cap), `MaxConnectionsPerIpPerSecond` (per-IP rate limit), `MaxInboundQueue` (per-connection inbound-queue cap / OOM protection). `Validate()` is called on connect/start (and cross-checks e.g. reliable-default vs disabled UDP reliability). A `NetworkMetrics` instance (`Metrics`) exposes live counters.
 
 - **Production hardening** (added after a readiness audit, then a two-round fix→re-audit loop): TLS over TCP via `SslStream` (`Core/Transport/Tcp/TcpTls.cs`); a resilient accept loop (`TcpListenerAdapter` skips a bad/garbage/stalled TLS handshake and continues, with a handshake timeout, instead of dying); `MaxConnectionsLimit`/`MaxUdpPeers` caps and `OnNewClient`+`StartReceive` guarded so a bad accept can't kill the loop (the framework also calls the idempotent `StartReceive` itself); `MaxMessageSize` frame cap + a `length < 2` guard (slow-loris/OOM/negative-length protection); per-IP `RateLimiter` (`Core/RateLimiter.cs`, with idle-window eviction) on TCP accept + UDP handshake; back-pressure dispatch gate (`MaxInFlightMessages`, re-armed per connection generation); `SendTimeoutMs` bounds a stuck-peer write; Both-mode UDP bind tokens are TTL-swept (no leak) and the UDP `Disconnect` control packet is token-validated; client/peer teardown fires `OnDisconnected` exactly once; a throwing application logger can't crash the process; `BaseServer.ActiveConnections`; reconnect/heartbeat errors are logged. **Authentication is intentionally left to the application** (validate inside the server's `OnNewClient`/handlers); MessagePack is bumped to a non-vulnerable version. **UDP datagrams have no per-packet auth/encryption** — route confidentiality/integrity-sensitive traffic over TLS-over-TCP (or Both with reliable delivery).
 
@@ -373,15 +373,14 @@ var client = new GameClient(config);
 await client.ConnectAsync();
 ```
 
-When an error occurs (and AutoReconnect is enabled):
-1. `OnError()` fires immediately with error details
-2. `OnUnexpectedDisconnect()` fires (only if actual error, not graceful server close)
+When the connection is lost (and AutoReconnect is enabled):
+1. `OnError()` fires with error details (transport error or heartbeat timeout; not for a clean remote close)
+2. `OnUnexpectedDisconnect()` fires
 3. `OnReconnecting()` is called N times (with configurable delay)
 4. If reconnect succeeds, `OnReconnected()` fires and the receive loop resumes
 5. If all attempts fail, `OnReconnectFailed()` then `OnDisconnected()` fire
 
-When server closes gracefully (bytesRead==0):
-- Only `OnDisconnected()` fires (no reconnect, not considered unexpected)
+**A close initiated by the remote end counts as a loss.** Only a local `Disconnect()`/`Dispose()` is treated as intentional. A server restart, a kick, a UDP idle-expiry, and an exhausted reliable-UDP retransmit budget all arrive as an orderly end-of-stream (`bytesRead == 0` on TCP, a completed inbound queue on UDP/Both/WebSocket) — and on the non-TCP transports that is the *only* shape a drop ever takes, because their receive path never throws. Classifying it as a clean shutdown is what used to make `AutoReconnect` effectively dead outside a heartbeat timeout. Set `Configuration.ReconnectOnRemoteClose = false` to restore the old semantics (remote close = terminal).
 
 **Disconnect flow on client:**
 
@@ -389,7 +388,18 @@ When server closes gracefully (bytesRead==0):
 |---|---|---|---|---|
 | Client calls `Disconnect()` (intentional) | ❌ | ❌ | ✅ | ❌ |
 | Network error / Server crash | ✅ | ✅ | ✅ (if reconnect fails) | ✅ (if enabled) |
-| Server graceful close (bytesRead==0) | ❌ | ❌ | ✅ | ❌ |
+| Heartbeat timeout (silent/half-open link) | ✅ | ✅ | ✅ (if reconnect fails) | ✅ (if enabled) |
+| Remote close (server restart/kick, UDP expiry) | ❌ | ✅ | ✅ (if reconnect fails) | ✅ (if enabled, default) |
+
+**Kicking a client (deliberate, final):** `peer.CurrentPeerInfo.Kick("reason")` (or `KickAsync`) sends the reserved
+`Kick` system frame before closing, which suppresses the client's auto-reconnect for that teardown and surfaces as
+`OnKicked(reason)` instead of `OnUnexpectedDisconnect`. Use it for bans, geo-blocks, a session displaced by a newer
+login, or a protocol violation — a plain `Disconnect()` is indistinguishable from a crash on the wire, so a client
+with `AutoReconnect` would dial straight back into the same kick (and two clients on one account under
+`MultiSessionPolicy.KickExisting` would kick each other forever). `SetNet.BanList`, `SetNet.GeoBlock`,
+`SetNet.Auth` and `SetNet.Multiplex` route their kicks through it.
+
+Each connection attempt owns a **generation** id. A receive loop still unwinding from a previous connection compares generations before any teardown, so a `Disconnect()` immediately followed by `ConnectAsync()` (or a reconnect landing during teardown) cannot close the fresh transport, cancel its dispatch gate, or fire a spurious `OnDisconnected` against it.
 
 ### Server-side: Handling Client Disconnects in BasePeer
 
@@ -428,7 +438,10 @@ public class GameServerPeer : BasePeer
 |---|---|---|---|
 | Server calls `Close()` (intentional kick) | ❌ | ❌ | ✅ |
 | Client crash / IO error / Socket error | ✅ | ✅ | ✅ |
+| Heartbeat timeout (silent client) | ✅ | ✅ | ✅ |
 | Client graceful close (bytesRead==0) | ❌ | ❌ | ✅ |
+
+**Peer liveness is refreshed by any inbound frame**, not only by Ping — a client that is streaming application traffic is never reaped, whether or not its own heartbeat is on, and unreliable-UDP ping loss cannot fake a timeout. A client that sends *nothing at all* for `HeartbeatTimeoutMs` is still reaped, which is what stops zombie peers (a half-open TCP connection delivers no FIN, so nothing else detects it). Both heartbeat detectors run on the process-wide `TimerScheduler` and therefore invoke **no** application code: they only flag and close, and the peer's/client's own receive loop reports `OnError`/`OnUnexpectedDisconnect` on its own thread.
 
 ## Project Structure
 

@@ -339,9 +339,15 @@ var config = new Configuration
 |---|---|---|---|---|
 | `Disconnect()` (intentional) | ❌ | ❌ | ✅ | ❌ |
 | Network error / server crash | ✅ | ✅ | ✅ (if reconnect fails) | ✅ (if enabled) |
-| Graceful server close | ❌ | ❌ | ✅ | ❌ |
+| Heartbeat timeout (silent link) | ✅ | ✅ | ✅ (if reconnect fails) | ✅ (if enabled) |
+| Remote close (server restart/kick) | ❌ | ✅ | ✅ (if reconnect fails) | ✅ (if enabled) |
 
-Enable: `AutoReconnect = true`, `HeartbeatEnabled = true` (both off by default).
+Only a local `Disconnect()`/`Dispose()` is intentional. Everything else — including the orderly end-of-stream a
+server restart, a kick or a UDP idle-expiry produces (the only shape a drop takes on UDP/Both/WebSocket, whose
+receive path never throws) — is a loss and reconnects. Opt out with `ReconnectOnRemoteClose = false`.
+
+Enable: `AutoReconnect = true` (off by default). `HeartbeatEnabled` is on by default — it is the only
+detector of a silent half-open link, and peer liveness is refreshed by any inbound frame, not just Pings.
 
 ## Production hardening
 

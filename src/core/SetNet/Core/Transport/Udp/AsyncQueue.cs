@@ -108,9 +108,14 @@ namespace SetNet.Core.Transport.Udp
                     Interlocked.Decrement(ref _count);
                     return (true, item);
                 }
-                // Woken with nothing to take and the queue is done: report EOF.
+                // Woken with nothing to take and the queue is done: report EOF. Hand the wake token back so EOF is
+                // sticky — a consumer that calls again after end-of-stream gets EOF again instead of parking forever
+                // on a signal nobody will release.
                 if (_completed)
+                {
+                    _signal.Release();
                     return (false, default!);
+                }
             }
         }
     }

@@ -56,7 +56,13 @@ namespace SetNet.Config
             if (config.MaxInFlightMessages == 0 && !config.SequentialDispatch)
                 issues.Add(Warning("Handler concurrency is unbounded and dispatch order is not guaranteed."));
             if (!config.HeartbeatEnabled)
-                issues.Add(Warning("Heartbeat is disabled; silent disconnects may take a long time to detect."));
+                issues.Add(Warning("Heartbeat is disabled; a silent half-open connection is never detected — the client waits in receive forever and the server keeps a zombie peer."));
+            else if (config.HeartbeatTimeoutMs < config.HeartbeatIntervalMs * 3)
+                issues.Add(Warning("HeartbeatTimeoutMs is under 3x HeartbeatIntervalMs; a couple of lost pings (likely on UDP, where they ride unreliable datagrams) will drop a live connection."));
+            if (config.AutoReconnect && config.MaxReconnectAttempts < 1)
+                issues.Add(Warning("AutoReconnect is enabled but MaxReconnectAttempts is below 1, so no attempt is ever made."));
+            if (config.AutoReconnect && !config.ReconnectOnRemoteClose)
+                issues.Add(Warning("ReconnectOnRemoteClose is disabled, so a server restart/kick (and on UDP/Both every drop, which surfaces as an orderly close) will not reconnect."));
             if (config.TransportType == TransportType.Udp && !config.UdpReliabilityEnabled && config.DefaultDelivery == DeliveryMethod.Reliable)
                 issues.Add(Error("UDP transport defaults to reliable delivery while UDP reliability is disabled."));
 

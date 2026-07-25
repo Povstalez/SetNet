@@ -69,7 +69,8 @@ namespace SetNet.GeoBlock
             if (!IsBlocked(country)) return;
 
             Blocked?.Invoke(peer, country);
-            try { peer.CurrentPeerInfo.Disconnect(); } catch { /* already gone */ }
+            // Kick, not a plain disconnect: the block is permanent for this client, so it must not auto-reconnect.
+            try { peer.CurrentPeerInfo.Kick("region blocked"); } catch { /* already gone */ }
         }
 
         private bool IsBlocked(string? country)

@@ -142,6 +142,8 @@ namespace SetNet.Core
         private async Task HandlePeerAsync()
         {
             var hadError = false;
+            string? errorText = null;
+            var heartbeat = CurrentPeerInfo.Config.HeartbeatEnabled;
 
             try
             {
@@ -151,6 +153,12 @@ namespace SetNet.Core
                     if (message == null) break;
                     var m = message.Value;
 
+                    // Any inbound frame proves the client is alive, so it refreshes the heartbeat window exactly like
+                    // a Ping does. Keying liveness off Pings alone kicks a client that is streaming application
+                    // traffic but whose heartbeat is off (or whose unreliable-UDP pings were lost).
+                    if (heartbeat)
+                        Interlocked.Exchange(ref _lastPingReceivedTicks, MonotonicClock.Timestamp);
+
                     CurrentPeerInfo.Config.Metrics.IncrementMessagesReceived();
                     await DispatchAsync(m.Type, m.Payload).ConfigureAwait(false);
                 }
@@ -158,8 +166,7 @@ namespace SetNet.Core
             catch (Exception ex)
             {
                 hadError = true;
-                if (!_isIntentionalClose && !_isHeartbeatTimeoutClose)
-                    SafeLifecycleHook(nameof(OnError), () => OnError($"Client {CurrentPeerInfo.Id} error: {ex.Message}"));
+                errorText = ex.Message;
             }
             finally
             {
@@ -168,13 +175,20 @@ namespace SetNet.Core
 
                 if (_isIntentionalClose)
                     _isIntentionalClose = false;
-                else if (hadError || wasHeartbeat)
+                else
                 {
-                    SafeLifecycleHook(nameof(OnUnexpectedDisconnect), OnUnexpectedDisconnect);
+                    // Report from this loop, not from the detector: the heartbeat tick runs on the process-wide
+                    // TimerScheduler, where application code would delay every other peer's liveness check.
+                    if (wasHeartbeat)
+                        SafeLifecycleHook(nameof(OnError), () => OnError($"Client {CurrentPeerInfo.Id} heartbeat timeout."));
+                    else if (hadError)
+                        SafeLifecycleHook(nameof(OnError), () => OnError($"Client {CurrentPeerInfo.Id} error: {errorText}"));
+
+                    if (hadError || wasHeartbeat)
+                        SafeLifecycleHook(nameof(OnUnexpectedDisconnect), OnUnexpectedDisconnect);
+
                     Close();
                 }
-                else
-                    Close();
             }
         }
 
@@ -195,11 +209,17 @@ namespace SetNet.Core
         {
             try
             {
+                var heartbeat = CurrentPeerInfo.Config.HeartbeatEnabled;
                 while (udp.IsConnected)
                 {
                     var message = await udp.ReceiveAsync().ConfigureAwait(false);
                     if (message == null) break;
                     var m = message.Value;
+
+                    // UDP traffic proves liveness too, so a client whose unreliable channel carries the game state
+                    // (and whose TCP lifeline is quiet) is not timed out by the heartbeat watcher.
+                    if (heartbeat)
+                        Interlocked.Exchange(ref _lastPingReceivedTicks, MonotonicClock.Timestamp);
 
                     CurrentPeerInfo.Config.Metrics.IncrementMessagesReceived();
                     await DispatchAsync(m.Type, m.Payload).ConfigureAwait(false);
@@ -216,7 +236,22 @@ namespace SetNet.Core
         private void OnPingReceived(byte[] data)
         {
             Interlocked.Exchange(ref _lastPingReceivedTicks, MonotonicClock.Timestamp);
-            _ = Connection?.SendAsync(SystemMessageTypes.Pong, Array.Empty<byte>(), DeliveryMethod.Unreliable);
+            var conn = Connection;
+            if (conn != null) _ = SendPongAsync(conn);
+        }
+
+        /// <summary>
+        /// Answers a Ping with a Pong, swallowing failures: a dropped Pong is not fatal (the client's own timeout is
+        /// the detector), and observing the task keeps a failed send off the unobserved-exception path.
+        /// </summary>
+        private static async Task SendPongAsync(ITransportConnection conn)
+        {
+            try
+            {
+                await conn.SendAsync(SystemMessageTypes.Pong, Array.Empty<byte>(), DeliveryMethod.Unreliable)
+                    .ConfigureAwait(false);
+            }
+            catch { /* link already failing; the receive loop will tear the peer down */ }
         }
 
         /// <summary>
@@ -225,6 +260,11 @@ namespace SetNet.Core
         /// went silent without a clean disconnect (crash, network partition). Self-unschedules once the connection
         /// is gone.
         /// </summary>
+        /// <remarks>
+        /// Runs on the process-wide <see cref="TimerScheduler"/>, so it invokes no application code: the receive loop
+        /// reports the timeout on its own thread once the close unblocks it. Keeping user hooks off this thread stops
+        /// one slow handler from delaying every other peer's liveness check and the UDP retransmit ticks.
+        /// </remarks>
         private void HeartbeatTick()
         {
             if (Connection == null || !Connection.IsConnected)
@@ -237,8 +277,7 @@ namespace SetNet.Core
             if (elapsed > CurrentPeerInfo.Config.HeartbeatTimeoutMs)
             {
                 _isHeartbeatTimeoutClose = true;
-                SafeLifecycleHook(nameof(OnError), () => OnError($"Client {CurrentPeerInfo.Id} heartbeat timeout."));
-                Connection?.Close();
+                CloseDetached(Connection); // unblocks the receive loop, which reports the error and closes the peer
                 TimerScheduler.Shared.Unschedule(_heartbeatTickId);
             }
         }

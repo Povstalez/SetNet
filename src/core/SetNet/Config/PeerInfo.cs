@@ -1,5 +1,6 @@
 using System;
 using System.Threading;
+using System.Threading.Tasks;
 using SetNet.Core;
 using SetNet.Core.Commands;
 using SetNet.Core.Transport;
@@ -77,6 +78,54 @@ namespace SetNet.Config
             Connection.Close();
             UdpConnection?.Close();
             _server?.RemoveClient(this);
+        }
+
+        /// <summary>
+        /// Tells the client this close is <b>deliberate and final</b> and then disconnects it. Use for bans,
+        /// geo-blocks, a session displaced by a newer login, or a protocol violation — anything the client should not
+        /// come straight back from.
+        /// </summary>
+        /// <param name="reason">Optional human-readable reason handed to the client's <c>OnKicked</c> hook.</param>
+        /// <remarks>
+        /// A plain <see cref="Disconnect"/> is indistinguishable from a crash on the wire, so a client with
+        /// <see cref="Configuration.AutoReconnect"/> reconnects into the same kick. This sends the reserved
+        /// <c>Kick</c> frame first (best-effort, and flushed so batching cannot hold it back), which suppresses the
+        /// client's reconnect for that teardown. Fire-and-forget: the disconnect happens once the notice is on the
+        /// wire, so callers on an event handler do not block.
+        /// </remarks>
+        public void Kick(string? reason = null) => _ = KickAsync(reason);
+
+        /// <summary>Awaitable form of <see cref="Kick"/>, completing once the notice is sent and the peer is disconnected.</summary>
+        /// <param name="reason">Optional human-readable reason handed to the client's <c>OnKicked</c> hook.</param>
+        /// <returns>A task that completes after the peer has been disconnected.</returns>
+        public async Task KickAsync(string? reason = null)
+        {
+            if (!IsDisconnected)
+            {
+                var payload = string.IsNullOrEmpty(reason)
+                    ? Array.Empty<byte>()
+                    : System.Text.Encoding.UTF8.GetBytes(reason!);
+                try
+                {
+                    await SendKickAsync(payload, DeliveryMethod.Reliable).ConfigureAwait(false);
+                }
+                catch
+                {
+                    // Reliable is unavailable on a UDP transport with the reliability layer off; a best-effort
+                    // datagram still spares the client a pointless reconnect in the common case.
+                    try { await SendKickAsync(payload, DeliveryMethod.Unreliable).ConfigureAwait(false); }
+                    catch { /* link already gone; the disconnect below is what matters */ }
+                }
+            }
+
+            Disconnect();
+        }
+
+        /// <summary>Sends the kick notice over the primary connection and flushes it past any send batching.</summary>
+        private async Task SendKickAsync(byte[] payload, DeliveryMethod delivery)
+        {
+            await Connection.SendAsync(SystemMessageTypes.Kick, payload, delivery).ConfigureAwait(false);
+            await Connection.FlushAsync().ConfigureAwait(false);
         }
     }
 }

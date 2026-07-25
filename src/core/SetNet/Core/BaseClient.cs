@@ -37,6 +37,12 @@ namespace SetNet.Core
         /// <summary>True when the connection is being torn down because the heartbeat timed out, so the loss is treated as unexpected without double-reporting an error.</summary>
         private volatile bool _isHeartbeatTimeout;
 
+        /// <summary>Set when the server announced a deliberate, final kick, so the ensuing close does not reconnect. Reset per connection generation.</summary>
+        private volatile bool _kicked;
+
+        /// <summary>The reason carried by the kick notice, if any.</summary>
+        private volatile string? _kickReason;
+
         /// <summary>Monotonic timestamp (ticks) of the last received Pong, used by the heartbeat loop to detect a stalled server.</summary>
         private long _lastPongReceivedTicks;
 
@@ -64,6 +70,15 @@ namespace SetNet.Core
 
         /// <summary>Guarded by <see cref="_lifecycleLock"/>: true once the terminal <see cref="OnDisconnected"/> has fired for the current connection generation; reset on each (re)connect so a future disconnect can fire it again exactly once.</summary>
         private bool _terminalFired;
+
+        /// <summary>
+        /// Monotonically increasing id of the current connection attempt, bumped under <see cref="_lifecycleLock"/> by
+        /// every connect and reconnect. Each receive loop captures the generation it was started for and compares it
+        /// before running any teardown: a loop whose generation has been superseded is a leftover from a connection
+        /// the application already replaced, and must not close the live transport, cancel the live dispatch gate, or
+        /// fire lifecycle callbacks against it.
+        /// </summary>
+        private long _generation;
 
         /// <summary>Backing field for <see cref="State"/>; <c>volatile</c> so transitions are visible to the heartbeat/send threads without locking.</summary>
         private volatile ConnectionState _state = ConnectionState.Disconnected;
@@ -113,14 +128,23 @@ namespace SetNet.Core
 
             SetState(ConnectionState.Connecting);
             _isIntentionalDisconnect = false;
+            _kicked = false;
+            _kickReason = null;
             RegisterDataHandlers();
+            // A kick must land even before anything else is negotiated (it is how a ban or geo-block is announced),
+            // so it is registered unconditionally and rides the system-frame path that bypasses inbound gating.
+            RegisterDataHandler(SystemMessageTypes.Kick, OnKickReceived);
 
             CancellationToken ct;
+            long generation;
             lock (_lifecycleLock)
             {
                 _terminalFired = false; // new connection generation: allow one terminal OnDisconnected
                 _cancellationTokenSource = new CancellationTokenSource();
                 ct = _cancellationTokenSource.Token;
+                // Claim a fresh generation BEFORE any await, so a receive loop still unwinding from the previous
+                // connection sees itself superseded and leaves this one alone.
+                generation = Interlocked.Increment(ref _generation);
             }
             ResetDispatch(); // re-arm the dispatch gate; a prior Disconnect cancelled the old generation's token
 
@@ -138,15 +162,18 @@ namespace SetNet.Core
             {
                 Interlocked.Exchange(ref _lastPongReceivedTicks, MonotonicClock.Timestamp);
                 RegisterDataHandler(SystemMessageTypes.Pong, OnPongReceived);
-                if (!_heartbeatScheduled)
+                lock (_lifecycleLock)
                 {
-                    _heartbeatScheduled = true;
-                    _heartbeatTickId = TimerScheduler.Shared.Schedule(_config.HeartbeatIntervalMs, HeartbeatTick);
+                    if (!_heartbeatScheduled)
+                    {
+                        _heartbeatScheduled = true;
+                        _heartbeatTickId = TimerScheduler.Shared.Schedule(_config.HeartbeatIntervalMs, HeartbeatTick);
+                    }
                 }
             }
 
-            _ = ReceiveLoopAsync(Connection, ct);
-            if (!TryCommitConnected(out var prev))
+            _ = ReceiveLoopAsync(Connection, ct, generation);
+            if (!TryCommitConnected(generation, out var prev))
             {
                 // A Disconnect()/Dispose() raced the connect tail and already ran the terminal teardown. Do NOT
                 // resurrect State to Connected or fire OnConnected after OnDisconnected; just ensure the socket is
@@ -181,19 +208,36 @@ namespace SetNet.Core
         /// teardown already ran, so the caller abandons the connection instead of firing a spurious OnConnected
         /// after OnDisconnected and leaving the client falsely Connected over a dead transport.
         /// </summary>
+        /// <param name="generation">The connection generation being committed; a newer one means this attempt was superseded.</param>
         /// <param name="previous">The state being transitioned from (for <see cref="OnStateChanged"/>), valid only when this returns true.</param>
         /// <returns><c>true</c> if the Connected state was committed; <c>false</c> if a teardown intervened.</returns>
-        private bool TryCommitConnected(out ConnectionState previous)
+        private bool TryCommitConnected(long generation, out ConnectionState previous)
         {
             lock (_lifecycleLock)
             {
                 previous = _state;
-                if (_disposed || _isIntentionalDisconnect ||
+                if (_disposed || _isIntentionalDisconnect || _generation != generation ||
                     previous == ConnectionState.Disconnecting || previous == ConnectionState.Disconnected)
                     return false;
                 _state = ConnectionState.Connected;
                 return true;
             }
+        }
+
+        /// <summary>
+        /// True when <paramref name="generation"/> is no longer the client's current connection generation, i.e. a
+        /// connect/reconnect has since taken ownership and the caller is a leftover from a replaced connection.
+        /// </summary>
+        private bool IsStale(long generation) => Interlocked.Read(ref _generation) != generation;
+
+        /// <summary>
+        /// Runs <see cref="FireTerminalDisconnect"/> only while <paramref name="generation"/> still owns the client, so
+        /// a late-unwinding reconnect cannot drive a newer, live connection to Disconnected.
+        /// </summary>
+        private void FireTerminalDisconnectIfCurrent(long generation)
+        {
+            if (IsStale(generation)) return;
+            FireTerminalDisconnect();
         }
 
         /// <summary>
@@ -224,16 +268,26 @@ namespace SetNet.Core
             try { cts?.Cancel(); } catch (ObjectDisposedException) { /* reconnect disposed it; nothing to cancel */ }
             Connection?.Close();
             ShutdownDispatch();
-            FireTerminalDisconnect();
+            FireTerminalDisconnect(); // also releases the heartbeat registration
+        }
 
-            // Release the shared-scheduler heartbeat registration so a client that is Disconnect()'d but not
-            // Dispose()'d (a common "I'm done" pattern, and per-attempt connect loops) isn't pinned forever by
-            // TimerScheduler.Shared. A later ConnectAsync re-arms it via the `!_heartbeatScheduled` guard.
-            if (_heartbeatScheduled)
+        /// <summary>
+        /// Releases the shared-scheduler heartbeat registration once a connection is over, so a client that is
+        /// disconnected but not disposed (a common "I'm done" pattern, and per-attempt connect loops) is not pinned
+        /// forever by <see cref="TimerScheduler.Shared"/>. A later <see cref="ConnectAsync"/> re-arms it via the
+        /// <c>!_heartbeatScheduled</c> guard. Idempotent.
+        /// </summary>
+        private void ReleaseHeartbeat()
+        {
+            long tickId;
+            bool unschedule;
+            lock (_lifecycleLock)
             {
+                unschedule = _heartbeatScheduled;
                 _heartbeatScheduled = false;
-                TimerScheduler.Shared.Unschedule(_heartbeatTickId);
+                tickId = _heartbeatTickId;
             }
+            if (unschedule) TimerScheduler.Shared.Unschedule(tickId);
         }
 
         /// <summary>
@@ -249,6 +303,7 @@ namespace SetNet.Core
                 if (_terminalFired) return;
                 _terminalFired = true;
             }
+            ReleaseHeartbeat(); // every terminal path ends the connection, so stop pinning the shared scheduler
             SetState(ConnectionState.Disconnected);
             SafeLifecycleHook(nameof(OnDisconnected), OnDisconnected);
         }
@@ -261,23 +316,36 @@ namespace SetNet.Core
         /// </summary>
         /// <param name="connection">The transport connection to read from for this loop's lifetime.</param>
         /// <param name="ct">This connection generation's cancellation token, captured at start so a later reconnect's CTS swap cannot redirect this loop.</param>
+        /// <param name="generation">The connection generation this loop belongs to; teardown is skipped once a newer one owns the client.</param>
         /// <returns>A task that completes when the receive loop exits and the disconnect flow has run.</returns>
         /// <remarks>
-        /// Runs fire-and-forget. <see cref="OperationCanceledException"/> is swallowed as an intentional
-        /// teardown. A null message indicates graceful EOF. Only genuine errors (or heartbeat timeout)
-        /// trigger <see cref="OnUnexpectedDisconnect"/> and, when enabled, <see cref="ReconnectAsync"/>.
+        /// Runs fire-and-forget. <see cref="OperationCanceledException"/> is swallowed as an intentional teardown.
+        /// A null message is an orderly end-of-stream; unless the application asked for it, that means the
+        /// <b>remote</b> end closed (server restart/kick, UDP idle-expiry, an exhausted reliable-UDP retransmit
+        /// budget) and counts as an unexpected loss under <see cref="Configuration.ReconnectOnRemoteClose"/> — on
+        /// UDP/Both/WebSocket transports it is the only shape a drop ever takes, since their receive path never
+        /// throws. Errors, a heartbeat timeout, and a remote close all route to <see cref="OnUnexpectedDisconnect"/>
+        /// and, when enabled, <see cref="ReconnectAsync"/>.
         /// </remarks>
-        private async Task ReceiveLoopAsync(ITransportConnection connection, CancellationToken ct)
+        private async Task ReceiveLoopAsync(ITransportConnection connection, CancellationToken ct, long generation)
         {
             var hadError = false;
+            var remoteClosed = false;
+            string? errorText = null;
 
             try
             {
                 while (!ct.IsCancellationRequested)
                 {
                     var message = await connection.ReceiveAsync(ct).ConfigureAwait(global::SetNet.SetNetSync.ContinueOnCapturedContext);
-                    if (message == null) break; // graceful close / EOF
+                    if (message == null) { remoteClosed = true; break; } // orderly end-of-stream
                     var m = message.Value;
+
+                    // Any inbound frame proves the server is alive, so it refreshes the heartbeat window just like a
+                    // Pong would. Without this a busy-but-pong-dropping link (unreliable-UDP heartbeat) times out
+                    // while data is visibly flowing.
+                    if (_config.HeartbeatEnabled)
+                        Interlocked.Exchange(ref _lastPongReceivedTicks, MonotonicClock.Timestamp);
 
                     _config.Metrics.IncrementMessagesReceived();
                     LogNewMessage(m.Type);
@@ -291,44 +359,85 @@ namespace SetNet.Core
             catch (Exception ex)
             {
                 hadError = true;
-                if (!_isIntentionalDisconnect && !_isHeartbeatTimeout)
-                    SafeLifecycleHook(nameof(OnError), () => OnError($"Connection lost: {ex.Message}"));
+                errorText = ex.Message;
             }
             finally
             {
-                var wasHeartbeat = _isHeartbeatTimeout;
-                _isHeartbeatTimeout = false;
+                FinishReceiveLoop(connection, generation, hadError, remoteClosed, errorText);
+            }
+        }
 
-                // Classify the teardown atomically so a racing Disconnect() and this finally don't both finalize.
-                bool intentional;
-                lock (_lifecycleLock)
-                {
-                    intentional = _isIntentionalDisconnect;
-                    if (intentional) _isIntentionalDisconnect = false;
-                }
+        /// <summary>
+        /// Classifies how a receive loop ended and runs the matching teardown: nothing for an intentional
+        /// <see cref="Disconnect"/> (which owns its own callbacks), <see cref="OnUnexpectedDisconnect"/> plus an
+        /// optional reconnect for a loss, and the terminal <see cref="OnDisconnected"/> otherwise.
+        /// </summary>
+        /// <param name="connection">The transport this loop owned; closed here rather than the (possibly newer) live one.</param>
+        /// <param name="generation">The loop's connection generation.</param>
+        /// <param name="hadError">True if the loop exited on a transport exception.</param>
+        /// <param name="remoteClosed">True if the loop exited on an orderly end-of-stream from the remote end.</param>
+        /// <param name="errorText">The transport exception's message, when <paramref name="hadError"/>.</param>
+        private void FinishReceiveLoop(ITransportConnection connection, long generation, bool hadError, bool remoteClosed, string? errorText)
+        {
+            // A newer generation owns the client (a Disconnect→Connect cycle, or a reconnect, completed while this
+            // loop was still unwinding). Closing "the connection" or cancelling "the dispatch gate" here would hit
+            // the LIVE ones and kill a connection the application believes is up, so this loop only cleans up the
+            // transport it was given and leaves the lifecycle alone.
+            if (IsStale(generation))
+            {
+                try { connection.Close(); } catch { /* teardown is best-effort */ }
+                return;
+            }
 
-                if (intentional)
-                {
-                    // Disconnect() owns the terminal callbacks for an intentional teardown.
-                }
-                else if (hadError || wasHeartbeat)
-                {
-                    Connection?.Close();
-                    ShutdownDispatch();
-                    SafeLifecycleHook(nameof(OnUnexpectedDisconnect), OnUnexpectedDisconnect);
+            var wasHeartbeat = _isHeartbeatTimeout;
+            _isHeartbeatTimeout = false;
 
-                    if (_config.AutoReconnect)
-                        _ = ReconnectAsync();
-                    else
-                        FireTerminalDisconnect();
-                }
-                else
+            // Classify the teardown atomically so a racing Disconnect() and this loop don't both finalize.
+            bool intentional;
+            lock (_lifecycleLock)
+            {
+                intentional = _isIntentionalDisconnect;
+                if (intentional) _isIntentionalDisconnect = false;
+            }
+
+            // Disconnect() owns the terminal callbacks for an intentional teardown.
+            if (intentional) return;
+
+            // The server announced a deliberate, final kick (ban, geo-block, session displaced by a newer login).
+            // Reconnecting would just be kicked again — and under KickExisting two clients on one account would kick
+            // each other forever — so this is terminal regardless of the reconnect policy.
+            if (_kicked)
+            {
+                var reason = _kickReason;
+                connection.Close();
+                ShutdownDispatch();
+                SafeLifecycleHook(nameof(OnKicked), () => OnKicked(reason));
+                FireTerminalDisconnect();
+                return;
+            }
+
+            // Report the failure from this loop rather than from the detector: the heartbeat tick runs on the
+            // process-wide TimerScheduler, where application code would stall every other connection's pings.
+            if (wasHeartbeat)
+                SafeLifecycleHook(nameof(OnError), () => OnError("Heartbeat timeout - no response from server."));
+            else if (hadError)
+                SafeLifecycleHook(nameof(OnError), () => OnError($"Connection lost: {errorText}"));
+
+            connection.Close();
+            ShutdownDispatch();
+
+            if (hadError || wasHeartbeat || (remoteClosed && _config.ReconnectOnRemoteClose))
+            {
+                SafeLifecycleHook(nameof(OnUnexpectedDisconnect), OnUnexpectedDisconnect);
+
+                if (_config.AutoReconnect)
                 {
-                    Connection?.Close();
-                    ShutdownDispatch();
-                    FireTerminalDisconnect();
+                    _ = ReconnectAsync(generation);
+                    return;
                 }
             }
+
+            FireTerminalDisconnect();
         }
 
         /// <summary>
@@ -337,6 +446,11 @@ namespace SetNet.Core
         /// closes the connection so the receive loop classifies the loss as unexpected. A no-op while not Connected
         /// (e.g. mid-reconnect), so a single registration serves the client's whole lifetime including reconnects.
         /// </summary>
+        /// <remarks>
+        /// Runs on the process-wide <see cref="TimerScheduler"/>, so it deliberately invokes no application code:
+        /// reporting the timeout is left to the receive loop, which unwinds on its own thread. Only the flag and the
+        /// socket close happen here.
+        /// </remarks>
         private void HeartbeatTick()
         {
             if (State != ConnectionState.Connected) return;
@@ -345,14 +459,28 @@ namespace SetNet.Core
             if (elapsed > _config.HeartbeatTimeoutMs)
             {
                 _isHeartbeatTimeout = true;
-                SafeLifecycleHook(nameof(OnError), () => OnError("Heartbeat timeout - no response from server."));
-                Connection?.Close();
+                CloseDetached(Connection); // unblocks the receive loop, which classifies this as an unexpected loss
                 return;
             }
 
             var conn = Connection;
             if (conn != null)
-                _ = conn.SendAsync(SystemMessageTypes.Ping, Array.Empty<byte>(), DeliveryMethod.Unreliable);
+                _ = SendPingAsync(conn);
+        }
+
+        /// <summary>
+        /// Sends one heartbeat Ping, swallowing failures. A dropped ping is not itself fatal — the missing Pong is
+        /// what declares the link dead — and observing the task here keeps a failed send from surfacing as an
+        /// unobserved task exception.
+        /// </summary>
+        private async Task SendPingAsync(ITransportConnection conn)
+        {
+            try
+            {
+                await conn.SendAsync(SystemMessageTypes.Ping, Array.Empty<byte>(), DeliveryMethod.Unreliable)
+                    .ConfigureAwait(global::SetNet.SetNetSync.ContinueOnCapturedContext);
+            }
+            catch { /* link already failing; the pong timeout is the detector */ }
         }
 
         /// <summary>
@@ -361,6 +489,7 @@ namespace SetNet.Core
         /// success. Invoked from the receive loop only when auto-reconnect is enabled and the loss was
         /// unexpected.
         /// </summary>
+        /// <param name="generation">The connection generation that was lost; the loop abandons itself once a newer one owns the client.</param>
         /// <returns>A task that completes when reconnect succeeds or all attempts are exhausted.</returns>
         /// <remarks>
         /// Fires <see cref="OnReconnecting"/> before each attempt; on success fires <see cref="OnReconnected"/>
@@ -368,20 +497,36 @@ namespace SetNet.Core
         /// <see cref="OnDisconnected"/>. A fresh <see cref="CancellationTokenSource"/> is installed and the
         /// previous one cancelled/disposed on each attempt to ensure no stale heartbeat loop survives.
         /// </remarks>
-        private async Task ReconnectAsync()
+        private async Task ReconnectAsync(long generation)
         {
-            SetState(ConnectionState.Reconnecting);
+            // Enter Reconnecting only while this generation still owns a live client. Unconditionally setting it
+            // would resurrect the state of a client that Disconnect() had already driven to Disconnected, leaving it
+            // stuck in Reconnecting forever — every later ConnectAsync would then throw.
+            if (!TryBeginReconnect(generation, out var previous))
+            {
+                FireTerminalDisconnectIfCurrent(generation);
+                return;
+            }
+            SafeLifecycleHook(nameof(OnStateChanged), () => OnStateChanged(previous, ConnectionState.Reconnecting));
 
             for (int attempt = 1; attempt <= _config.MaxReconnectAttempts; attempt++)
             {
                 // Abort if the user disconnected (or disposed) while we were reconnecting, so we don't keep
                 // retrying — or reconnect — a connection the application explicitly tore down.
-                if (_disposed || _isIntentionalDisconnect) { FireTerminalDisconnect(); return; }
+                if (IsStale(generation) || _disposed || _isIntentionalDisconnect)
+                {
+                    FireTerminalDisconnectIfCurrent(generation);
+                    return;
+                }
 
                 SafeLifecycleHook(nameof(OnReconnecting), () => OnReconnecting(attempt, _config.MaxReconnectAttempts));
-                await Task.Delay(_config.ReconnectDelayMs).ConfigureAwait(global::SetNet.SetNetSync.ContinueOnCapturedContext);
+                await Task.Delay(NextReconnectDelayMs()).ConfigureAwait(global::SetNet.SetNetSync.ContinueOnCapturedContext);
 
-                if (_disposed || _isIntentionalDisconnect) { FireTerminalDisconnect(); return; }
+                if (IsStale(generation) || _disposed || _isIntentionalDisconnect)
+                {
+                    FireTerminalDisconnectIfCurrent(generation);
+                    return;
+                }
 
                 try
                 {
@@ -390,9 +535,10 @@ namespace SetNet.Core
                     // overwritten (which would resurrect a connection the application explicitly tore down).
                     CancellationToken ct = default;
                     bool bail = false;
+                    long attemptGeneration = generation;
                     lock (_lifecycleLock)
                     {
-                        if (_disposed || _isIntentionalDisconnect)
+                        if (_disposed || _isIntentionalDisconnect || _generation != generation)
                         {
                             bail = true;
                         }
@@ -404,11 +550,14 @@ namespace SetNet.Core
                             var oldCts = _cancellationTokenSource;
                             _cancellationTokenSource = new CancellationTokenSource();
                             ct = _cancellationTokenSource.Token;
+                            attemptGeneration = Interlocked.Increment(ref _generation); // this attempt now owns the client
+                            _terminalFired = false;                                     // re-arm the terminal guard
                             try { oldCts?.Cancel(); } catch (ObjectDisposedException) { }
                             oldCts?.Dispose();
                         }
                     }
-                    if (bail) { FireTerminalDisconnect(); return; }
+                    if (bail) { FireTerminalDisconnectIfCurrent(generation); return; }
+                    generation = attemptGeneration; // later staleness checks track the attempt we just claimed
 
                     Connection = await _connector.ConnectAsync(_config, ct).ConfigureAwait(global::SetNet.SetNetSync.ContinueOnCapturedContext);
 
@@ -418,10 +567,9 @@ namespace SetNet.Core
                         Interlocked.Exchange(ref _lastPongReceivedTicks, MonotonicClock.Timestamp);
                     }
 
-                    lock (_lifecycleLock) { _terminalFired = false; } // new generation: re-arm the terminal guard
                     ResetDispatch(); // re-arm the dispatch gate; the prior teardown cancelled the old generation's token
-                    _ = ReceiveLoopAsync(Connection, ct);
-                    if (!TryCommitConnected(out var prev))
+                    _ = ReceiveLoopAsync(Connection, ct, generation);
+                    if (!TryCommitConnected(generation, out var prev))
                     {
                         // A Disconnect()/Dispose() raced the reconnect tail; it already ran teardown. Don't fire a
                         // spurious OnReconnected or resurrect Connected over a dead transport.
@@ -442,7 +590,48 @@ namespace SetNet.Core
             }
 
             SafeLifecycleHook(nameof(OnReconnectFailed), OnReconnectFailed);
-            FireTerminalDisconnect();
+            FireTerminalDisconnectIfCurrent(generation);
+        }
+
+        /// <summary>
+        /// The delay before the next reconnect attempt: <see cref="Configuration.ReconnectDelayMs"/> plus up to 25%
+        /// of random jitter.
+        /// </summary>
+        /// <remarks>
+        /// A server restart drops every client at the same instant, so a fixed delay makes them all dial back in the
+        /// same millisecond — a thundering herd against a process that is still starting up, which fails the attempt
+        /// and can exhaust the whole retry budget before the server is even listening. Spreading the retries costs
+        /// nothing and never shortens the configured delay.
+        /// </remarks>
+        private int NextReconnectDelayMs()
+        {
+            var baseDelay = _config.ReconnectDelayMs;
+            if (baseDelay <= 0) return baseDelay;
+            var spread = baseDelay / 4;
+            return spread < 1 ? baseDelay : baseDelay + _jitter.Next(spread + 1);
+        }
+
+        /// <summary>Per-client RNG for reconnect jitter. Not shared, so no cross-client lock contention or correlated delays.</summary>
+        private readonly Random _jitter = new Random(Guid.NewGuid().GetHashCode());
+
+        /// <summary>
+        /// Moves the client into <see cref="ConnectionState.Reconnecting"/> under <see cref="_lifecycleLock"/>, but
+        /// only if <paramref name="generation"/> still owns it and no teardown has begun. Returning <c>false</c> means
+        /// the connection was already finalized (or replaced) and the reconnect must abandon itself.
+        /// </summary>
+        /// <param name="generation">The generation attempting to reconnect.</param>
+        /// <param name="previous">The state transitioned from, valid only when this returns true.</param>
+        private bool TryBeginReconnect(long generation, out ConnectionState previous)
+        {
+            lock (_lifecycleLock)
+            {
+                previous = _state;
+                if (_disposed || _isIntentionalDisconnect || _generation != generation ||
+                    previous == ConnectionState.Disconnecting || previous == ConnectionState.Disconnected)
+                    return false;
+                _state = ConnectionState.Reconnecting;
+                return true;
+            }
         }
 
         /// <summary>
@@ -453,6 +642,18 @@ namespace SetNet.Core
         private void OnPongReceived(byte[] data)
         {
             Interlocked.Exchange(ref _lastPongReceivedTicks, MonotonicClock.Timestamp);
+        }
+
+        /// <summary>
+        /// Handles the server's kick notice: records that the close about to arrive is deliberate and final, so the
+        /// receive loop reports it through <see cref="OnKicked"/> and does <b>not</b> reconnect into the same kick.
+        /// </summary>
+        /// <param name="data">Optional UTF-8 reason.</param>
+        private void OnKickReceived(byte[] data)
+        {
+            try { _kickReason = data.Length > 0 ? System.Text.Encoding.UTF8.GetString(data) : null; }
+            catch { _kickReason = null; }
+            _kicked = true;
         }
 
         /// <summary>
@@ -621,7 +822,8 @@ namespace SetNet.Core
             if (!disposing) return;
 
             Disconnect();
-            if (_heartbeatScheduled) TimerScheduler.Shared.Unschedule(_heartbeatTickId);
+            ReleaseHeartbeat(); // Disconnect() is a no-op when already Disconnected; never leave the tick registered
+
             Connection?.Dispose();
             DisposeModules();
             DisposeDispatch();
@@ -675,6 +877,13 @@ namespace SetNet.Core
 
         /// <summary>Hook invoked when the server drops the connection unexpectedly (error or heartbeat timeout), before any reconnect attempt.</summary>
         protected virtual void OnUnexpectedDisconnect() { }
+
+        /// <summary>
+        /// Hook invoked when the server announced a deliberate, final kick (ban, geo-block, a session displaced by a
+        /// newer login, a protocol violation). No reconnect is attempted; <see cref="OnDisconnected"/> follows.
+        /// </summary>
+        /// <param name="reason">The server-supplied reason, or <see langword="null"/> if none was given.</param>
+        protected virtual void OnKicked(string? reason) { }
 
         /// <summary>Hook invoked before each auto-reconnect attempt so progress can be surfaced to the user.</summary>
         /// <param name="attempt">The 1-based index of the current reconnect attempt.</param>

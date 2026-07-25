@@ -65,21 +65,43 @@ namespace SetNet.Core.Transport.Both
         /// <param name="ct">Caller's cancellation token, linked with the internal timeout.</param>
         /// <returns>The <see cref="Guid"/> bind token the client must echo during the UDP handshake.</returns>
         /// <exception cref="InvalidOperationException">Thrown if the TCP connection closes before the bind token is received.</exception>
-        /// <exception cref="OperationCanceledException">Thrown when the caller cancels or the connect timeout elapses.</exception>
+        /// <exception cref="TimeoutException">Thrown when the bind token does not arrive within the connect timeout.</exception>
+        /// <exception cref="OperationCanceledException">Thrown when the caller cancels.</exception>
         /// <remarks>
         /// Wire protocol: the server sends the <see cref="SystemMessageTypes.UdpBindToken"/> frame (a 16-byte GUID
         /// payload) first; any other early frame is ignored so the handshake is robust to reordering or stray traffic.
+        /// <para>
+        /// The deadline is enforced by <b>closing</b> the channel, not by the read's cancellation token: a socket read
+        /// already in flight is not reliably interrupted by a token, so a server that accepts TCP and then says
+        /// nothing would hang the connect (and every reconnect attempt) indefinitely.
+        /// </para>
         /// </remarks>
         private static async Task<Guid> WaitForBindTokenAsync(ITransportConnection tcp, Configuration config, CancellationToken ct)
         {
+            var timeoutMs = config.ConnectTimeoutMs > 0 ? config.ConnectTimeoutMs : 10000;
             using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-            timeoutCts.CancelAfter(config.ConnectTimeoutMs > 0 ? config.ConnectTimeoutMs : 10000);
+            timeoutCts.CancelAfter(timeoutMs);
+            using var abort = timeoutCts.Token.Register(() => { try { tcp.Close(); } catch { /* already down */ } });
 
             while (true)
             {
-                var msg = await tcp.ReceiveAsync(timeoutCts.Token).ConfigureAwait(false);
+                TransportMessage? msg;
+                try
+                {
+                    msg = await tcp.ReceiveAsync(timeoutCts.Token).ConfigureAwait(false);
+                }
+                catch when (timeoutCts.IsCancellationRequested)
+                {
+                    msg = null; // the abort registration tore the channel down; report it as the deadline below
+                }
+
                 if (msg == null)
+                {
+                    ct.ThrowIfCancellationRequested();
+                    if (timeoutCts.IsCancellationRequested)
+                        throw new TimeoutException($"UDP bind token did not arrive within {timeoutMs}ms.");
                     throw new InvalidOperationException("TCP connection closed before the UDP bind token was received.");
+                }
 
                 var m = msg.Value;
                 if (m.Type == SystemMessageTypes.UdpBindToken && m.Payload.Length >= 16)

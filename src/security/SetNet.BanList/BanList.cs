@@ -79,10 +79,10 @@ namespace SetNet.BanList
         /// <summary>Lifts a ban.</summary>
         public void Unban(string key) => _store.Unban(key);
 
-        /// <summary>Immediately disconnects a peer.</summary>
+        /// <summary>Immediately disconnects a peer, telling it the close is final so it does not reconnect into the ban.</summary>
         public void Kick(BasePeer peer)
         {
-            try { peer.CurrentPeerInfo.Disconnect(); } catch { /* already gone */ }
+            try { peer.CurrentPeerInfo.Kick("banned"); } catch { /* already gone */ }
         }
     }
 

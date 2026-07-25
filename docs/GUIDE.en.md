@@ -610,8 +610,13 @@ public class GameClient : BaseClient
 | Event | OnError | OnUnexpectedDisconnect | OnDisconnected | Auto-Reconnect |
 |---|---|---|---|---|
 | `Disconnect()` (intentional) | ❌ | ❌ | ✅ | ❌ |
-| Network error / server crash | ✅ | ✅ | ✅ (if reconnect failed) | ✅ (if enabled) |
-| Graceful close by the server | ❌ | ❌ | ✅ | ❌ |
+| Network error / server crash | ✅ | ✅ | ✅ (if reconnect fails) | ✅ (if enabled) |
+| Heartbeat timeout (silent link) | ✅ | ✅ | ✅ (if reconnect fails) | ✅ (if enabled) |
+| Remote close (server restart/kick) | ❌ | ✅ | ✅ (if reconnect fails) | ✅ (if enabled) |
+
+Only a local `Disconnect()`/`Dispose()` is intentional. Everything else — including the orderly end-of-stream a
+server restart, a kick or a UDP idle-expiry produces (the only shape a drop takes on UDP/Both/WebSocket, whose
+receive path never throws) — is a loss and reconnects. Opt out with `ReconnectOnRemoteClose = false`.
 
 Auto-reconnect:
 ```csharp
@@ -758,11 +763,12 @@ ev.Trigger("PlayerJoined", "Alex");
 | `UdpOrderedReliable` | `true` | Ordered reliable delivery. |
 | `UdpHandshakeTimeoutMs` | 5000 | UDP handshake timeout. |
 | `UdpPeerExpiryMs` | 15000 | Idle time before a UDP peer is removed. |
-| `HeartbeatEnabled` | `false` | Ping/Pong to detect dead connections. |
-| `HeartbeatIntervalMs` / `HeartbeatTimeoutMs` | 5000 / 15000 | Heartbeat interval / timeout. |
+| `HeartbeatEnabled` | `true` | Ping/Pong to detect dead connections; the only detector of a silent half-open link. Liveness is refreshed by any inbound frame, not just Pings. |
+| `HeartbeatIntervalMs` / `HeartbeatTimeoutMs` | 5000 / 30000 | Heartbeat interval / timeout (timeout must exceed the interval; widen to 60s+ for WebGL, where a backgrounded tab stops pinging). |
 | `AutoReconnect` | `false` | Client auto-reconnect. |
 | `MaxReconnectAttempts` / `ReconnectDelayMs` | 3 / 1000 | Reconnect policy. |
-| `ConnectTimeoutMs` | 10000 | Connect/handshake timeout. |
+| `ReconnectOnRemoteClose` | `true` | Treat a close initiated by the remote end (server restart/kick, UDP expiry) as a loss, not a clean shutdown. |
+| `ConnectTimeoutMs` | 10000 | Connect deadline; also bounds the TLS handshake and the Both-mode bind-token wait. |
 | `MaxInFlightMessages` | 0 | Back-pressure (0 = unlimited). |
 | `SequentialDispatch` | `false` | Strict processing order. |
 | `SendBatching` / `SendBatchFlushMs` | `false` / 15 | Coalesced TCP write. |
@@ -787,7 +793,7 @@ ev.Trigger("PlayerJoined", "Alex");
 The defaults are optimized for compatibility, not for production. Before launch:
 
 - [ ] Implement **authorization** in `OnNewClient`/handlers.
-- [ ] `HeartbeatEnabled = true` (otherwise dead connections are not detected).
+- [ ] `HeartbeatEnabled = true` (the default; otherwise a silent half-open connection is never detected) with `HeartbeatTimeoutMs` at 3x+ `HeartbeatIntervalMs`.
 - [ ] `MaxInFlightMessages > 0` (otherwise unbounded fire-and-forget Tasks under load).
 - [ ] `MaxConnectionsLimit`, `MaxConnectionsPerIpPerSecond` tuned to your capacity.
 - [ ] `UseSsl = true` + a certificate, if outside a trusted network (and do **not** send sensitive data over UDP).
