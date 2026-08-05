@@ -9,6 +9,9 @@ namespace SetNet.PathFinding
         /// <summary>Returns a pathfinder matching the geometry kind (grid / multi-storey grid A*, or nav-mesh A*+funnel).</summary>
         public static IPathfinder For(IGeoData geo)
         {
+            // Власний пошуковик має пріоритет над усім вбудованим.
+            if (geo is IPathfinderProvider provider) return provider.CreatePathfinder();
+
             switch (geo)
             {
                 case GridGeoData g: return new GridPathfinder(g);
