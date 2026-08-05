@@ -9,9 +9,9 @@
 
     <PropertyGroup>
         <PackageId>SetNet.Cluster</PackageId>
-        <Version>1.1.0</Version>
-        <AssemblyVersion>1.1.0.0</AssemblyVersion>
-        <FileVersion>1.1.0.0</FileVersion>
+        <Version>1.2.0</Version>
+        <AssemblyVersion>1.2.0.0</AssemblyVersion>
+        <FileVersion>1.2.0.0</FileVersion>
         <Authors>Artem Lemeshev</Authors>
         <Description>Server-to-server cluster bus for SetNet: connect multiple game/app server nodes into a mesh and fan out cross-node events (global chat, presence, invalidations) with Publish/Received/On&lt;T&gt;. A lightweight broadcast bus (not consensus/replication). Depends only on SetNet.</Description>
         <PackageTags>networking;cluster;mesh;pub-sub;scaling;setnet</PackageTags>

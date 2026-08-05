@@ -9,9 +9,9 @@
 
     <PropertyGroup>
         <PackageId>SetNet.Relay</PackageId>
-        <Version>1.1.0</Version>
-        <AssemblyVersion>1.1.0.0</AssemblyVersion>
-        <FileVersion>1.1.0.0</FileVersion>
+        <Version>1.2.0</Version>
+        <AssemblyVersion>1.2.0.0</AssemblyVersion>
+        <FileVersion>1.2.0.0</FileVersion>
         <Authors>Artem Lemeshev</Authors>
         <Description>Relay hub for SetNet: peers that can't connect directly (symmetric NAT) allocate/join a relay session by code and exchange opaque bytes forwarded by the server — a TURN-style fallback, or a simple hub for tunnelling any payload. server.UseRelay(); var relay = client.UseRelay(). Depends only on SetNet.</Description>
         <PackageTags>networking;relay;turn;nat-traversal;setnet</PackageTags>

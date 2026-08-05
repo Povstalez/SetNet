@@ -9,9 +9,9 @@
 
     <PropertyGroup>
         <PackageId>SetNet.Vendor</PackageId>
-        <Version>1.0.0</Version>
-        <AssemblyVersion>1.0.0.0</AssemblyVersion>
-        <FileVersion>1.0.0.0</FileVersion>
+        <Version>1.2.0</Version>
+        <AssemblyVersion>1.2.0.0</AssemblyVersion>
+        <FileVersion>1.2.0.0</FileVersion>
         <Authors>Artem Lemeshev</Authors>
         <Description>NPC shops for SetNet: define vendor catalogs (buy/sell prices, currency, stock); clients buy and sell and the server settles atomically through SetNet.Wallet + SetNet.Inventory (money before goods, stock reserved before charge). server.UseVendor(inventory, wallet).Define(...) + client.UseVendor(). Depends on SetNet + SetNet.Inventory + SetNet.Wallet.</Description>
         <PackageTags>networking;vendor;shop;economy;inventory;wallet;setnet</PackageTags>

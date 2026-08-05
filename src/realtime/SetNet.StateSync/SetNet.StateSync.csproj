@@ -9,9 +9,9 @@
 
     <PropertyGroup>
         <PackageId>SetNet.StateSync</PackageId>
-        <Version>1.1.0</Version>
-        <AssemblyVersion>1.1.0.0</AssemblyVersion>
-        <FileVersion>1.1.0.0</FileVersion>
+        <Version>1.2.0</Version>
+        <AssemblyVersion>1.2.0.0</AssemblyVersion>
+        <FileVersion>1.2.0.0</FileVersion>
         <Authors>Artem Lemeshev</Authors>
         <Description>Server-authoritative entity replication for SetNet: fixed-rate, delta-compressed world snapshots over the unreliable channel with reliable spawns/despawns, client-side interpolation, interest management, and an input channel for client prediction. Engine-agnostic core (headless dedicated server + any .NET client); the Unity binding (SetNet.StateSync.Unity) adds NetworkObject/NetworkTransform/NetworkAnimator/NetworkRigidbody. Composition, no base class. Depends only on SetNet.</Description>
         <PackageTags>networking;replication;state-sync;snapshot;interpolation;games;unity;setnet</PackageTags>

@@ -9,9 +9,9 @@
 
     <PropertyGroup>
         <PackageId>SetNet.Rooms.HostMigration</PackageId>
-        <Version>1.1.0</Version>
-        <AssemblyVersion>1.1.0.0</AssemblyVersion>
-        <FileVersion>1.1.0.0</FileVersion>
+        <Version>1.2.0</Version>
+        <AssemblyVersion>1.2.0.0</AssemblyVersion>
+        <FileVersion>1.2.0.0</FileVersion>
         <Authors>Artem Lemeshev</Authors>
         <Description>Host migration for SetNet.Rooms: designates the room creator as host and promotes the next member when the host leaves/disconnects, notifying the room. server.UseHostMigration() / client.UseHostMigration(). Depends on SetNet + SetNet.Rooms.</Description>
         <PackageTags>networking;rooms;host-migration;games;setnet</PackageTags>

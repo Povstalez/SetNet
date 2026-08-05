@@ -9,9 +9,9 @@
 
     <PropertyGroup>
         <PackageId>SetNet.Lockstep</PackageId>
-        <Version>1.1.0</Version>
-        <AssemblyVersion>1.1.0.0</AssemblyVersion>
-        <FileVersion>1.1.0.0</FileVersion>
+        <Version>1.2.0</Version>
+        <AssemblyVersion>1.2.0.0</AssemblyVersion>
+        <FileVersion>1.2.0.0</FileVersion>
         <Authors>Artem Lemeshev</Authors>
         <Description>Deterministic lockstep engine for SetNet: the server collects each participant's input for a turn and, once all are in (or the turn times out), broadcasts the complete input set so every client advances identically. Ideal for RTS and deterministic games. server.UseLockstep() / client.UseLockstep(). Depends only on SetNet.</Description>
         <PackageTags>networking;lockstep;deterministic;rts;games;setnet</PackageTags>

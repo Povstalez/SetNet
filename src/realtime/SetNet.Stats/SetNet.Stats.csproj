@@ -9,9 +9,9 @@
 
     <PropertyGroup>
         <PackageId>SetNet.Stats</PackageId>
-        <Version>1.0.0</Version>
-        <AssemblyVersion>1.0.0.0</AssemblyVersion>
-        <FileVersion>1.0.0.0</FileVersion>
+        <Version>1.2.0</Version>
+        <AssemblyVersion>1.2.0.0</AssemblyVersion>
+        <FileVersion>1.2.0.0</FileVersion>
         <Authors>Artem Lemeshev</Authors>
         <Description>Custom character statistics for SetNet: define your own stat schema (attack power, defense, move/attack speed, …) and give any entity — players or mobs — a StatSet whose values are computed from a base plus flat / additive-percent / multiplicative-percent modifiers (clamped, cached, remove-by-source). The foundation SetNet.Combat, SetNet.Abilities and SetNet.Equipment build on. Server-side, no wire protocol. Depends only on SetNet.</Description>
         <PackageTags>networking;stats;attributes;rpg;game;setnet</PackageTags>

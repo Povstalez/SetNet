@@ -9,7 +9,9 @@
 
     <PropertyGroup>
         <PackageId>SetNet.Persistence.Postgres</PackageId>
-        <Version>1.0.0</Version>
+        <Version>1.2.0</Version>
+        <AssemblyVersion>1.2.0.0</AssemblyVersion>
+        <FileVersion>1.2.0.0</FileVersion>
         <Authors>Artem Lemeshev</Authors>
         <Description>PostgreSQL-backed IDocumentStore&lt;T&gt; / ISnapshotStore for SetNet.Persistence via Npgsql. Each value is stored in a JSONB column, so custom fields need no schema change AND stay queryable/indexable in SQL (e.g. WHERE doc-&gt;&gt;'vipUntil' &gt; now()). Native upsert (INSERT … ON CONFLICT). Depends on SetNet.Persistence + Npgsql.</Description>
         <PackageTags>networking;persistence;postgres;postgresql;npgsql;jsonb;store;setnet</PackageTags>

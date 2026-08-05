@@ -10,7 +10,9 @@
 
     <PropertyGroup>
         <PackageId>SetNet.CharacterStore</PackageId>
-        <Version>1.0.0</Version>
+        <Version>1.2.0</Version>
+        <AssemblyVersion>1.2.0.0</AssemblyVersion>
+        <FileVersion>1.2.0.0</FileVersion>
         <Authors>Artem Lemeshev</Authors>
         <Description>Server-side character store for SetNet: a generic CharacterServer&lt;TChar&gt; over any IDocumentStore — create/list-by-account/get/save/rename, per-account slot limit, optional unique names, and soft-delete with a restore window. Subclass CharacterBase (or use its Extra bag) to add ANY custom fields (e.g. a per-character VipUntil) with no schema change. Depends on SetNet + SetNet.Persistence.</Description>
         <PackageTags>networking;character;mmo;save;store;setnet</PackageTags>

@@ -9,9 +9,9 @@
 
     <PropertyGroup>
         <PackageId>SetNet.Mail</PackageId>
-        <Version>1.0.0</Version>
-        <AssemblyVersion>1.0.0.0</AssemblyVersion>
-        <FileVersion>1.0.0.0</FileVersion>
+        <Version>1.2.0</Version>
+        <AssemblyVersion>1.2.0.0</AssemblyVersion>
+        <FileVersion>1.2.0.0</FileVersion>
         <Authors>Artem Lemeshev</Authors>
         <Description>In-game mail for SetNet: send messages with item attachments to players who may be offline; attachments are escrowed from the sender's inventory at send time and granted to the recipient on claim (no dupes, no loss). server.UseMail(store, inventory) + client.UseMail() → send/list/read/claim/delete + push on arrival. Pluggable IMailStore. Depends on SetNet + SetNet.Inventory.</Description>
         <PackageTags>networking;mail;messaging;attachments;inventory;game;setnet</PackageTags>

@@ -9,9 +9,9 @@
 
     <PropertyGroup>
         <PackageId>SetNet.Docs</PackageId>
-        <Version>1.0.0</Version>
-        <AssemblyVersion>1.0.0.0</AssemblyVersion>
-        <FileVersion>1.0.0.0</FileVersion>
+        <Version>1.2.0</Version>
+        <AssemblyVersion>1.2.0.0</AssemblyVersion>
+        <FileVersion>1.2.0.0</FileVersion>
         <Authors>Artem Lemeshev</Authors>
         <Description>Auto-generates protocol documentation for a SetNet server by reflecting over your loaded assemblies: every [MessageHandler] (type id, direction, payload), every unified-protocol [ProtocolChannel] with its [Op]/[Event] ids, and every [RpcMethod] — rendered as Markdown you can drop into a README or serve for debugging. Depends only on SetNet.</Description>
         <PackageTags>networking;documentation;protocol;reflection;tooling;setnet</PackageTags>

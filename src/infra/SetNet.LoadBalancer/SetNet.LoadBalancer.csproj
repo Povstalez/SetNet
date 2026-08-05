@@ -9,9 +9,9 @@
 
     <PropertyGroup>
         <PackageId>SetNet.LoadBalancer</PackageId>
-        <Version>1.0.0</Version>
-        <AssemblyVersion>1.0.0.0</AssemblyVersion>
-        <FileVersion>1.0.0.0</FileVersion>
+        <Version>1.2.0</Version>
+        <AssemblyVersion>1.2.0.0</AssemblyVersion>
+        <FileVersion>1.2.0.0</FileVersion>
         <Authors>Artem Lemeshev</Authors>
         <Description>Least-loaded node selection for SetNet clusters: an entry node keeps a registry of game nodes with reported load/capacity (fed from SetNet.Cluster gossip or an orchestrator via UpdateNode) and directs clients to the emptiest one. server.UseLoadBalancer() + client.UseLoadBalancer().PickAsync(). Pairs with SetNet.Sharding for key-driven routing. Depends only on SetNet.</Description>
         <PackageTags>networking;load-balancing;cluster;matchmaking;routing;setnet</PackageTags>

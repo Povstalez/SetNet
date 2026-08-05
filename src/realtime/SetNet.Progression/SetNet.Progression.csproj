@@ -9,9 +9,9 @@
 
     <PropertyGroup>
         <PackageId>SetNet.Progression</PackageId>
-        <Version>1.0.0</Version>
-        <AssemblyVersion>1.0.0.0</AssemblyVersion>
-        <FileVersion>1.0.0.0</FileVersion>
+        <Version>1.2.0</Version>
+        <AssemblyVersion>1.2.0.0</AssemblyVersion>
+        <FileVersion>1.2.0.0</FileVersion>
         <Authors>Artem Lemeshev</Authors>
         <Description>Server-authoritative levels and XP for SetNet: game logic awards XP by player key; the hub applies a configurable level curve (rolling over multiple levels), fires a LeveledUp event for rewards, and pushes level/XP to the client. server.UseProgression() + client.UseProgression(). Pluggable IProgressionStore. Depends only on SetNet.</Description>
         <PackageTags>networking;progression;levels;xp;leveling;game;setnet</PackageTags>

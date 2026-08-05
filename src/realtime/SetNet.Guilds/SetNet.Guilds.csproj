@@ -9,9 +9,9 @@
 
     <PropertyGroup>
         <PackageId>SetNet.Guilds</PackageId>
-        <Version>1.0.0</Version>
-        <AssemblyVersion>1.0.0.0</AssemblyVersion>
-        <FileVersion>1.0.0.0</FileVersion>
+        <Version>1.2.0</Version>
+        <AssemblyVersion>1.2.0.0</AssemblyVersion>
+        <FileVersion>1.2.0.0</FileVersion>
         <Authors>Artem Lemeshev</Authors>
         <Description>Guilds/clans for SetNet: create/join/leave, roles (member/officer/leader) with promote/kick, membership events, and a shared guild bank backed by a guild-keyed inventory in SetNet.Inventory (atomic, anti-dupe deposits/withdrawals). server.UseGuilds(inventory) + client.UseGuilds(). Pluggable IGuildStore. Depends on SetNet + SetNet.Inventory.</Description>
         <PackageTags>networking;guilds;clans;social;bank;game;setnet</PackageTags>

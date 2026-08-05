@@ -9,7 +9,9 @@
 
     <PropertyGroup>
         <PackageId>SetNet.Persistence.MongoDB</PackageId>
-        <Version>1.0.0</Version>
+        <Version>1.2.0</Version>
+        <AssemblyVersion>1.2.0.0</AssemblyVersion>
+        <FileVersion>1.2.0.0</FileVersion>
         <Authors>Artem Lemeshev</Authors>
         <Description>MongoDB-backed IDocumentStore&lt;T&gt; / ISnapshotStore for SetNet.Persistence via MongoDB.Driver. Each value is stored as a native BSON document, so custom fields need no schema change AND stay queryable/indexable in Mongo. Upsert via ReplaceOne(IsUpsert). Depends on SetNet.Persistence + MongoDB.Driver.</Description>
         <PackageTags>networking;persistence;mongodb;mongo;nosql;store;setnet</PackageTags>

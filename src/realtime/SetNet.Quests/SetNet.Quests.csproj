@@ -9,9 +9,9 @@
 
     <PropertyGroup>
         <PackageId>SetNet.Quests</PackageId>
-        <Version>1.0.0</Version>
-        <AssemblyVersion>1.0.0.0</AssemblyVersion>
-        <FileVersion>1.0.0.0</FileVersion>
+        <Version>1.2.0</Version>
+        <AssemblyVersion>1.2.0.0</AssemblyVersion>
+        <FileVersion>1.2.0.0</FileVersion>
         <Authors>Artem Lemeshev</Authors>
         <Description>Server-authoritative quests for SetNet: define quests with objectives and item rewards; game logic reports progress by objective key (fanned out to every accepted quest), a QuestCompleted event fires on completion, and rewards are granted on claim through SetNet.Inventory. server.UseQuests(inventory).Define(quest) + client.UseQuests(). Pluggable IQuestStore. Depends on SetNet + SetNet.Inventory.</Description>
         <PackageTags>networking;quests;objectives;rewards;game;setnet</PackageTags>

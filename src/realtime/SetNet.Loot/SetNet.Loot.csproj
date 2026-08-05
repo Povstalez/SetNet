@@ -9,9 +9,9 @@
 
     <PropertyGroup>
         <PackageId>SetNet.Loot</PackageId>
-        <Version>1.0.0</Version>
-        <AssemblyVersion>1.0.0.0</AssemblyVersion>
-        <FileVersion>1.0.0.0</FileVersion>
+        <Version>1.2.0</Version>
+        <AssemblyVersion>1.2.0.0</AssemblyVersion>
+        <FileVersion>1.2.0.0</FileVersion>
         <Authors>Artem Lemeshev</Authors>
         <Description>Server-authoritative weighted loot tables for SetNet: define drop tables (guaranteed + weighted draws), roll them server-side (clients never see weights/RNG), and grant results through SetNet.Inventory. server.UseLoot(inventory).Define(table).RollAndGrantAsync(...); gated client OpenAsync for loot boxes. Depends on SetNet + SetNet.Inventory.</Description>
         <PackageTags>networking;loot;drop-table;rng;inventory;game;setnet</PackageTags>

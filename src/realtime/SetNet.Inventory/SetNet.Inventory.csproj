@@ -9,9 +9,9 @@
 
     <PropertyGroup>
         <PackageId>SetNet.Inventory</PackageId>
-        <Version>1.0.0</Version>
-        <AssemblyVersion>1.0.0.0</AssemblyVersion>
-        <FileVersion>1.0.0.0</FileVersion>
+        <Version>1.2.0</Version>
+        <AssemblyVersion>1.2.0.0</AssemblyVersion>
+        <FileVersion>1.2.0.0</FileVersion>
         <Authors>Artem Lemeshev</Authors>
         <Description>Server-authoritative player inventory for SetNet: game logic grants/revokes stackable items by player key (server.UseInventory()), connected clients read + subscribe to changes (client.UseInventory()). Atomic TryRevoke primitive backs trades and mail claims; pluggable IInventoryStore (memory default, swap for Redis/DB). Depends only on SetNet.</Description>
         <PackageTags>networking;inventory;items;game;server-authoritative;setnet</PackageTags>

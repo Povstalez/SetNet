@@ -9,9 +9,9 @@
 
     <PropertyGroup>
         <PackageId>SetNet.StatusEffects</PackageId>
-        <Version>1.0.0</Version>
-        <AssemblyVersion>1.0.0.0</AssemblyVersion>
-        <FileVersion>1.0.0.0</FileVersion>
+        <Version>1.2.0</Version>
+        <AssemblyVersion>1.2.0.0</AssemblyVersion>
+        <FileVersion>1.2.0.0</FileVersion>
         <Authors>Artem Lemeshev</Authors>
         <Description>Server-authoritative buffs/debuffs for SetNet: apply/remove timed, stacking status effects on any target key (player or entity); a timer expires them and pushes changes to the affected player and to watchers (e.g. players fighting a boss). Configurable stack/refresh policies via StatusEffectDefinition. server.UseStatusEffects() + client.UseStatusEffects().WatchAsync(target). Depends only on SetNet.</Description>
         <PackageTags>networking;status-effects;buffs;debuffs;combat;game;setnet</PackageTags>

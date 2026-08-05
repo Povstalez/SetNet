@@ -9,9 +9,9 @@
 
     <PropertyGroup>
         <PackageId>SetNet.Dialogue</PackageId>
-        <Version>1.0.0</Version>
-        <AssemblyVersion>1.0.0.0</AssemblyVersion>
-        <FileVersion>1.0.0.0</FileVersion>
+        <Version>1.2.0</Version>
+        <AssemblyVersion>1.2.0.0</AssemblyVersion>
+        <FileVersion>1.2.0.0</FileVersion>
         <Authors>Artem Lemeshev</Authors>
         <Description>Server-authoritative branching dialogue for SetNet: define dialogue trees (nodes with text + conditional choices, each choice with an optional guard and side-effect), then client.StartAsync(id)/ChooseAsync(index) walks them server-side. Pairs with SetNet.NPC capability hand-off ("dialogue:&lt;id&gt;"). Rides the unified protocol. Depends only on SetNet.</Description>
         <PackageTags>networking;dialogue;conversation;npc;game;setnet</PackageTags>

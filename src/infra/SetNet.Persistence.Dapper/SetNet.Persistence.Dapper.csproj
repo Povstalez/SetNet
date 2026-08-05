@@ -9,7 +9,9 @@
 
     <PropertyGroup>
         <PackageId>SetNet.Persistence.Dapper</PackageId>
-        <Version>1.0.0</Version>
+        <Version>1.2.0</Version>
+        <AssemblyVersion>1.2.0.0</AssemblyVersion>
+        <FileVersion>1.2.0.0</FileVersion>
         <Authors>Artem Lemeshev</Authors>
         <Description>Dapper-backed IDocumentStore&lt;T&gt; / ISnapshotStore for SetNet.Persistence: store any POCO as JSON in a key/value table on any ADO.NET database (SQLite, PostgreSQL, MySQL, SQL Server, …). Custom fields need no schema change — the whole object is serialized. Portable upsert (delete+insert in a transaction). Depends on SetNet.Persistence + Dapper.</Description>
         <PackageTags>networking;persistence;dapper;sql;store;setnet</PackageTags>

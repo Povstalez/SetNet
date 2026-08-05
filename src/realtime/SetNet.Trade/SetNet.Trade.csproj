@@ -9,9 +9,9 @@
 
     <PropertyGroup>
         <PackageId>SetNet.Trade</PackageId>
-        <Version>1.0.0</Version>
-        <AssemblyVersion>1.0.0.0</AssemblyVersion>
-        <FileVersion>1.0.0.0</FileVersion>
+        <Version>1.2.0</Version>
+        <AssemblyVersion>1.2.0.0</AssemblyVersion>
+        <FileVersion>1.2.0.0</FileVersion>
         <Authors>Artem Lemeshev</Authors>
         <Description>Player-to-player item trading for SetNet: server-authoritative two-party escrow with a two-phase (ready → confirm) lock that stops last-second offer swaps, and an atomic cross-swap through SetNet.Inventory that rolls back if either side's holdings changed. server.UseTrade(inventory) + client.UseTrade(). Depends on SetNet + SetNet.Inventory.</Description>
         <PackageTags>networking;trade;trading;escrow;inventory;game;setnet</PackageTags>

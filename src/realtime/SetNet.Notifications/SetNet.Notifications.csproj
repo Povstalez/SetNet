@@ -9,9 +9,9 @@
 
     <PropertyGroup>
         <PackageId>SetNet.Notifications</PackageId>
-        <Version>1.0.0</Version>
-        <AssemblyVersion>1.0.0.0</AssemblyVersion>
-        <FileVersion>1.0.0.0</FileVersion>
+        <Version>1.2.0</Version>
+        <AssemblyVersion>1.2.0.0</AssemblyVersion>
+        <FileVersion>1.2.0.0</FileVersion>
         <Authors>Artem Lemeshev</Authors>
         <Description>Server→client notifications / toasts for SetNet: server.UseNotifications() pushes a typed Notification to one player or broadcasts to all; client.UseNotifications() raises Received. Undelivered notifications for offline players are queued in a pluggable INotificationStore and flushed on their next connect. Rides the unified protocol. Depends only on SetNet.</Description>
         <PackageTags>networking;notifications;toasts;push;game;setnet</PackageTags>

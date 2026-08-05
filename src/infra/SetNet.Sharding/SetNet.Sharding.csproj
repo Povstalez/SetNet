@@ -9,9 +9,9 @@
 
     <PropertyGroup>
         <PackageId>SetNet.Sharding</PackageId>
-        <Version>1.0.0</Version>
-        <AssemblyVersion>1.0.0.0</AssemblyVersion>
-        <FileVersion>1.0.0.0</FileVersion>
+        <Version>1.2.0</Version>
+        <AssemblyVersion>1.2.0.0</AssemblyVersion>
+        <FileVersion>1.2.0.0</FileVersion>
         <Authors>Artem Lemeshev</Authors>
         <Description>Consistent-hash sharding for SetNet clusters: a ShardRing with virtual nodes maps any key (room code, region, player id) to the node that owns it; every server answers directory queries (server.UseSharding) and clients ask any node where a key lives (client.UseSharding().LocateAsync) then connect there. Runtime membership updates via UpdateNodes. Depends only on SetNet.</Description>
         <PackageTags>networking;sharding;consistent-hashing;cluster;routing;setnet</PackageTags>

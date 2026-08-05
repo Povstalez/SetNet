@@ -9,7 +9,9 @@
 
     <PropertyGroup>
         <PackageId>SetNet.GeoData</PackageId>
-        <Version>1.0.0</Version>
+        <Version>1.2.0</Version>
+        <AssemblyVersion>1.2.0.0</AssemblyVersion>
+        <FileVersion>1.2.0.0</FileVersion>
         <Authors>Artem Lemeshev</Authors>
         <Description>Server-side world/scene geometry for SetNet: walkability, line-of-sight ("can A see B"), can-walk-straight, raycast and nearest-walkable queries over a nav-grid or a nav-mesh, behind one IGeoData. Bake a portable GeoDataFile once and load it on a headless server (no engine dependency at runtime). Foundation for SetNet.PathFinding and SetNet.Mobs. Depends only on SetNet.</Description>
         <PackageTags>networking;geometry;navmesh;navgrid;line-of-sight;pathfinding;game;setnet</PackageTags>
@@ -18,10 +20,12 @@
         <RepositoryType>git</RepositoryType>
         <PackageProjectUrl>https://github.com/Povstalez/SetNet</PackageProjectUrl>
         <PackageReadmeFile>README.md</PackageReadmeFile>
+        <PackageIcon>icon.png</PackageIcon>
     </PropertyGroup>
 
     <ItemGroup>
       <None Include="README.md" Pack="true" PackagePath="\" />
+      <None Include="../../../assets/icon.png" Pack="true" PackagePath="\" Visible="false" />
     </ItemGroup>
 
 </Project>

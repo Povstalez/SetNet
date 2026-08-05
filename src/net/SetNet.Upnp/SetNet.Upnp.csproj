@@ -9,9 +9,9 @@
 
     <PropertyGroup>
         <PackageId>SetNet.Upnp</PackageId>
-        <Version>1.0.0</Version>
-        <AssemblyVersion>1.0.0.0</AssemblyVersion>
-        <FileVersion>1.0.0.0</FileVersion>
+        <Version>1.2.0</Version>
+        <AssemblyVersion>1.2.0.0</AssemblyVersion>
+        <FileVersion>1.2.0.0</FileVersion>
         <Authors>Artem Lemeshev</Authors>
         <Description>UPnP IGD port mapping for SetNet: discover the home router via SSDP and open/close TCP/UDP port mappings (AddPortMapping/DeletePortMapping/GetExternalIPAddress) so player-hosted servers are reachable without manual router setup. Includes config.MapServerPortsAsync() to map everything a SetNet server listens on. Depends only on SetNet.</Description>
         <PackageTags>networking;upnp;igd;port-forwarding;nat;setnet</PackageTags>

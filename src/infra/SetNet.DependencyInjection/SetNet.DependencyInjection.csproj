@@ -9,9 +9,9 @@
 
     <PropertyGroup>
         <PackageId>SetNet.DependencyInjection</PackageId>
-        <Version>1.1.0</Version>
-        <AssemblyVersion>1.1.0.0</AssemblyVersion>
-        <FileVersion>1.1.0.0</FileVersion>
+        <Version>1.2.0</Version>
+        <AssemblyVersion>1.2.0.0</AssemblyVersion>
+        <FileVersion>1.2.0.0</FileVersion>
         <Authors>Artem Lemeshev</Authors>
         <Description>Microsoft.Extensions.DependencyInjection integration for SetNet: construct [MessageHandler] classes through your service provider so handlers get constructor-injected dependencies. provider.UseSetNetHandlers(). Depends on SetNet + Microsoft.Extensions.DependencyInjection.Abstractions.</Description>
         <PackageTags>networking;dependency-injection;di;setnet</PackageTags>

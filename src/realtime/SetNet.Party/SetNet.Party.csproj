@@ -9,9 +9,9 @@
 
     <PropertyGroup>
         <PackageId>SetNet.Party</PackageId>
-        <Version>1.1.0</Version>
-        <AssemblyVersion>1.1.0.0</AssemblyVersion>
-        <FileVersion>1.1.0.0</FileVersion>
+        <Version>1.2.0</Version>
+        <AssemblyVersion>1.2.0.0</AssemblyVersion>
+        <FileVersion>1.2.0.0</FileVersion>
         <Authors>Artem Lemeshev</Authors>
         <Description>Party/group system for SetNet: create or join a party by code, track a leader and per-member ready state, and get join/leave/leader/ready events — so friends queue for matchmaking together. server.UseParties() / client.UseParty(). Depends only on SetNet.</Description>
         <PackageTags>networking;party;group;matchmaking;games;setnet</PackageTags>

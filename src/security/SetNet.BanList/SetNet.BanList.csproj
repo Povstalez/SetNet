@@ -9,9 +9,9 @@
 
     <PropertyGroup>
         <PackageId>SetNet.BanList</PackageId>
-        <Version>1.1.0</Version>
-        <AssemblyVersion>1.1.0.0</AssemblyVersion>
-        <FileVersion>1.1.0.0</FileVersion>
+        <Version>1.2.0</Version>
+        <AssemblyVersion>1.2.0.0</AssemblyVersion>
+        <FileVersion>1.2.0.0</FileVersion>
         <Authors>Artem Lemeshev</Authors>
         <Description>Ban enforcement for SetNet: an inbound gate that drops all frames from a banned peer (by IP or a custom key such as account id) and instantly kicks matching live peers. Pluggable IBanStore (default in-process; supply Redis/DB for cross-node). server.UseBanList(). Composes with Auth/RateLimit. Depends only on SetNet.</Description>
         <PackageTags>networking;security;ban;moderation;setnet</PackageTags>

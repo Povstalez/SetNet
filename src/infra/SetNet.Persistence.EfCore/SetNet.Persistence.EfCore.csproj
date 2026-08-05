@@ -9,7 +9,9 @@
 
     <PropertyGroup>
         <PackageId>SetNet.Persistence.EfCore</PackageId>
-        <Version>1.0.0</Version>
+        <Version>1.2.0</Version>
+        <AssemblyVersion>1.2.0.0</AssemblyVersion>
+        <FileVersion>1.2.0.0</FileVersion>
         <Authors>Artem Lemeshev</Authors>
         <Description>Entity Framework Core-backed IDocumentStore&lt;T&gt; / ISnapshotStore for SetNet.Persistence. Provider-agnostic — pass DbContextOptions configured for SQLite / PostgreSQL / SQL Server / etc. Each value is stored as JSON in a key/value table, so custom fields need no schema change. Depends on SetNet.Persistence + Microsoft.EntityFrameworkCore(.Relational).</Description>
         <PackageTags>networking;persistence;efcore;entity-framework;store;setnet</PackageTags>

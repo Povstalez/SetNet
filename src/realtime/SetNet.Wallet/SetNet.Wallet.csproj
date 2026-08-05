@@ -9,9 +9,9 @@
 
     <PropertyGroup>
         <PackageId>SetNet.Wallet</PackageId>
-        <Version>1.0.0</Version>
-        <AssemblyVersion>1.0.0.0</AssemblyVersion>
-        <FileVersion>1.0.0.0</FileVersion>
+        <Version>1.2.0</Version>
+        <AssemblyVersion>1.2.0.0</AssemblyVersion>
+        <FileVersion>1.2.0.0</FileVersion>
         <Authors>Artem Lemeshev</Authors>
         <Description>Server-authoritative player currencies for SetNet: deposit/withdraw/transfer named currencies by player key with atomic anti-overdraft primitives (server.UseWallet()); clients read + subscribe (client.UseWallet()). Vendors and auctions move money through this hub. Pluggable IWalletStore (memory default). Depends only on SetNet.</Description>
         <PackageTags>networking;wallet;currency;economy;game;setnet</PackageTags>

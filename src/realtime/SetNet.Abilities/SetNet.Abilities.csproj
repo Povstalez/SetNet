@@ -9,9 +9,9 @@
 
     <PropertyGroup>
         <PackageId>SetNet.Abilities</PackageId>
-        <Version>1.0.0</Version>
-        <AssemblyVersion>1.0.0.0</AssemblyVersion>
-        <FileVersion>1.0.0.0</FileVersion>
+        <Version>1.2.0</Version>
+        <AssemblyVersion>1.2.0.0</AssemblyVersion>
+        <FileVersion>1.2.0.0</FileVersion>
         <Authors>Artem Lemeshev</Authors>
         <Description>Server-authoritative abilities / skills for SetNet: define abilities with cooldown, resource cost, range and target kind, plus composable effects (deal damage via SetNet.Combat, heal, or apply a timed stat buff via SetNet.Stats). Clients request client.UseAbilities().UseAsync(id, target); the server validates and applies. Entity stats/health/positions come through seams, so mobs and players share the same system. Rides the unified protocol. Depends on SetNet + SetNet.Stats + SetNet.Combat.</Description>
         <PackageTags>networking;abilities;skills;spells;combat;game;setnet</PackageTags>

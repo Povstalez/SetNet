@@ -1,8 +1,15 @@
 name: Publish to NuGet
 
-# Runs when a GitHub Release is published. The package version is taken from the
-# release tag (e.g. tag "v1.0.0" -> package 1.0.0), so the NuGet version always
-# matches the release and the two can never drift.
+# Runs when a GitHub Release is published.
+#
+# Each package's version is the <Version> in its own .csproj — NOT the release tag. Bump the
+# <Version>/<AssemblyVersion>/<FileVersion> only in the projects you actually changed, so an
+# untouched package keeps its last released number instead of gaining an empty version bump.
+# Packages whose version is already on nuget.org are skipped by --skip-duplicate, so a release
+# effectively publishes exactly the projects you bumped.
+#
+# The guard below fails the run if the tag and the core SetNet version disagree, which is the
+# one way this scheme can silently under-publish (tagging v1.2.0 having forgotten to bump).
 on:
   release:
     types: [published]
@@ -19,23 +26,30 @@ jobs:
         with:
           dotnet-version: '8.0.x'
 
-      - name: Derive version from tag
-        id: version
-        # GITHUB_REF_NAME is the tag (e.g. "v1.0.0"); strip a leading "v".
-        run: echo "value=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+      - name: Verify the tag matches the core package version
+        # GITHUB_REF_NAME is the tag (e.g. "v1.2.0"); strip a leading "v" and compare with core.
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          core=$(grep -oE '<Version>[^<]*</Version>' src/core/SetNet/SetNet.csproj | head -1 | sed 's/<[^>]*>//g')
+          echo "tag=$tag  SetNet.csproj=$core"
+          if [ "$tag" != "$core" ]; then
+            echo "::error::Release tag v$tag does not match <Version>$core</Version> in src/core/SetNet/SetNet.csproj. Bump the csproj versions before tagging."
+            exit 1
+          fi
 
       - name: Pack
-        # Pack every packable library under src/ (core + all companion packages).
-        # SetNet.StateSync.Unity has no .csproj (it's a UPM source package) so it is skipped automatically.
+        # Pack every packable library under src/ (core + all companion packages), each at its own
+        # <Version>. The UPM source packages under src/engine have no .csproj and are skipped.
         run: |
           for proj in $(find src -name '*.csproj' | sort); do
             echo "::group::pack $proj"
-            dotnet pack "$proj" -c Release -p:Version=${{ steps.version.outputs.value }} -o ./artifacts
+            dotnet pack "$proj" -c Release -o ./artifacts
             echo "::endgroup::"
           done
 
       - name: Push to NuGet
-        # Push every produced package; --skip-duplicate makes re-runs idempotent.
+        # Push every produced package; --skip-duplicate makes re-runs idempotent and silently
+        # skips the packages that were not bumped since the previous release.
         # Requires the NUGET_API_KEY repository secret. Push order is irrelevant (packages are independent).
         run: |
           for pkg in ./artifacts/*.nupkg; do

@@ -9,9 +9,9 @@
 
     <PropertyGroup>
         <PackageId>SetNet.BehaviorTree</PackageId>
-        <Version>1.0.0</Version>
-        <AssemblyVersion>1.0.0.0</AssemblyVersion>
-        <FileVersion>1.0.0.0</FileVersion>
+        <Version>1.2.0</Version>
+        <AssemblyVersion>1.2.0.0</AssemblyVersion>
+        <FileVersion>1.2.0.0</FileVersion>
         <Authors>Artem Lemeshev</Authors>
         <Description>A small generic behavior tree for SetNet AI: Sequence / Selector / Parallel composites, Inverter / Succeeder / Repeater / Cooldown decorators, and Action / Condition / Wait leaves, assembled with a fluent builder and ticked over your context type. Engine-agnostic; wrap one in an IMobBrain for mob AI, or use it anywhere. No wire protocol. Depends only on SetNet.</Description>
         <PackageTags>networking;behavior-tree;ai;game;setnet</PackageTags>

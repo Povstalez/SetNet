@@ -9,9 +9,9 @@
 
     <PropertyGroup>
         <PackageId>SetNet.NPC</PackageId>
-        <Version>1.0.0</Version>
-        <AssemblyVersion>1.0.0.0</AssemblyVersion>
-        <FileVersion>1.0.0.0</FileVersion>
+        <Version>1.2.0</Version>
+        <AssemblyVersion>1.2.0.0</AssemblyVersion>
+        <FileVersion>1.2.0.0</FileVersion>
         <Authors>Artem Lemeshev</Authors>
         <Description>Interactive non-living entities for SetNet (vendors, buffers, teleporters, quest-givers). One INpcBehaviour per NPC type behind a uniform interact request/response — the framework standardizes registration, spawning, zone interest, and the interact round-trip; behaviours just write the interaction logic and return an optional Capability hand-off (e.g. "vendor:blacksmith") so the client opens its existing domain UI. server.UseNpc() + client.UseNpc(). Rides the unified SetNet.Protocol on the Channels.Npc channel. Depends on SetNet + SetNet.GeoData (Vec3).</Description>
         <PackageTags>networking;npc;vendor;interact;game;server-authoritative;setnet</PackageTags>

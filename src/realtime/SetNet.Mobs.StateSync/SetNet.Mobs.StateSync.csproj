@@ -10,9 +10,9 @@
 
     <PropertyGroup>
         <PackageId>SetNet.Mobs.StateSync</PackageId>
-        <Version>1.0.0</Version>
-        <AssemblyVersion>1.0.0.0</AssemblyVersion>
-        <FileVersion>1.0.0.0</FileVersion>
+        <Version>1.2.0</Version>
+        <AssemblyVersion>1.2.0.0</AssemblyVersion>
+        <FileVersion>1.2.0.0</FileVersion>
         <Authors>Artem Lemeshev</Authors>
         <Description>StateSync replication adapter for SetNet.Mobs: an IMobReplication that registers a mob archetype (interpolated position, velocity, health, target hash, cast id + remaining) and spawns/mutates/despawns a SetNet.StateSync NetworkEntity per mob, so nearby players observe mobs through the same delta-compressed snapshot stream as everything else. One-line wiring via world.StateSyncReplication() / mobServer.UseStateSyncReplication(world). Depends on SetNet.Mobs + SetNet.StateSync.</Description>
         <PackageTags>networking;mobs;ai;state-sync;replication;game;setnet</PackageTags>

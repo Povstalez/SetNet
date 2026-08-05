@@ -10,9 +10,9 @@
     <!-- NuGet package metadata -->
     <PropertyGroup>
         <PackageId>SetNet.Auth</PackageId>
-        <Version>1.1.0</Version>
-        <AssemblyVersion>1.1.0.0</AssemblyVersion>
-        <FileVersion>1.1.0.0</FileVersion>
+        <Version>1.2.0</Version>
+        <AssemblyVersion>1.2.0.0</AssemblyVersion>
+        <FileVersion>1.2.0.0</FileVersion>
         <Authors>Artem Lemeshev</Authors>
         <Description>Authentication and sessions for SetNet, by composition (no base class). Enforced gate: until a peer authenticates, its application frames (regular messages and RPC) are dropped; you validate a token via IAuthenticator. Includes session store with TTL, multi-session policy, and automatic reconnect-resume. Serializer-agnostic; depends only on SetNet. Use over TLS.</Description>
         <PackageTags>networking;auth;authentication;session;setnet;games;realtime</PackageTags>

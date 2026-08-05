@@ -10,7 +10,9 @@
 
     <PropertyGroup>
         <PackageId>SetNet.Accounts</PackageId>
-        <Version>1.0.0</Version>
+        <Version>1.2.0</Version>
+        <AssemblyVersion>1.2.0.0</AssemblyVersion>
+        <FileVersion>1.2.0.0</FileVersion>
         <Authors>Artem Lemeshev</Authors>
         <Description>Account store + authentication for SetNet: a generic AccountServer&lt;TAccount&gt; over any IDocumentStore (memory/file/SQL/Mongo). Register/authenticate with a pluggable password hasher (PBKDF2 default), ban/unban, change password. Subclass AccountBase (or use its Extra bag) to add ANY custom fields with no schema change. Pairs with SetNet.LoginServer. Depends on SetNet + SetNet.Persistence.</Description>
         <PackageTags>networking;accounts;auth;mmo;store;setnet</PackageTags>

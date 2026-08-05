@@ -9,9 +9,9 @@
 
     <PropertyGroup>
         <PackageId>SetNet.Combat</PackageId>
-        <Version>1.0.0</Version>
-        <AssemblyVersion>1.0.0.0</AssemblyVersion>
-        <FileVersion>1.0.0.0</FileVersion>
+        <Version>1.2.0</Version>
+        <AssemblyVersion>1.2.0.0</AssemblyVersion>
+        <FileVersion>1.2.0.0</FileVersion>
         <Authors>Artem Lemeshev</Authors>
         <Description>Server-authoritative combat resolution for SetNet, built on SetNet.Stats: turn an attacker's and defender's StatSets into a DamageResult (attack power, armor mitigation, crit) via a pluggable ICombatFormula, then apply it to a Health pool. Which stats mean "attack power"/"defense"/"crit" is fully configurable (CombatStatKeys), so it fits any stat vocabulary. No wire protocol. Depends on SetNet + SetNet.Stats.</Description>
         <PackageTags>networking;combat;damage;rpg;game;setnet</PackageTags>

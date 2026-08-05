@@ -9,9 +9,9 @@
 
     <PropertyGroup>
         <PackageId>SetNet.Compression</PackageId>
-        <Version>1.1.0</Version>
-        <AssemblyVersion>1.1.0.0</AssemblyVersion>
-        <FileVersion>1.1.0.0</FileVersion>
+        <Version>1.2.0</Version>
+        <AssemblyVersion>1.2.0.0</AssemblyVersion>
+        <FileVersion>1.2.0.0</FileVersion>
         <Authors>Artem Lemeshev</Authors>
         <Description>Transparent Brotli compression for SetNet: a decorator ISerializer that wraps any inner serializer (MessagePack, JSON, …) and compresses payloads on the wire, falling back to raw for small/incompressible data. SetNetSerializer.Use(new CompressingSerializer(inner)). Depends only on SetNet (Brotli is built in).</Description>
         <PackageTags>networking;serialization;compression;brotli;setnet</PackageTags>

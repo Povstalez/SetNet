@@ -9,9 +9,9 @@
 
     <PropertyGroup>
         <PackageId>SetNet.Matchmaking</PackageId>
-        <Version>1.1.0</Version>
-        <AssemblyVersion>1.1.0.0</AssemblyVersion>
-        <FileVersion>1.1.0.0</FileVersion>
+        <Version>1.2.0</Version>
+        <AssemblyVersion>1.2.0.0</AssemblyVersion>
+        <FileVersion>1.2.0.0</FileVersion>
         <Authors>Artem Lemeshev</Authors>
         <Description>Matchmaking for SetNet, on top of SetNet.Rooms: queue players into skill- or FIFO-based matches with a widening acceptance window, then drop each match into a freshly created room to join. server.UseMatchmaking(store, options) + client.UseMatchmaking().FindMatchAsync(...). Composition, no base class. Depends on SetNet + SetNet.Rooms.</Description>
         <PackageTags>networking;matchmaking;lobby;rooms;games;setnet;skill</PackageTags>

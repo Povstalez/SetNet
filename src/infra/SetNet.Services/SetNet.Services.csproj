@@ -9,9 +9,9 @@
 
     <PropertyGroup>
         <PackageId>SetNet.Services</PackageId>
-        <Version>1.0.0</Version>
-        <AssemblyVersion>1.0.0.0</AssemblyVersion>
-        <FileVersion>1.0.0.0</FileVersion>
+        <Version>1.2.0</Version>
+        <AssemblyVersion>1.2.0.0</AssemblyVersion>
+        <FileVersion>1.2.0.0</FileVersion>
         <Authors>Artem Lemeshev</Authors>
         <Description>A tiny service locator so you don't hand-store every UseXxx() instance. Register each once (hub.Add(server.UseInventory()), …) and resolve it anywhere by type (Service.Get&lt;InventoryServer&gt;()), via an ambient hub (MakeCurrent) or a per-server/per-client hub (server.Services()). Lets brains, handlers and helpers reach loco/ticks/dialogue/chat/… without constructor plumbing. Depends only on SetNet.</Description>
         <PackageTags>networking;service-locator;di;registry;game;setnet</PackageTags>

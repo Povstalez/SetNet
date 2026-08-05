@@ -9,9 +9,9 @@
 
     <PropertyGroup>
         <PackageId>SetNet.Streams</PackageId>
-        <Version>1.0.0</Version>
-        <AssemblyVersion>1.0.0.0</AssemblyVersion>
-        <FileVersion>1.0.0.0</FileVersion>
+        <Version>1.2.0</Version>
+        <AssemblyVersion>1.2.0.0</AssemblyVersion>
+        <FileVersion>1.2.0.0</FileVersion>
         <Authors>Artem Lemeshev</Authors>
         <Description>Large-payload streaming for SetNet: send patches, avatars, replays or any blob as an offered, chunked, progress-reporting transfer with resume after disconnect. server.UseStreams() + client.UseStreams() → SendAsync(name, stream, progress) both directions; pluggable sinks (memory/file). Depends only on SetNet.</Description>
         <PackageTags>networking;file-transfer;streaming;chunking;resume;setnet</PackageTags>

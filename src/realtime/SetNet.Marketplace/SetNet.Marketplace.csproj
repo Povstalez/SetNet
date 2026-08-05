@@ -9,9 +9,9 @@
 
     <PropertyGroup>
         <PackageId>SetNet.Marketplace</PackageId>
-        <Version>1.0.0</Version>
-        <AssemblyVersion>1.0.0.0</AssemblyVersion>
-        <FileVersion>1.0.0.0</FileVersion>
+        <Version>1.2.0</Version>
+        <AssemblyVersion>1.2.0.0</AssemblyVersion>
+        <FileVersion>1.2.0.0</FileVersion>
         <Authors>Artem Lemeshev</Authors>
         <Description>Continuous double-sided order-book marketplace for SetNet: post limit buy/sell orders (items/currency escrowed), crossing orders match instantly at the resting price with price-time priority and the rest rests on the book. Settled through SetNet.Inventory + SetNet.Wallet (no dupes; buyer refunded price improvement). server.UseMarketplace(inventory, wallet) + client.UseMarketplace(). Depends on SetNet + SetNet.Inventory + SetNet.Wallet.</Description>
         <PackageTags>networking;marketplace;order-book;trading;economy;setnet</PackageTags>

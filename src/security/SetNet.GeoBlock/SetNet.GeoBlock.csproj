@@ -9,9 +9,9 @@
 
     <PropertyGroup>
         <PackageId>SetNet.GeoBlock</PackageId>
-        <Version>1.1.0</Version>
-        <AssemblyVersion>1.1.0.0</AssemblyVersion>
-        <FileVersion>1.1.0.0</FileVersion>
+        <Version>1.2.0</Version>
+        <AssemblyVersion>1.2.0.0</AssemblyVersion>
+        <FileVersion>1.2.0.0</FileVersion>
         <Authors>Artem Lemeshev</Authors>
         <Description>Geo-based connection filtering for SetNet: reject connections by country of origin (blocklist or allowlist) via a pluggable IGeoResolver (MaxMind GeoLite2, IP2Location, an API, …). Blocked peers are kicked on connect. server.UseGeoBlock(resolver, options). Depends only on SetNet.</Description>
         <PackageTags>networking;security;geoip;geoblock;setnet</PackageTags>

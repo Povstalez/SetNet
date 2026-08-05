@@ -9,9 +9,9 @@
 
     <PropertyGroup>
         <PackageId>SetNet.WebSockets</PackageId>
-        <Version>1.1.0</Version>
-        <AssemblyVersion>1.1.0.0</AssemblyVersion>
-        <FileVersion>1.1.0.0</FileVersion>
+        <Version>1.2.0</Version>
+        <AssemblyVersion>1.2.0.0</AssemblyVersion>
+        <FileVersion>1.2.0.0</FileVersion>
         <Authors>Artem Lemeshev</Authors>
         <Description>WebSocket transport for SetNet: connect over WebSockets (HTTP-friendly, proxy/firewall traversable) so browser/Blazor and locked-down clients can reach your SetNet server. config.UseWebSockets(); everything above the transport (handlers, RPC, rooms, auth) works unchanged. Depends only on SetNet.</Description>
         <PackageTags>networking;websockets;transport;setnet;browser;realtime</PackageTags>

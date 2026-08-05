@@ -10,9 +10,9 @@
 
     <PropertyGroup>
         <PackageId>SetNet.Persistence</PackageId>
-        <Version>1.0.0</Version>
-        <AssemblyVersion>1.0.0.0</AssemblyVersion>
-        <FileVersion>1.0.0.0</FileVersion>
+        <Version>1.2.0</Version>
+        <AssemblyVersion>1.2.0.0</AssemblyVersion>
+        <FileVersion>1.2.0.0</FileVersion>
         <Authors>Artem Lemeshev</Authors>
         <Description>A pluggable persistence layer for SetNet module state: IDocumentStore&lt;T&gt; (get/set/remove/enumerate by key) and ISnapshotStore (opaque byte blobs) with in-memory and JSON-file implementations out of the box. Back your inventories, wallets, progression, save-games or world snapshots with something durable instead of in-process dictionaries — then swap in a Redis/DB store behind the same interface. Depends on SetNet + System.Text.Json.</Description>
         <PackageTags>networking;persistence;storage;save;json;game;setnet</PackageTags>

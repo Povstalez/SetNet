@@ -9,9 +9,9 @@
 
     <PropertyGroup>
         <PackageId>SetNet.Chat</PackageId>
-        <Version>1.1.0</Version>
-        <AssemblyVersion>1.1.0.0</AssemblyVersion>
-        <FileVersion>1.1.0.0</FileVersion>
+        <Version>1.2.0</Version>
+        <AssemblyVersion>1.2.0.0</AssemblyVersion>
+        <FileVersion>1.2.0.0</FileVersion>
         <Authors>Artem Lemeshev</Authors>
         <Description>Text chat for SetNet: channel-based (join/leave by name), server-relayed, with length limits and a simple whole-word profanity filter. server.UseChat() / client.UseChat(). Depends only on SetNet.</Description>
         <PackageTags>networking;chat;text-chat;moderation;games;setnet</PackageTags>

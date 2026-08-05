@@ -10,7 +10,9 @@
 
     <PropertyGroup>
         <PackageId>SetNet.GameData</PackageId>
-        <Version>1.0.0</Version>
+        <Version>1.2.0</Version>
+        <AssemblyVersion>1.2.0.0</AssemblyVersion>
+        <FileVersion>1.2.0.0</FileVersion>
         <Authors>Artem Lemeshev</Authors>
         <Description>Static game-data tables for SetNet: load item/skill/npc/spawn definitions from JSON into fast id-keyed DataTable&lt;TId,TRow&gt; lookups, hot-reloadable at runtime. Rows are your own POCOs, so every table can carry any custom columns. No wire protocol; usable server- and client-side. Depends only on System.Text.Json.</Description>
         <PackageTags>gamedata;tables;config;mmo;setnet</PackageTags>

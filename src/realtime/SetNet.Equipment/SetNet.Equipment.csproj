@@ -9,9 +9,9 @@
 
     <PropertyGroup>
         <PackageId>SetNet.Equipment</PackageId>
-        <Version>1.0.0</Version>
-        <AssemblyVersion>1.0.0.0</AssemblyVersion>
-        <FileVersion>1.0.0.0</FileVersion>
+        <Version>1.2.0</Version>
+        <AssemblyVersion>1.2.0.0</AssemblyVersion>
+        <FileVersion>1.2.0.0</FileVersion>
         <Authors>Artem Lemeshev</Authors>
         <Description>Server-authoritative equipment for SetNet: define your own slot schema (head, weapon, ring1/ring2, whatever — with per-slot accept rules), equip/unequip items pulled from SetNet.Inventory, and have each equipped item apply stat modifiers to the wearer's SetNet.Stats StatSet (so gear changes attack power, defense, speed, …). Clients equip/unequip and read the loadout; changes push. Rides the unified protocol. Depends on SetNet + SetNet.Stats + SetNet.Inventory.</Description>
         <PackageTags>networking;equipment;gear;inventory;rpg;game;setnet</PackageTags>

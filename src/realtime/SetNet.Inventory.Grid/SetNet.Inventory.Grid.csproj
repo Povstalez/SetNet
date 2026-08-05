@@ -9,7 +9,9 @@
 
     <PropertyGroup>
         <PackageId>SetNet.Inventory.Grid</PackageId>
-        <Version>1.0.0</Version>
+        <Version>1.2.0</Version>
+        <AssemblyVersion>1.2.0.0</AssemblyVersion>
+        <FileVersion>1.2.0.0</FileVersion>
         <Authors>Artem Lemeshev</Authors>
         <Description>A spatial (grid / "tetris") inventory for SetNet — Diablo/Tarkov style. Items have a width×height footprint, can be rotated 90°, and are placed on a 2D grid with server-authoritative occupancy checks: auto-fit add, place/move at a cell, rotate, remove, cell queries, and optional stacking. Pure data structure, zero dependencies; complements the stackable SetNet.Inventory.</Description>
         <PackageTags>inventory;grid;tetris;items;rpg;survival;setnet</PackageTags>
