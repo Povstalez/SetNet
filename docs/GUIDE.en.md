@@ -182,6 +182,22 @@ public interface ISerializer
 
 Until a serializer is assigned, typed sends and typed handler dispatch throw an `InvalidOperationException` with a hint. Assign it before connecting or starting a server. `SetNetSerializer.Use(...)` configures the backward-compatible `SetNetRuntime.Default`; for isolated environments, put a custom `SetNetRuntime` on `Configuration.Runtime`.
 
+**Optional companion — `IMemorySerializer` (1.3.0)**, for push events without a copy per event:
+
+```csharp
+public interface IMemorySerializer
+{
+    T Deserialize<T>(ReadOnlyMemory<byte> data);   // a window onto the received frame
+}
+```
+
+Implement it alongside `ISerializer` when the format allows it (MessagePack, protobuf and System.Text.Json all
+do). Client `On<T>` subscriptions then decode each push-event body **in place**, out of the frame it arrived in,
+instead of copying it into an array first — one allocation less per event, which is what a game client taking
+hundreds of events per frame feels. The bundled `MessagePackNetSerializer` implements it; a serializer that does
+not keeps working exactly as before. The memory handed to the decoder is valid only for that call — decode from
+it, do not store it.
+
 **Option 1 — MessagePack (recommended)** via the separate `SetNet.MessagePack` package. It provides `MessagePackNetSerializer`, hardened with the `UntrustedData` security profile (protection against DoS during deserialization):
 
 ```csharp

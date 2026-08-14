@@ -138,6 +138,15 @@ public sealed class RoomEvents
 Use **(a)** when the handler needs per-instance state; **(b)** for stateless/app-singleton reactions. `[Event]`
 handler instances are process-wide singletons (like client `[MessageHandler]`s).
 
+**Cost per event (since 1.3.0).** Typed `On<T>` delivers without copying the body: the dispatcher reads only the
+envelope header and passes the payload as a `ReadOnlyMemory<byte>` window onto the received frame, which the
+serializer decodes in place. That requires the serializer to implement `IMemorySerializer` — the bundled
+`MessagePackNetSerializer` does; with any other serializer `On<T>` quietly falls back to the array path. `OnRaw`
+and `[Event]` handlers still receive a `byte[]`, and that array is now built only when such a subscriber actually
+exists for the channel/op. If you take the memory window yourself (`ProtocolSubscriptionRegistry.AddMemory`),
+decode inside the callback and do not store the window — it points into a frame that is not yours to keep.
+Details: [release notes 1.3.0](release-notes/1.3.0.md).
+
 ### Server — handling inbound (two styles)
 
 ```csharp

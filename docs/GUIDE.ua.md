@@ -182,6 +182,22 @@ public interface ISerializer
 
 Поки серіалізатор не призначено, типізоване надсилання і типізований dispatch хендлерів кидають `InvalidOperationException` із підказкою. Призначте його до підключення або старту сервера. `SetNetSerializer.Use(...)` налаштовує backward-compatible `SetNetRuntime.Default`; для ізольованих середовищ передайте власний `SetNetRuntime` у `Configuration.Runtime`.
 
+**Необов'язковий супутник — `IMemorySerializer` (1.3.0)**, щоб push-події не коштували копії на кожну подію:
+
+```csharp
+public interface IMemorySerializer
+{
+    T Deserialize<T>(ReadOnlyMemory<byte> data);   // вікно на отриманий кадр
+}
+```
+
+Реалізуйте його поруч з `ISerializer`, коли формат це дозволяє (MessagePack, protobuf і System.Text.Json —
+дозволяють). Тоді клієнтські підписки `On<T>` декодують тіло кожної push-події **на місці**, просто з кадру, у
+якому воно приїхало, замість спершу скопіювати його в окремий масив, — на одну алокацію менше на подію, а саме
+це й відчуває ігровий клієнт, що приймає сотні подій за кадр. Вбудований `MessagePackNetSerializer` його
+реалізує; серіалізатор без нього працює точно як раніше. Пам'ять, яку отримує декодер, дійсна лише на час
+виклику — декодуйте з неї, не зберігайте її.
+
 **Варіант 1 — MessagePack (рекомендований)** через окремий пакет `SetNet.MessagePack`. Він дає `MessagePackNetSerializer`, загартований профілем безпеки `UntrustedData` (захист від DoS при десеріалізації):
 
 ```csharp

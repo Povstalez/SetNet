@@ -31,6 +31,30 @@ await FlushAsync(); // one socket write
 - **Sending:** the frame is written into a buffer from `ArrayPool`; `SendTimeoutMs` arms its timer **lazily** — only if `WriteAsync` did not complete synchronously (a rare case under back-pressure), so a typical send allocates no timer.
 - **Reliability tick:** on a "quiet" channel the tick is skipped entirely; when there are unacked items, a scratch list is reused (no per-tick `List` allocation).
 - **Scheduler:** `TimerScheduler` reads the clock **once** per tick (not a syscall on every registration).
+- **Client push events (since 1.3.0):** delivering an event to a typed `On<T>` subscriber allocates nothing beyond the decoded message itself — see below.
+
+### Client push-event delivery (1.3.0)
+
+Push events are the one path a game client walks hundreds of times per *frame*, so three allocations that are
+invisible in request/response traffic added up to a steady garbage stream there. All three are gone:
+
+| Was | Now |
+|---|---|
+| `ClientEventDiscovery` called `AppDomain.CurrentDomain.GetAssemblies()` on **every dispatch** just to compare the count — and that call builds a fresh array holding every loaded assembly | The scan state subscribes to `AppDomain.AssemblyLoad` once and raises a flag; the steady state is one `volatile bool` read. A module enabled later is still picked up — the CLR reports its assembly. |
+| `foreach (var cb in bucket.Values)` — `ConcurrentDictionary.Values` builds a snapshot list per access | Enumerating the dictionary itself: its enumerator is a struct, takes no lock, and tolerates concurrent subscribe/unsubscribe |
+| `ProtocolEnvelope.Decode` copied the body out of the received frame for every envelope | The dispatcher reads only the header and hands an event body to subscribers as a `ReadOnlyMemory<byte>` window onto the frame. Replies still get an array of their own — they outlive the call. |
+
+To benefit, the registered serializer must also implement `IMemorySerializer` (the bundled
+`MessagePackNetSerializer` does). `On<T>` then subscribes through `ProtocolSubscriptionRegistry.AddMemory` and
+decodes in place. With any other serializer it falls back to the array path, unchanged — the choice is invisible
+to callers, who see the same decoded message either way.
+
+`OnRaw` subscribers still receive a `byte[]`, exactly as before — but the array is now materialised **lazily**,
+only when such a subscriber actually exists for that channel/op. Every SetNet module (Ping, Relay, NatPunch,
+Trade, Rooms…) subscribes with `OnRaw`, so their behaviour is untouched.
+
+**Rule for memory-based subscribers:** the window is valid only for the duration of the callback. Decode from it;
+do not store it. A subscriber that needs to keep the bytes should use `Add`/`OnRaw` and get its own array.
 
 ---
 

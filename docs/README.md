@@ -12,6 +12,7 @@ Everything about SetNet in one place. Start here, then dive into a specific guid
 - **[Main README](../README.md)** — what SetNet is, quick start, transport selection, lifecycle, hardening.
 - **[User guide (GUIDE.en.md)](GUIDE.en.md)** — the full manual: handlers, protocol channels (`[ProtocolChannel]`/`[Op]`/`[Event]`) and RPC, transports, reliable channels, reconnect, batching, the complete `Configuration` reference, production checklist. *(Українською: [GUIDE.ua.md](GUIDE.ua.md))*
 - **[Performance (PERFORMANCE.en.md)](PERFORMANCE.en.md)** — throughput model, scaling limits, roadmap. *(Українською: [PERFORMANCE.ua.md](PERFORMANCE.ua.md))*
+- **[Release notes](release-notes/)** — what changed per version and what it means for existing code. Latest: **[1.3.0 — allocation-free client push events](release-notes/1.3.0.md)**.
 - **[Module catalog (MODULES.md)](MODULES.md)** — every companion package, grouped, with links + the core extension points.
 - **[Communication model (COMMUNICATION.md)](COMMUNICATION.md)** — all client/server send & receive methods: core `SendAsync`, the unified `SetNet.Protocol` (request/reply, fire-and-forget, push; `[Op]`/`[Event]`), and modules (RPC, StateSync, Streams, Voice, …), with a full worked example.
 
