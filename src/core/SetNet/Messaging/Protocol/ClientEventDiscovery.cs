@@ -27,7 +27,29 @@ namespace SetNet.Protocol
         private sealed class ScanState
         {
             public readonly HashSet<Assembly> Scanned = new HashSet<Assembly>();
-            public int LastAssemblyCount = -1;
+
+            /// <summary>
+            /// Raised high when the loaded-assembly set may have changed: before the first scan, and whenever the
+            /// CLR reports a newly loaded assembly. Lowered once a scan has caught up.
+            /// </summary>
+            /// <remarks>
+            /// This flag replaces polling <c>AppDomain.CurrentDomain.GetAssemblies().Length</c> on every dispatch.
+            /// That call allocates a fresh array holding every loaded assembly (hundreds of bytes) each time it is
+            /// made — invisible in request/response traffic, but a real garbage source in a game client that takes
+            /// hundreds of push events per frame, where it was the largest single per-event allocation in the whole
+            /// dispatch path. The CLR already tells us when the set actually changes, so the steady state is now
+            /// one volatile bool read.
+            /// </remarks>
+            public volatile bool Dirty = true;
+
+            public ScanState()
+            {
+                // The handler holds this state alive, and the state is reachable only through the weak table entry,
+                // so a collected registry still drops its state — just one frame later than before.
+                AppDomain.CurrentDomain.AssemblyLoad += OnAssemblyLoad;
+            }
+
+            private void OnAssemblyLoad(object? sender, AssemblyLoadEventArgs args) => Dirty = true;
         }
 
         private static readonly MethodInfo DeserializeDef = typeof(ISerializer).GetMethods()
@@ -40,18 +62,23 @@ namespace SetNet.Protocol
         /// Subscribes declarative <c>[Event]</c> handlers into <paramref name="registry"/>, scanning any assemblies
         /// that have loaded since the last call — so a module enabled after the first event still gets its client
         /// event handlers wired (mirrors <see cref="ChannelServiceRegistry"/>'s rescan-on-miss instead of scanning
-        /// exactly once, ever). Cheap on the steady state: with no newly-loaded assemblies it early-outs on a count check.
+        /// exactly once, ever). Free on the steady state: with no assembly loaded since the last scan it returns on
+        /// a single flag read, allocating nothing — this runs on every dispatched event.
         /// </summary>
         public static void EnsureDiscovered(ProtocolSubscriptionRegistry registry)
         {
             if (registry == null) throw new ArgumentNullException(nameof(registry));
             var state = States.GetValue(registry, _ => new ScanState());
+
+            // Fast path first, outside the lock: nothing loaded since the last scan, nothing to do.
+            if (!state.Dirty) return;
+
             lock (state)
             {
-                var assemblies = AppDomain.CurrentDomain.GetAssemblies();
-                if (assemblies.Length == state.LastAssemblyCount) return;   // nothing new loaded since the last scan
-                state.LastAssemblyCount = assemblies.Length;
-                foreach (var assembly in assemblies)
+                if (!state.Dirty) return;                                   // another thread scanned while we waited
+                state.Dirty = false;                                        // clear before scanning: a load during the
+                                                                            // scan re-raises it and we run again next time
+                foreach (var assembly in AppDomain.CurrentDomain.GetAssemblies())
                     if (state.Scanned.Add(assembly))                        // scan each assembly's [Event] handlers exactly once
                         ScanAssembly(registry, assembly);
             }

@@ -105,9 +105,21 @@ namespace SetNet.Protocol
         }
 
         /// <summary>Subscribes to typed push events for (channel, op): each event body is deserialized to <typeparamref name="T"/>.</summary>
+        /// <remarks>
+        /// When the registered serializer also implements <see cref="IMemorySerializer"/> — the bundled MessagePack
+        /// adapter does — the body is decoded straight out of the received frame, so no intermediate array is
+        /// created per event. Otherwise this falls back to the array path unchanged. The handler sees the same
+        /// decoded message either way; the choice is invisible to callers.
+        /// </remarks>
         public static IDisposable On<T>(this BaseClient client, ushort channel, ushort op, Action<T> handler)
         {
+            if (client == null) throw new ArgumentNullException(nameof(client));
             if (handler == null) throw new ArgumentNullException(nameof(handler));
+
+            if (client.Runtime.Serializer is IMemorySerializer memory)
+                return client.Runtime.ProtocolSubscriptions.AddMemory(
+                    channel, op, body => handler(memory.Deserialize<T>(body)));
+
             return client.OnRaw(channel, op, body => handler(client.Runtime.Deserialize<T>(body)));
     }
 }

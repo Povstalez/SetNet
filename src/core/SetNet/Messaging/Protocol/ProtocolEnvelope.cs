@@ -63,13 +63,33 @@ namespace SetNet.Protocol
             if (frame == null || frame.Length < HeaderSize)
                 throw new ProtocolException("Malformed protocol envelope.");
 
-            var kind = (ProtocolKind)frame[0];
-            var channel = BinaryPrimitives.ReadUInt16LittleEndian(frame.AsSpan(1, 2));
-            var op = BinaryPrimitives.ReadUInt16LittleEndian(frame.AsSpan(3, 2));
-            var corr = BinaryPrimitives.ReadInt32LittleEndian(frame.AsSpan(5, 4));
+            DecodeHeader(frame, out var kind, out var channel, out var op, out var corr);
             var body = new byte[frame.Length - HeaderSize];
             Buffer.BlockCopy(frame, HeaderSize, body, 0, body.Length);
             return new ProtocolEnvelope(kind, channel, op, corr, body);
         }
+
+        /// <summary>
+        /// Reads just the fixed header, leaving the body where it lies. Use with <see cref="BodyOf"/> when the body
+        /// is consumed within the call and need not outlive the frame — the client push-event path does exactly
+        /// that, which is why it can avoid the copy <see cref="Decode"/> makes.
+        /// </summary>
+        /// <exception cref="ProtocolException">If the frame is too short to contain the header.</exception>
+        public static void DecodeHeader(byte[] frame, out ProtocolKind kind, out ushort channel, out ushort op, out int corr)
+        {
+            if (frame == null || frame.Length < HeaderSize)
+                throw new ProtocolException("Malformed protocol envelope.");
+
+            kind = (ProtocolKind)frame[0];
+            channel = BinaryPrimitives.ReadUInt16LittleEndian(frame.AsSpan(1, 2));
+            op = BinaryPrimitives.ReadUInt16LittleEndian(frame.AsSpan(3, 2));
+            corr = BinaryPrimitives.ReadInt32LittleEndian(frame.AsSpan(5, 4));
+        }
+
+        /// <summary>The body as a window onto <paramref name="frame"/>, valid as long as the frame is.</summary>
+        public static ReadOnlyMemory<byte> BodyOf(byte[] frame)
+            => frame == null || frame.Length <= HeaderSize
+                ? ReadOnlyMemory<byte>.Empty
+                : frame.AsMemory(HeaderSize);
     }
 }

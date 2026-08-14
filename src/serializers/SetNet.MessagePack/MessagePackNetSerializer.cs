@@ -14,7 +14,7 @@ namespace SetNet.MessagePack
     /// annotate DTOs with <c>[MessagePackObject]</c> and <c>[Key(n)]</c> (or use <c>[MessagePackObject(true)]</c>
     /// for key-as-name).
     /// </remarks>
-    public sealed class MessagePackNetSerializer : ISerializer
+    public sealed class MessagePackNetSerializer : ISerializer, IMemorySerializer
     {
         // Payloads come off the network, so (de)serialize with the UntrustedData security profile
         // (hash-collision protection and depth limits) to mitigate deserialization DoS.
@@ -28,6 +28,15 @@ namespace SetNet.MessagePack
 
         /// <inheritdoc/>
         public T Deserialize<T>(byte[] data)
+            => global::MessagePack.MessagePackSerializer.Deserialize<T>(data, Options);
+
+        /// <inheritdoc/>
+        /// <remarks>
+        /// MessagePack reads from a <c>ReadOnlyMemory&lt;byte&gt;</c> natively, so a payload sitting inside a larger
+        /// received frame is decoded where it lies — no intermediate array. This is the path SetNet takes for client
+        /// push events.
+        /// </remarks>
+        public T Deserialize<T>(System.ReadOnlyMemory<byte> data)
             => global::MessagePack.MessagePackSerializer.Deserialize<T>(data, Options);
     }
 }

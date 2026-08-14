@@ -47,15 +47,21 @@ namespace SetNet.Protocol
         public static Task DispatchClientAsync(SetNetRuntime runtime, byte[] data)
         {
             if (runtime == null) throw new ArgumentNullException(nameof(runtime));
-            var env = ProtocolEnvelope.Decode(data);
-            switch (env.Kind)
+
+            // Read the header first, and decode fully only when the body must outlive this call. A reply is handed
+            // to a waiting caller, so it needs a body of its own; a push event is consumed by its subscribers
+            // before this returns, so it can be read straight out of the received frame. That is one array saved
+            // per event — the difference between noise and a steady stream of garbage in a game client taking
+            // hundreds of events per frame.
+            ProtocolEnvelope.DecodeHeader(data, out var kind, out var channel, out var op, out var corr);
+            switch (kind)
             {
                 case ProtocolKind.Reply:
                 case ProtocolKind.Error:
-                    ProtocolCorrelation.Complete(env.Corr, env);
+                    ProtocolCorrelation.Complete(corr, ProtocolEnvelope.Decode(data));
                     break;
                 case ProtocolKind.Event:
-                    runtime.ProtocolSubscriptions.Dispatch(env.Channel, env.Op, env.Body);
+                    runtime.ProtocolSubscriptions.Dispatch(channel, op, ProtocolEnvelope.BodyOf(data));
                     break;
             }
             return Task.CompletedTask;
