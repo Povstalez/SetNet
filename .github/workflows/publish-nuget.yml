@@ -8,8 +8,9 @@ name: Publish to NuGet
 # Packages whose version is already on nuget.org are skipped by --skip-duplicate, so a release
 # effectively publishes exactly the projects you bumped.
 #
-# The guard below fails the run if the tag and the core SetNet version disagree, which is the
-# one way this scheme can silently under-publish (tagging v1.2.0 having forgotten to bump).
+# The guard below fails the run if the tag matches no bumped project, which is the one way this
+# scheme can silently under-publish (tagging v1.2.0 having forgotten to bump anything). Name the
+# release after whichever package the release is about — it need not be the core.
 on:
   release:
     types: [published]
@@ -26,16 +27,32 @@ jobs:
         with:
           dotnet-version: '8.0.x'
 
-      - name: Verify the tag matches the core package version
-        # GITHUB_REF_NAME is the tag (e.g. "v1.2.0"); strip a leading "v" and compare with core.
+      - name: Verify the tag matches something that was actually bumped
+        # GITHUB_REF_NAME is the tag (e.g. "v1.2.0"); strip a leading "v".
+        #
+        # The guard exists to catch the one mistake this scheme allows: tagging a release having
+        # forgotten to bump anything. That publishes nothing, and --skip-duplicate makes it succeed
+        # silently, so without a guard you find out weeks later.
+        #
+        # It used to compare against the CORE package alone, which quietly assumed every release
+        # touches the core. It does not: a release may bump only companion packages (Locomotion,
+        # PathFinding, …). The check then failed with a message telling you to bump a project you had
+        # deliberately left alone — which is worse than no guard, because the advice is wrong.
+        #
+        # So the rule is: the tag must match at least ONE packable project's <Version>. Forgetting to
+        # bump still fails; a release that leaves the core untouched no longer does.
         run: |
           tag="${GITHUB_REF_NAME#v}"
-          core=$(grep -oE '<Version>[^<]*</Version>' src/core/SetNet/SetNet.csproj | head -1 | sed 's/<[^>]*>//g')
-          echo "tag=$tag  SetNet.csproj=$core"
-          if [ "$tag" != "$core" ]; then
-            echo "::error::Release tag v$tag does not match <Version>$core</Version> in src/core/SetNet/SetNet.csproj. Bump the csproj versions before tagging."
+          matched=""
+          for proj in $(find src -name '*.csproj' | sort); do
+            v=$(grep -oE '<Version>[^<]*</Version>' "$proj" | head -1 | sed 's/<[^>]*>//g')
+            [ "$v" = "$tag" ] && matched="$matched $(basename "$proj" .csproj)"
+          done
+          if [ -z "$matched" ]; then
+            echo "::error::Release tag v$tag matches no <Version> under src/. Bump the projects you changed before tagging — each package publishes at its own version, and the untouched ones are skipped as duplicates."
             exit 1
           fi
+          echo "tag v$tag is claimed by:$matched"
 
       - name: Pack
         # Pack every packable library under src/ (core + all companion packages), each at its own

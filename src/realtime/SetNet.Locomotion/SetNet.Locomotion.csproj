@@ -9,9 +9,9 @@
 
     <PropertyGroup>
         <PackageId>SetNet.Locomotion</PackageId>
-        <Version>1.3.1</Version>
-        <AssemblyVersion>1.2.0.0</AssemblyVersion>
-        <FileVersion>1.2.0.0</FileVersion>
+        <Version>1.3.2</Version>
+        <AssemblyVersion>1.3.2.0</AssemblyVersion>
+        <FileVersion>1.3.2.0</FileVersion>
         <Authors>Artem Lemeshev</Authors>
         <Description>A unified server-side movement simulator for SetNet: one system advances the position of everything that moves (players, mobs, NPCs, projectiles) along pathfound routes at a fixed rate — with automatic subscription (create a Mover and it's already ticking). It replicates NOTHING: you read positions and replicate them your own way, and a Started hook fires when a mover gets a new destination so you can send just the point to clients (L2-style, client re-paths locally). Depends on SetNet + SetNet.GeoData + SetNet.PathFinding.</Description>
         <PackageTags>networking;movement;locomotion;pathfinding;mmo;game;setnet</PackageTags>

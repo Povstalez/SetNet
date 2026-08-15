@@ -9,9 +9,9 @@
 
     <PropertyGroup>
         <PackageId>SetNet.PathFinding</PackageId>
-        <Version>1.3.1</Version>
-        <AssemblyVersion>1.2.0.0</AssemblyVersion>
-        <FileVersion>1.2.0.0</FileVersion>
+        <Version>1.3.2</Version>
+        <AssemblyVersion>1.3.2.0</AssemblyVersion>
+        <FileVersion>1.3.2.0</FileVersion>
         <Authors>Artem Lemeshev</Authors>
         <Description>Pathfinding for SetNet over SetNet.GeoData: A* on a nav-grid and A*+funnel on a nav-mesh behind one IPathfinder, plus a PathFollower that walks an entity along the result (speed, arrival, waypoint advance). Server-side, engine-agnostic; feeds SetNet.Mobs movement. Depends on SetNet + SetNet.GeoData.</Description>
         <PackageTags>networking;pathfinding;astar;navmesh;navgrid;steering;game;setnet</PackageTags>
