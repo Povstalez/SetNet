@@ -20,6 +20,10 @@ var loco = server.UseLocomotion(geo, new LocomotionOptions { Hz = 10 });   // on
 // send just the destination to nearby clients when something starts moving (client re-paths from the point):
 loco.Started += m => SendMoveTo(m.Owner, m.Destination!.Value);
 
+// …or send the route the mover is actually walking, so clients don't re-run the same search. Worth it in a crowd:
+// every client otherwise pays one pathfinding run per moving entity, and the orders arrive together.
+loco.Started += m => SendRoute(m.Owner, m.Waypoints);          // m.WaypointIndex = how much is already behind
+
 // anything that moves creates a Mover — that's the whole subscription:
 var mover = loco.CreateMover(spawnPos, speed: stats.Get("move_speed"), owner: character);
 

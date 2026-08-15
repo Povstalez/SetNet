@@ -48,6 +48,31 @@ namespace SetNet.Locomotion
         public Vec3? Destination { get; private set; }
         /// <summary>True while the mover is following a route.</summary>
         public bool IsMoving => _follower is { Arrived: false };
+
+        /// <summary>
+        /// The route this mover is walking, straight from the pathfinder — empty when idle.
+        ///
+        /// <para>
+        /// <b>Why this is public.</b> Replicating only <see cref="Destination"/> is the classic MMO shape, and it
+        /// costs every client one pathfinding run per moving entity, on the frame the order lands. In a crowd those
+        /// orders arrive together and their searches pile into a single frame. The server already holds the answer —
+        /// this property hands it over, so it can be sent instead of recomputed. Read it once per order; there is
+        /// no need to stream it.
+        /// </para>
+        ///
+        /// <para>
+        /// The list belongs to the pathfinder — do not hold it past the next <see cref="GoTo"/>, which replaces it.
+        /// </para>
+        /// </summary>
+        public IReadOnlyList<Vec3> Waypoints =>
+            _follower is null ? Array.Empty<Vec3>() : _follower.Route.Waypoints;
+
+        /// <summary>
+        /// How many waypoints are already behind. <c>Waypoints[WaypointIndex]</c> is where the mover heads right
+        /// now, so the slice from there on is what is left to walk — what you want when a client shows up in the
+        /// middle of a walk and needs the remainder rather than the whole route.
+        /// </summary>
+        public int WaypointIndex => _follower?.Index ?? 0;
         /// <summary>Raised once when the mover reaches its destination.</summary>
         public event Action<Mover>? DestinationReached;
 

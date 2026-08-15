@@ -22,6 +22,24 @@ namespace SetNet.PathFinding
         public Vec3 Target => Arrived ? Vec3.Zero : _path.Waypoints[_index];
 
         /// <summary>
+        /// The route being followed, exactly as the pathfinder produced it.
+        ///
+        /// <para>
+        /// Exposed because the route is worth more than the destination alone. A server that replicates only
+        /// "walking to X" makes every client re-run the same search — once per moving entity, on the frame the
+        /// order arrives. Handing out the polyline lets the server publish what it has already computed instead
+        /// of paying for it a second time.
+        /// </para>
+        /// </summary>
+        public Path Route => _path;
+
+        /// <summary>
+        /// Index of the waypoint currently being walked toward — everything before it is already behind.
+        /// Together with <see cref="Route"/> this describes the remaining route without allocating a second list.
+        /// </summary>
+        public int Index => _index;
+
+        /// <summary>
         /// Advances from <paramref name="current"/> toward the path by at most <paramref name="maxDistance"/> world
         /// units and returns the new position, consuming waypoints reached along the way.
         /// </summary>
