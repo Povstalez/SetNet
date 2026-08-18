@@ -4,7 +4,7 @@
 
 # SetNet.Locomotion
 
-**One unified server-side tick that moves everything — players, mobs, NPCs, projectiles — and replicates nothing.**
+**One unified server-side tick that moves active routes — players, mobs, NPCs, projectiles — and replicates nothing.**
 
 Create a `Mover` and it's *automatically* part of the tick; the system advances its position along a pathfound route
 N times per second. It sends **nothing** over the network — you read positions and replicate them your own way. When a
@@ -39,6 +39,9 @@ mover.Dispose();              // auto-unsubscribe when the entity leaves
 
 - **It simulates, it doesn't replicate.** No packets, no StateSync writes — just positions advancing. You decide how the position reaches clients (a NetworkVariable field, an L2 "move to point" event on `Started`, whatever).
 - **Automatic subscription.** `CreateMover` registers it; `Dispose()` removes it. No manual `Register`.
+- **Idle movers are free in the hot loop.** Registered movers without a live route remain available for the next
+  `GoTo`, but `Update` steps only `ActiveCount` movers. `Stop`, `Warp`, arrival, an unreachable order, and `Dispose`
+  remove a mover from the active set.
 - **Unified.** Players, NPCs, projectiles — anything holding a `Mover` shares the one tick. (Mobs has its own tick; point its movement here too if you want a single system.)
 - **One reused pathfinder** (`Pathfinding.For(geo)`, pooled) for every mover.
 

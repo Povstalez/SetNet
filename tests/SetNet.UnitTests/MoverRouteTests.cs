@@ -33,6 +33,52 @@ public class MoverRouteTests
 
         Assert.Empty(m.Waypoints);
         Assert.Equal(0, m.WaypointIndex);
+        Assert.Equal(1, loco.Count);
+        Assert.Equal(0, loco.ActiveCount);
+    }
+
+    [Fact]
+    public void Only_Movers_With_A_Live_Route_Are_In_The_Tick_Set()
+    {
+        var loco = new LocomotionSystem(Field(), new LocomotionOptions { UseInternalTimer = false });
+        var idle = Enumerable.Range(0, 10_000)
+            .Select(_ => loco.CreateMover(new Vec3(2, 0, 2), speed: 8f))
+            .ToArray();
+        var moving = idle[1234];
+
+        Assert.Equal(10_000, loco.Count);
+        Assert.Equal(0, loco.ActiveCount);
+
+        Assert.True(moving.GoTo(new Vec3(16, 0, 2)));
+        Assert.Equal(1, loco.ActiveCount);
+
+        // Stationary movers remain registered for future orders, but stopping
+        // the only live route makes the next Update independent of all 10,000.
+        moving.Stop();
+        Assert.Equal(10_000, loco.Count);
+        Assert.Equal(0, loco.ActiveCount);
+    }
+
+    [Fact]
+    public void Arrived_Warped_And_Disposed_Movers_Leave_The_Active_Set()
+    {
+        var loco = new LocomotionSystem(Field(), new LocomotionOptions { UseInternalTimer = false });
+        var m = loco.CreateMover(new Vec3(2, 0, 2), speed: 100f);
+
+        Assert.True(m.GoTo(new Vec3(3, 0, 2)));
+        Assert.Equal(1, loco.ActiveCount);
+        loco.Update(1_000);
+        Assert.False(m.IsMoving);
+        Assert.Equal(0, loco.ActiveCount);
+
+        Assert.True(m.GoTo(new Vec3(16, 0, 2)));
+        m.Warp(new Vec3(4, 0, 2));
+        Assert.Equal(0, loco.ActiveCount);
+
+        Assert.True(m.GoTo(new Vec3(16, 0, 2)));
+        m.Dispose();
+        Assert.Equal(0, loco.ActiveCount);
+        Assert.Equal(0, loco.Count);
     }
 
     [Fact]

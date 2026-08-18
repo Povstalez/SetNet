@@ -87,18 +87,31 @@ namespace SetNet.Locomotion
         public bool GoTo(Vec3 destination)
         {
             var path = _system.Finder.FindPath(Position, destination);
-            if (path.IsEmpty) { _follower = null; Destination = null; return false; }
+            if (path.IsEmpty)
+            {
+                _follower = null;
+                Destination = null;
+                _system.Deactivate(this);
+                return false;
+            }
             _follower = new PathFollower(path);
             Destination = destination;
+            _system.Activate(this);
             _system.RaiseStarted(this);      // ← hook: send the point to clients (they re-path locally)
             return true;
         }
 
         /// <summary>Stops following the route where it is.</summary>
-        public void Stop() => _follower = null;
+        public void Stop() { _follower = null; _system.Deactivate(this); }
 
         /// <summary>Instantly repositions and clears the route.</summary>
-        public void Warp(Vec3 position) { Position = position; _follower = null; Destination = null; }
+        public void Warp(Vec3 position)
+        {
+            Position = position;
+            _follower = null;
+            Destination = null;
+            _system.Deactivate(this);
+        }
 
         // Advances one tick; returns true if it moved. Called by the system.
         internal bool Step(float dtSeconds)
@@ -115,8 +128,9 @@ namespace SetNet.Locomotion
     }
 
     /// <summary>
-    /// The single, unified movement system: it advances <b>every</b> registered <see cref="Mover"/> along its route at
-    /// a fixed rate. Create movers with <see cref="CreateMover"/> (they auto-subscribe) — that is the only wiring.
+    /// The single, unified movement system: it advances every registered <see cref="Mover"/> that currently has a
+    /// live route at a fixed rate. Idle movers stay registered for the next order but are absent from the hot tick.
+    /// Create movers with <see cref="CreateMover"/> (they auto-subscribe) — that is the only wiring.
     /// It sends nothing over the network: replication is yours. Subscribe to <see cref="Started"/> to forward a new
     /// destination to clients (L2-style — the client re-paths from the point locally).
     /// </summary>
@@ -125,6 +139,7 @@ namespace SetNet.Locomotion
         private static readonly ConcurrentDictionary<BaseServer, LocomotionSystem> Servers = new ConcurrentDictionary<BaseServer, LocomotionSystem>();
 
         private readonly ConcurrentDictionary<Mover, byte> _movers = new ConcurrentDictionary<Mover, byte>();
+        private readonly ConcurrentDictionary<Mover, byte> _active = new ConcurrentDictionary<Mover, byte>();
         private readonly Timer? _timer;
         private readonly IDisposable? _tickReg;
         private int _ticking;
@@ -165,15 +180,38 @@ namespace SetNet.Locomotion
             return m;
         }
 
-        internal void Remove(Mover m) => _movers.TryRemove(m, out _);
+        internal void Remove(Mover m)
+        {
+            _active.TryRemove(m, out _);
+            _movers.TryRemove(m, out _);
+        }
+        internal void Activate(Mover m)
+        {
+            if (!_movers.ContainsKey(m)) return;
+            _active[m] = 0;
+            // Dispose may have removed the registration between the check and
+            // the add. Never leave such a mover ticking as an orphan.
+            if (!_movers.ContainsKey(m)) _active.TryRemove(m, out _);
+        }
+
+        // Removing and then re-checking closes the GoTo-vs-tick race: if a new
+        // route was installed while an old route finished, the mover is put
+        // back instead of silently losing its subscription.
+        internal void Deactivate(Mover m)
+        {
+            _active.TryRemove(m, out _);
+            if (m.IsMoving) Activate(m);
+        }
         internal void RaiseStarted(Mover m) => Started?.Invoke(m);
 
         /// <summary>Every live mover.</summary>
         public IReadOnlyCollection<Mover> Movers => (IReadOnlyCollection<Mover>)_movers.Keys;
         /// <summary>How many movers are registered.</summary>
         public int Count => _movers.Count;
+        /// <summary>How many movers currently have a live route and are stepped by <see cref="Update"/>.</summary>
+        public int ActiveCount => _active.Count;
 
-        /// <summary>Advances all movers by <paramref name="dtMs"/>. Call this yourself when the internal timer is off.</summary>
+        /// <summary>Advances active movers by <paramref name="dtMs"/>. Idle registered movers cost no per-tick work.</summary>
         public void Update(double dtMs) => Tick((float)(dtMs / 1000.0));
 
         /// <summary>Lets a <c>SetNet.Ticks.TickScheduler</c> drive this system: <c>channel.Add(loco)</c>.</summary>
@@ -182,7 +220,14 @@ namespace SetNet.Locomotion
         private void Tick(float dtSeconds)
         {
             if (Interlocked.Exchange(ref _ticking, 1) != 0) return;   // never overlap ticks
-            try { foreach (var m in _movers.Keys) m.Step(dtSeconds); }
+            try
+            {
+                foreach (var m in _active.Keys)
+                {
+                    m.Step(dtSeconds);
+                    if (!m.IsMoving) Deactivate(m);
+                }
+            }
             catch { /* never throw on the timer thread */ }
             finally { Interlocked.Exchange(ref _ticking, 0); }
         }
