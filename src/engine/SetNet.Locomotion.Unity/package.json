@@ -1,6 +1,6 @@
 {
   "name": "com.setnet.locomotion",
-  "version": "1.2.0",
+  "version": "1.6.0",
   "displayName": "SetNet Locomotion for Unity",
   "description": "A client-side NavAgent component for SetNet games: feed it a path (that you computed with SetNet.PathFinding from a destination point the server sent) and it moves the GameObject along it at a Speed you set (your replicated move-speed stat). The server stays authoritative — it sends only the destination; the client re-paths locally and NavAgent walks the model. UPM source, UnityEngine-only, no SetNet assembly required at runtime.",
   "unity": "2021.3",

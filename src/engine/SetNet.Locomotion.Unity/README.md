@@ -28,6 +28,9 @@ foreach (var w in path.Waypoints) waypoints.Add(new Vector3(w.X, w.Y, w.Z));   /
 agent.SetPath(waypoints);
 
 agent.Arrived += () => { /* play idle */ };
+
+// once per frame, from one central MonoBehaviour.Update:
+NavAgent.TickActive(Time.deltaTime);
 ```
 
 `NavAgent` is pure UnityEngine (no SetNet dependency) — it just walks a `List<Vector3>`. Convert your
@@ -39,11 +42,13 @@ agent.Arrived += () => { /* play idle */ };
 - **ArriveDistance** — how close counts as reaching a waypoint.
 - **TurnSpeed** — degrees/sec to face the movement direction (0 = snap, &lt; 0 = don't rotate).
 - **`SetPath(waypoints)`** / **`Stop()`** / **`IsMoving`** / **`Destination`** / **`Arrived`** event.
+- **`TickActive(deltaTime)`** — advances only agents with a live path; call it once from a central update loop.
 
 ## Notes
 
 - **Client needs local geodata** — bake the same `.geo` for the client (see [SetNet.GeoData.Unity](https://github.com/Povstalez/SetNet)) so it can `FindPath` from the point.
 - **Prediction / dead-reckoning** — this is where you extrapolate the owned character's movement smoothly instead of snapping to streamed positions; the server corrects if it disagrees.
+- `NavAgent` deliberately has no per-component `Update()`: `SetPath` registers it in a sparse active list and `Stop`, arrival, disable or destroy removes it.
 - **UPM source**, editor + runtime, no NuGet, no SetNet assembly required.
 
 ## License
