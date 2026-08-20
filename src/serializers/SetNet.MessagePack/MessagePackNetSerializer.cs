@@ -14,7 +14,7 @@ namespace SetNet.MessagePack
     /// annotate DTOs with <c>[MessagePackObject]</c> and <c>[Key(n)]</c> (or use <c>[MessagePackObject(true)]</c>
     /// for key-as-name).
     /// </remarks>
-    public sealed class MessagePackNetSerializer : ISerializer, IMemorySerializer
+    public sealed class MessagePackNetSerializer : ISerializer, IMemorySerializer, IBinaryFrameSerializer
     {
         // Payloads come off the network, so (de)serialize with the UntrustedData security profile
         // (hash-collision protection and depth limits) to mitigate deserialization DoS.
@@ -38,5 +38,50 @@ namespace SetNet.MessagePack
         /// </remarks>
         public T Deserialize<T>(System.ReadOnlyMemory<byte> data)
             => global::MessagePack.MessagePackSerializer.Deserialize<T>(data, Options);
+
+        // ── IBinaryFrameSerializer ─────────────────────────────────────────
+        //
+        // MessagePack encodes byte[] as the bin family: a 2/3/5-byte header
+        // (bin8/bin16/bin32 with a big-endian length) followed by the raw
+        // bytes. That makes Serialize<byte[]>(p) exactly [header][p], which is
+        // the contract this capability promises. Guarded by unit tests that
+        // compare against MessagePackSerializer.Serialize for edge lengths.
+
+        /// <inheritdoc/>
+        public int MeasureBinaryFrameHeader(int payloadLength)
+        {
+            if (payloadLength < 0) throw new System.ArgumentOutOfRangeException(nameof(payloadLength));
+            if (payloadLength <= byte.MaxValue) return 2;    // 0xc4 len8
+            if (payloadLength <= ushort.MaxValue) return 3;  // 0xc5 len16 (big-endian)
+            return 5;                                        // 0xc6 len32 (big-endian)
+        }
+
+        /// <inheritdoc/>
+        public int WriteBinaryFrameHeader(System.Span<byte> destination, int payloadLength)
+        {
+            if (payloadLength < 0) throw new System.ArgumentOutOfRangeException(nameof(payloadLength));
+
+            if (payloadLength <= byte.MaxValue)
+            {
+                destination[0] = 0xc4;
+                destination[1] = (byte)payloadLength;
+                return 2;
+            }
+
+            if (payloadLength <= ushort.MaxValue)
+            {
+                destination[0] = 0xc5;
+                destination[1] = (byte)(payloadLength >> 8);
+                destination[2] = (byte)payloadLength;
+                return 3;
+            }
+
+            destination[0] = 0xc6;
+            destination[1] = (byte)(payloadLength >> 24);
+            destination[2] = (byte)(payloadLength >> 16);
+            destination[3] = (byte)(payloadLength >> 8);
+            destination[4] = (byte)payloadLength;
+            return 5;
+        }
     }
 }
