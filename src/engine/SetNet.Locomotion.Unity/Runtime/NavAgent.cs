@@ -25,6 +25,14 @@ namespace SetNet.Locomotion.Unity
         [Tooltip("World units per second — set this from your replicated move-speed stat.")]
         public float Speed = 4f;
 
+        /// <summary>
+        /// Someone else moves this agent (a batched kinematics job walking the
+        /// same math via <see cref="NavAgentMath"/>). <see cref="TickActive"/>
+        /// keeps the registry housekeeping but skips the movement step —
+        /// otherwise the agent would advance twice per frame.
+        /// </summary>
+        [System.NonSerialized] public bool ExternallyDriven;
+
         [Tooltip("How close (world units) counts as reaching a waypoint.")]
         public float ArriveDistance = 0.05f;
 
@@ -36,6 +44,15 @@ namespace SetNet.Locomotion.Unity
 
         /// <summary>True while there are remaining waypoints to walk.</summary>
         public bool IsMoving => _index < _path.Count;
+
+        /// <summary>Current waypoint index — for the kinematics job's collect step.</summary>
+        public int PathIndex => _index;
+
+        /// <summary>Total waypoints of the current path.</summary>
+        public int PathCount => _path.Count;
+
+        /// <summary>Waypoint by absolute index — for copying the remaining path out.</summary>
+        public Vector3 WaypointAt(int i) => _path[i];
 
         /// <summary>The final destination of the current path, or null when idle.</summary>
         public Vector3? Destination => _path.Count > 0 ? _path[_path.Count - 1] : (Vector3?)null;
@@ -91,6 +108,8 @@ namespace SetNet.Locomotion.Unity
                     continue;
                 }
 
+                if (agent.ExternallyDriven) continue;
+
                 agent.Tick(dt);
             }
         }
@@ -105,28 +124,41 @@ namespace SetNet.Locomotion.Unity
 
             var target = _path[_index];
             var pos = transform.position;
-            var next = Vector3.MoveTowards(pos, target, Speed * dt);
-            transform.position = next;
+            var rot = transform.rotation;
+            var before = pos;
 
-            Face(next - pos, dt);
+            // Shared with the kinematics job (see NavAgentMath): both paths
+            // must move an agent to the same point, so both call one body.
+            bool reached = NavAgentMath.StepTowards(
+                ref pos, target, Speed, dt,
+                final: _index == _path.Count - 1, ArriveDistance);
+            bool turned = NavAgentMath.Face(ref rot, pos - before, TurnSpeed, dt);
 
-            bool final = _index == _path.Count - 1;
-            bool reached = final
-                // MoveTowards returns target itself when the remaining distance
-                // fits this frame. Do not snap/assign it separately.
-                ? (next - target).sqrMagnitude <= 1e-10f
-                : (next - target).sqrMagnitude <= ArriveDistance * ArriveDistance;
+            transform.position = pos;
+            if (turned) transform.rotation = rot;
 
-            if (reached)
+            if (reached) AdoptProgress(_index + 1);
+        }
+
+        /// <summary>
+        /// Accepts path progress computed elsewhere (the kinematics job steps
+        /// externally driven agents and hands the new index back here).
+        /// Completion goes through the exact same block <see cref="Tick"/>
+        /// used to have inline: clear, deactivate, raise <see cref="Arrived"/>.
+        /// Call from the main thread only — it touches the registry and fires
+        /// a managed event.
+        /// </summary>
+        public void AdoptProgress(int index)
+        {
+            if (index <= _index) return;
+            _index = index;
+
+            if (_index >= _path.Count)
             {
-                _index++;
-                if (_index >= _path.Count)
-                {
-                    _path.Clear();
-                    _index = 0;
-                    SetActive(false);
-                    Arrived?.Invoke();
-                }
+                _path.Clear();
+                _index = 0;
+                SetActive(false);
+                Arrived?.Invoke();
             }
         }
 
@@ -168,15 +200,5 @@ namespace SetNet.Locomotion.Unity
                 removed._activeIndex = -1;
         }
 
-        private void Face(Vector3 delta, float dt)
-        {
-            if (TurnSpeed < 0f) return;
-            delta.y = 0f;
-            if (delta.sqrMagnitude < 1e-6f) return;
-            var want = Quaternion.LookRotation(delta.normalized, Vector3.up);
-            transform.rotation = TurnSpeed == 0f
-                ? want
-                : Quaternion.RotateTowards(transform.rotation, want, TurnSpeed * dt);
-        }
     }
 }
