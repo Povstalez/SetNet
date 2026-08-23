@@ -70,7 +70,7 @@ namespace SetNet.Protocol
         }
 
         /// <summary>
-        /// Reads just the fixed header, leaving the body where it lies. Use with <see cref="BodyOf"/> when the body
+        /// Reads just the fixed header, leaving the body where it lies. Use with <see cref="BodyOf(byte[])"/> when the body
         /// is consumed within the call and need not outlive the frame — the client push-event path does exactly
         /// that, which is why it can avoid the copy <see cref="Decode"/> makes.
         /// </summary>
@@ -91,5 +91,24 @@ namespace SetNet.Protocol
             => frame == null || frame.Length <= HeaderSize
                 ? ReadOnlyMemory<byte>.Empty
                 : frame.AsMemory(HeaderSize);
+
+        /// <summary>
+        /// Same as <see cref="DecodeHeader(byte[],out ProtocolKind,out ushort,out ushort,out int)"/> but reads the
+        /// header out of a window, so the caller never has to materialise the frame as an array of its own.
+        /// </summary>
+        public static void DecodeHeader(ReadOnlySpan<byte> frame, out ProtocolKind kind, out ushort channel, out ushort op, out int corr)
+        {
+            if (frame.Length < HeaderSize)
+                throw new ProtocolException("Malformed protocol envelope.");
+
+            kind = (ProtocolKind)frame[0];
+            channel = BinaryPrimitives.ReadUInt16LittleEndian(frame.Slice(1, 2));
+            op = BinaryPrimitives.ReadUInt16LittleEndian(frame.Slice(3, 2));
+            corr = BinaryPrimitives.ReadInt32LittleEndian(frame.Slice(5, 4));
+        }
+
+        /// <summary>The body as a window onto <paramref name="frame"/>, valid as long as the frame is.</summary>
+        public static ReadOnlyMemory<byte> BodyOf(ReadOnlyMemory<byte> frame)
+            => frame.Length <= HeaderSize ? ReadOnlyMemory<byte>.Empty : frame.Slice(HeaderSize);
     }
 }

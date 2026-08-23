@@ -66,5 +66,40 @@ namespace SetNet.Protocol
             }
             return Task.CompletedTask;
         }
+
+        /// <summary>
+        /// Handles an inbound envelope that is still sitting inside the received frame.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// Same routing as the array overload, but the caller keeps ownership of the buffer and no copy is made for
+        /// the event path. The saving is one array per delivered event: the transport already holds the bytes, and
+        /// the array overload used to reach this point only after the serializer had unwrapped them into a second
+        /// array of identical content.
+        /// </para>
+        /// <para>
+        /// <b>The window must stay valid for the duration of this call, and no longer.</b> Push events are consumed
+        /// by their subscribers before this returns, so a window is safe for them. Replies and errors are handed to
+        /// a caller waiting on another thread and therefore still get an array of their own — that copy is not an
+        /// oversight, it is the ownership boundary.
+        /// </para>
+        /// </remarks>
+        public static Task DispatchClientAsync(SetNetRuntime runtime, ReadOnlyMemory<byte> data)
+        {
+            if (runtime == null) throw new ArgumentNullException(nameof(runtime));
+
+            ProtocolEnvelope.DecodeHeader(data.Span, out var kind, out var channel, out var op, out var corr);
+            switch (kind)
+            {
+                case ProtocolKind.Reply:
+                case ProtocolKind.Error:
+                    ProtocolCorrelation.Complete(corr, ProtocolEnvelope.Decode(data.ToArray()));
+                    break;
+                case ProtocolKind.Event:
+                    runtime.ProtocolSubscriptions.Dispatch(channel, op, ProtocolEnvelope.BodyOf(data));
+                    break;
+            }
+            return Task.CompletedTask;
+        }
     }
 }

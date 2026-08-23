@@ -7,15 +7,61 @@ namespace SetNet.Protocol
     /// <summary>Client-side push-event subscriptions scoped to a <see cref="SetNetRuntime"/>.</summary>
     public sealed class ProtocolSubscriptionRegistry
     {
+        /// <summary>
+        /// One channel/op bucket: a dictionary for bookkeeping plus a snapshot array for delivery.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// <b>Why the snapshot exists.</b> Delivery used to <c>foreach</c> the ConcurrentDictionary directly, on the
+        /// stated grounds that its enumerator is a struct. That is true on .NET 9+, which added a public struct
+        /// enumerator — but not on the Mono runtime Unity ships, where <c>GetEnumerator()</c> returns an interface
+        /// backed by a compiler-generated class. There it is one heap allocation per delivered event, which for a
+        /// small event is more than the payload itself.
+        /// </para>
+        /// <para>
+        /// An array read through a plain <c>for</c> allocates nothing on any runtime, and rebuilding it costs
+        /// nothing that matters: subscriptions change a handful of times per session, deliveries happen thousands of
+        /// times per second.
+        /// </para>
+        /// <para>
+        /// The snapshot is published with <c>Volatile.Write</c>, so a subscription taken out mid-dispatch can
+        /// neither be skipped from the array already being walked nor torn — the walker simply finishes with the
+        /// list it started on. That is the same tolerance the ConcurrentDictionary gave, kept deliberately.
+        /// </para>
+        /// </remarks>
+        private sealed class Bucket<T> where T : class
+        {
+            private readonly ConcurrentDictionary<long, T> _map = new ConcurrentDictionary<long, T>();
+            private T[] _snapshot = Array.Empty<T>();
+
+            internal T[] Snapshot => Volatile.Read(ref _snapshot);
+
+            internal void Set(long token, T value) { _map[token] = value; Rebuild(); }
+            internal void Remove(long token) { if (_map.TryRemove(token, out _)) Rebuild(); }
+
+            private void Rebuild()
+            {
+                var next = new T[_map.Count];
+                int n = 0;
+                foreach (var kv in _map)
+                {
+                    if (n == next.Length) break;   // grew under us — the next Rebuild will catch up
+                    next[n++] = kv.Value;
+                }
+                if (n != next.Length) Array.Resize(ref next, n);
+                Volatile.Write(ref _snapshot, next);
+            }
+        }
+
         private readonly SetNetRuntime _runtime;
-        private readonly ConcurrentDictionary<int, ConcurrentDictionary<long, Action<byte[]>>> _subs
-            = new ConcurrentDictionary<int, ConcurrentDictionary<long, Action<byte[]>>>();
+        private readonly ConcurrentDictionary<int, Bucket<Action<byte[]>>> _subs
+            = new ConcurrentDictionary<int, Bucket<Action<byte[]>>>();
 
         // Subscribers that take the body as a window onto the received frame instead of an array of their own.
         // Kept in a separate table so the array-based API above is untouched: an event feeds both, and the array
         // is only materialised when somebody actually subscribed for one.
-        private readonly ConcurrentDictionary<int, ConcurrentDictionary<long, Action<ReadOnlyMemory<byte>>>> _memSubs
-            = new ConcurrentDictionary<int, ConcurrentDictionary<long, Action<ReadOnlyMemory<byte>>>>();
+        private readonly ConcurrentDictionary<int, Bucket<Action<ReadOnlyMemory<byte>>>> _memSubs
+            = new ConcurrentDictionary<int, Bucket<Action<ReadOnlyMemory<byte>>>>();
 
         private long _token;
 
@@ -34,9 +80,9 @@ namespace SetNet.Protocol
         {
             if (callback == null) throw new ArgumentNullException(nameof(callback));
             var key = Key(channel, op);
-            var bucket = _subs.GetOrAdd(key, _ => new ConcurrentDictionary<long, Action<byte[]>>());
+            var bucket = _subs.GetOrAdd(key, _ => new Bucket<Action<byte[]>>());
             var token = Interlocked.Increment(ref _token);
-            bucket[token] = callback;
+            bucket.Set(token, callback);
             return new Subscription(this, key, token);
         }
 
@@ -53,9 +99,9 @@ namespace SetNet.Protocol
         {
             if (callback == null) throw new ArgumentNullException(nameof(callback));
             var key = Key(channel, op);
-            var bucket = _memSubs.GetOrAdd(key, _ => new ConcurrentDictionary<long, Action<ReadOnlyMemory<byte>>>());
+            var bucket = _memSubs.GetOrAdd(key, _ => new Bucket<Action<ReadOnlyMemory<byte>>>());
             var token = Interlocked.Increment(ref _token);
-            bucket[token] = callback;
+            bucket.Set(token, callback);
             return new Subscription(this, key, token, memory: true);
         }
 
@@ -82,22 +128,22 @@ namespace SetNet.Protocol
 
             if (_memSubs.TryGetValue(key, out var memBucket))
             {
-                // Enumerate the dictionary itself, not its Values: ConcurrentDictionary.Values builds a fresh
-                // snapshot list on every access, which is one throwaway list per delivered event. The dictionary's
-                // own enumerator is a struct and takes no lock, and it tolerates concurrent writes — exactly what a
-                // subscription bucket needs while handlers may subscribe or unsubscribe.
-                foreach (var kv in memBucket)
+                // Walk the snapshot array, never the dictionary — see Bucket<T> for why the "struct enumerator"
+                // shortcut does not hold on the runtime Unity ships.
+                var subs = memBucket.Snapshot;
+                for (int i = 0; i < subs.Length; i++)
                 {
-                    try { kv.Value(body); } catch { }
+                    try { subs[i](body); } catch { }
                 }
             }
 
             if (!_subs.TryGetValue(key, out var bucket)) return;
 
             var array = asArray ?? body.ToArray();
-            foreach (var kv in bucket)
+            var arraySubs = bucket.Snapshot;
+            for (int i = 0; i < arraySubs.Length; i++)
             {
-                try { kv.Value(array); } catch { }
+                try { arraySubs[i](array); } catch { }
             }
         }
 
@@ -107,11 +153,11 @@ namespace SetNet.Protocol
         {
             if (memory)
             {
-                if (_memSubs.TryGetValue(key, out var memBucket)) memBucket.TryRemove(token, out _);
+                if (_memSubs.TryGetValue(key, out var memBucket)) memBucket.Remove(token);
             }
             else if (_subs.TryGetValue(key, out var bucket))
             {
-                bucket.TryRemove(token, out _);
+                bucket.Remove(token);
             }
         }
 
