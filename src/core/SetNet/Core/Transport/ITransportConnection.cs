@@ -63,7 +63,21 @@ namespace SetNet.Core.Transport
         /// connection gracefully (TCP EOF / UDP close), signalling the read loop to stop.
         /// </returns>
         /// <exception cref="System.IO.IOException">Thrown on a transport-level read failure (broken socket, malformed frame).</exception>
-        Task<TransportMessage?> ReceiveAsync(CancellationToken ct = default);
+        /// <remarks>
+        /// <para>
+        /// Returns a <see cref="ValueTask{TResult}"/> rather than a <see cref="System.Threading.Tasks.Task{TResult}"/>
+        /// because the common case completes synchronously: during a burst the next frame is already sitting in the
+        /// receive buffer and no await ever suspends. A Task-returning method allocates on that path regardless — the
+        /// BCL only caches Task results for <c>bool</c>, small <c>int</c> and null references, and a
+        /// <c>TransportMessage?</c> with a value is none of those. One allocation per received message is a steady
+        /// stream of garbage in a game client taking hundreds of messages per tick.
+        /// </para>
+        /// <para>
+        /// The usual ValueTask rules apply and are not optional: await it exactly once, do not store it, do not
+        /// combine it with <c>Task.WhenAny</c>. Call <c>AsTask()</c> first if any of that is needed.
+        /// </para>
+        /// </remarks>
+        ValueTask<TransportMessage?> ReceiveAsync(CancellationToken ct = default);
 
         /// <summary>
         /// Flushes any buffered outbound data when send batching is enabled; a no-op otherwise. Call after

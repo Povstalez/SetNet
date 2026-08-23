@@ -115,7 +115,7 @@ namespace SetNet.Core.Transport.Udp
         /// </summary>
         /// <param name="ct">Token used to cancel the wait.</param>
         /// <returns>The next decoded message, or <c>null</c> once the connection has closed and its inbound queue is drained.</returns>
-        public async Task<TransportMessage?> ReceiveAsync(CancellationToken ct = default)
+        public async ValueTask<TransportMessage?> ReceiveAsync(CancellationToken ct = default)
         {
             var (ok, message) = await _inbound.DequeueAsync(ct).ConfigureAwait(false);
             return ok ? message : (TransportMessage?)null;

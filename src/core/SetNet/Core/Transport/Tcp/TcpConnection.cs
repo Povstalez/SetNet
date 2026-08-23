@@ -259,7 +259,7 @@ namespace SetNet.Core.Transport.Tcp
         /// Not safe to call concurrently with itself: a single receive loop should own this connection's reads.
         /// Buffered frames left over from a previous read are drained before touching the socket again.
         /// </remarks>
-        public async Task<TransportMessage?> ReceiveAsync(CancellationToken ct = default)
+        public async ValueTask<TransportMessage?> ReceiveAsync(CancellationToken ct = default)
         {
             // A single socket read may yield several frames; drain the buffered ones first.
             // Decode straight to (type, payload) — one payload copy, no intermediate frame array.

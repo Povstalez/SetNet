@@ -59,7 +59,7 @@ namespace SetNet.WebSockets.Unity
         }
 
         /// <inheritdoc/>
-        public async Task<TransportMessage?> ReceiveAsync(CancellationToken ct = default)
+        public async ValueTask<TransportMessage?> ReceiveAsync(CancellationToken ct = default)
         {
             while (true)
             {

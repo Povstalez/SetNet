@@ -52,7 +52,7 @@ namespace SetNet.InMemory
         }
 
         /// <inheritdoc/>
-        public async Task<TransportMessage?> ReceiveAsync(CancellationToken ct = default)
+        public async ValueTask<TransportMessage?> ReceiveAsync(CancellationToken ct = default)
         {
             var (ok, message) = await _inbound.ReadAsync(ct).ConfigureAwait(false);
             return ok ? message : (TransportMessage?)null;   // (false, default) => peer closed => EOF

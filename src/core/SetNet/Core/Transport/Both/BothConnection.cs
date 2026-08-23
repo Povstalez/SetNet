@@ -85,7 +85,7 @@ namespace SetNet.Core.Transport.Both
         /// </summary>
         /// <param name="ct">Token used to cancel the wait.</param>
         /// <returns>The next merged <see cref="TransportMessage"/>, or <c>null</c> when the connection has closed and the queue is drained.</returns>
-        public async Task<TransportMessage?> ReceiveAsync(CancellationToken ct = default)
+        public async ValueTask<TransportMessage?> ReceiveAsync(CancellationToken ct = default)
         {
             var (ok, message) = await _merged.DequeueAsync(ct).ConfigureAwait(false);
             return ok ? message : (TransportMessage?)null;

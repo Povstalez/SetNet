@@ -50,7 +50,7 @@ namespace SetNet.WebSockets
         }
 
         /// <inheritdoc/>
-        public async Task<TransportMessage?> ReceiveAsync(CancellationToken ct = default)
+        public async ValueTask<TransportMessage?> ReceiveAsync(CancellationToken ct = default)
         {
             var chunk = new byte[8192];
             using var assembled = new MemoryStream();
