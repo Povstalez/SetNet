@@ -41,7 +41,7 @@ invisible in request/response traffic added up to a steady garbage stream there.
 | Was | Now |
 |---|---|
 | `ClientEventDiscovery` called `AppDomain.CurrentDomain.GetAssemblies()` on **every dispatch** just to compare the count — and that call builds a fresh array holding every loaded assembly | The scan state subscribes to `AppDomain.AssemblyLoad` once and raises a flag; the steady state is one `volatile bool` read. A module enabled later is still picked up — the CLR reports its assembly. |
-| `foreach (var cb in bucket.Values)` — `ConcurrentDictionary.Values` builds a snapshot list per access | Enumerating the dictionary itself: its enumerator is a struct, takes no lock, and tolerates concurrent subscribe/unsubscribe |
+| `foreach (var cb in bucket.Values)` — `ConcurrentDictionary.Values` builds a snapshot list per access | A copy-on-write snapshot array walked with a plain `for` — see the correction under 1.6.2 below |
 | `ProtocolEnvelope.Decode` copied the body out of the received frame for every envelope | The dispatcher reads only the header and hands an event body to subscribers as a `ReadOnlyMemory<byte>` window onto the frame. Replies still get an array of their own — they outlive the call. |
 
 To benefit, the registered serializer must also implement `IMemorySerializer` (the bundled
@@ -55,6 +55,34 @@ Trade, Rooms…) subscribes with `OnRaw`, so their behaviour is untouched.
 
 **Rule for memory-based subscribers:** the window is valid only for the duration of the callback. Decode from it;
 do not store it. A subscriber that needs to keep the bytes should use `Add`/`OnRaw` and get its own array.
+
+### Client receive path (1.6.2 / 1.6.3)
+
+Three more allocations per inbound message, found by profiling a Unity client taking hundreds of events per frame.
+
+**A correction to the 1.3.0 note above.** That release replaced `bucket.Values` with a `foreach` over the
+`ConcurrentDictionary` itself, on the grounds that its enumerator is a struct. **That is true on .NET 9+ and false
+on the Mono runtime Unity ships**, where `GetEnumerator()` returns an interface backed by a compiler-generated
+class — one heap allocation per delivered event, which for a small event is more than the payload. Since 1.6.2 the
+bucket keeps a copy-on-write snapshot array beside the dictionary and delivery walks it with a plain `for`, which
+allocates nothing on any runtime. The snapshot is rebuilt only on subscribe/unsubscribe and published with
+`Volatile.Write`, so a subscription taken out mid-dispatch is still tolerated: the walker finishes with the list it
+started on.
+
+**The envelope was copied twice, not once.** 1.3.0 removed the copy inside `ProtocolEnvelope.Decode`, but one level
+up `CommandExecutor.DispatchAsync` still called `Deserialize<byte[]>` on the whole frame — producing a second array
+holding byte for byte what the transport already held, minus the wrap header. Since 1.6.2 the header is skipped in
+place and the dispatcher takes a `ReadOnlyMemory<byte>` window (`DispatchClientAsync(SetNetRuntime,
+ReadOnlyMemory<byte>)`). The header length comes from `IBinaryFrameSerializer.MeasureBinaryFrameHeader`, so format
+knowledge stays inside the serializer; a serializer that does not implement it keeps the old path unchanged.
+**Replies and errors still get an array of their own** — they are handed to a caller waiting on another thread, and
+that copy is the ownership boundary, not an oversight.
+
+**`ReceiveAsync` returns `ValueTask` (1.6.3).** During a burst the next frame is usually already in the receive
+buffer, so the call completes synchronously — and a `Task`-returning method allocates on that path regardless: the
+BCL caches Task results only for `bool`, small `int` and null references, and a `TransportMessage?` with a value is
+none of those. The usual `ValueTask` rules apply and are not optional: await it once, do not store it, do not
+combine it with `Task.WhenAny`; call `AsTask()` first if you need any of that.
 
 ---
 
@@ -88,6 +116,15 @@ Today every message allocates: a `byte[]` from `ISerializer.Serialize` (send) an
 - **Send:** extend `ISerializer`/`ITransportConnection.SendAsync` to work with `IBufferWriter<byte>`/`ReadOnlyMemory<byte>` into a pooled buffer, pass the slice, return the buffer after framing. This removes the serialization allocation (for MessagePack — via `MessagePackSerializer.Serialize(IBufferWriter<byte>, …)`).
 - **Receive:** for the `SequentialDispatch`/`MaxInFlightMessages>0` modes (where the receive-loop tracks handler completion) — rent the payload from `ArrayPool` and pass `ReadOnlyMemory<byte>`, return it after dispatch. This requires changing the handler contract (`byte[]` → `ReadOnlyMemory<byte>`).
 - **Risk:** changes the transport core API + the handler contract. Do it as a separate version (minor bump) with a migration guide.
+- **Partly done in 1.6.2/1.6.3** (see the client receive path above): the envelope copy and the `Task` per received
+  message are gone. What remains is the `byte[]` in `PacketBuilder`, and it is the hard half — there is no safe
+  point to return a pooled buffer today, for two independent reasons. `BaseSocket.DispatchAsync` hands the array to
+  `OnRawFrame`, whose contract promises *"a fresh per-message array; safe to keep or forward"* — and that is load
+  bearing: `SetNet.Gateway` forwards it byte for byte, `SetNet.Cluster` too. And with the default
+  `SequentialDispatch = false`, handlers are dispatched without waiting, so nothing knows when the array is free.
+  An opt-in flag is not an acceptable shortcut here: getting it wrong does not throw, it silently overwrites
+  another message. Pooling the receive buffer needs **explicit buffer ownership through the whole dispatch chain**,
+  which is a design decision, not a micro-optimization.
 
 ### S2/S3 — Scaling the UDP socket
 - Remove the user-space `_sendLock` by using `Socket.SendToAsync` with a pool of `SocketAsyncEventArgs` (kernel-safe for concurrent sends), and run several concurrent `ReceiveAsync` on the read-loop.
